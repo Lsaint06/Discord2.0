@@ -3,6 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { setupMediaIntegration } from './media'
+import { setupScreenCapture } from './screenCapture'
 
 // Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
 // Lets two clients run side by side on one PC for testing.
@@ -76,6 +77,7 @@ app.whenReady().then(() => {
   ipcMain.on('ping', () => console.log('pong'))
 
   setupMediaIntegration()
+  setupScreenCapture()
 
   createWindow()
 

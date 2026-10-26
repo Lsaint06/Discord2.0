@@ -1,9 +1,9 @@
 import type { FastifyBaseLogger } from 'fastify'
-import { RoomServiceClient, WebhookReceiver } from 'livekit-server-sdk'
+import { RoomServiceClient, TrackSource, WebhookReceiver } from 'livekit-server-sdk'
 import type { LiveKitConfig } from '../config.js'
 import type { Repository } from '../db/repository.js'
 import { channelIdFromRoom } from './access.js'
-import type { VoiceStateChange, VoiceStateStore } from './voiceStates.js'
+import type { VoiceMembership, VoiceStateChange, VoiceStateStore } from './voiceStates.js'
 
 /** ParticipantInfo.State.DISCONNECTED in LiveKit's protocol. */
 const PARTICIPANT_DISCONNECTED = 3
@@ -47,6 +47,13 @@ export class LiveKitBridge {
       case 'participant_connection_aborted':
         if (identity) changes = this.store.leave(identity, channelId)
         break
+      case 'track_published':
+      case 'track_unpublished':
+        // Screen-share video marks a user as "live"; mic and screen audio don't.
+        if (identity && event.track?.source === TrackSource.SCREEN_SHARE) {
+          changes = this.store.setStreaming(identity, channelId, event.event === 'track_published')
+        }
+        break
       case 'room_finished':
         changes = this.store.clearChannel(channelId)
         break
@@ -56,14 +63,15 @@ export class LiveKitBridge {
 
   async reconcile(): Promise<void> {
     const rooms = await this.rooms.listRooms()
-    const next = new Map<string, string>()
+    const next = new Map<string, VoiceMembership>()
     for (const room of rooms) {
       const channelId = channelIdFromRoom(room.name)
       if (!channelId) continue
       const participants = await this.rooms.listParticipants(room.name)
       for (const p of participants) {
         if (p.state !== PARTICIPANT_DISCONNECTED && (await this.repo.getUser(p.identity))) {
-          next.set(p.identity, channelId)
+          const streaming = p.tracks.some((t) => t.source === TrackSource.SCREEN_SHARE)
+          next.set(p.identity, { channelId, streaming })
         }
       }
     }

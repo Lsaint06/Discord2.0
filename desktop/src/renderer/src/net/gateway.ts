@@ -20,7 +20,11 @@ export interface GatewayHandlers {
   onMessage: (message: ApiMessage) => void
   onUserUpdate: (user: ApiUser) => void
   onServerCreate: (server: ApiServer) => void
-  onVoiceStateUpdate: (state: { userId: string; channelId: string | null }) => void
+  onVoiceStateUpdate: (state: {
+    userId: string
+    channelId: string | null
+    streaming?: boolean
+  }) => void
 }
 
 const BACKOFF_BASE_MS = 1_000

@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { InputMode, UserSettings } from '../types'
 import type { MicrophoneAccess } from '../../../preload/types'
+import type { MediaSession } from '../media/MediaSession'
 import { describeKey, isValidPushToTalkKey } from '../media/voiceLogic'
 import { Field, Toggle } from './SettingsControls'
+import MicCheck from './MicCheck'
 
 interface VoiceSettingsProps {
+  session: MediaSession
   settings: UserSettings
   muted: boolean
   deafened: boolean
@@ -26,6 +29,7 @@ function deviceLabel(device: MediaDeviceInfo, index: number, kind: string): stri
 }
 
 function VoiceSettings({
+  session,
   settings,
   muted,
   deafened,
@@ -214,6 +218,8 @@ function VoiceSettings({
         </>
       )}
 
+      <MicCheck session={session} settings={settings} onChange={onChange} />
+
       <Toggle
         label="Echo Cancellation"
         checked={settings.echoCancellation}
@@ -231,6 +237,35 @@ function VoiceSettings({
       />
       <Toggle label="Mute Microphone" checked={muted || deafened} onChange={onToggleMute} />
       <Toggle label="Deafen" checked={deafened} onChange={onToggleDeafen} />
+
+      <h3 className="settings-subheading">Troubleshooting</h3>
+      <ul className="settings-tips">
+        <li>Nobody hears you? Run &ldquo;Let&rsquo;s Check&rdquo; and confirm the bar moves.</li>
+        <li>
+          Hearing echo? Use headphones, keep Echo Cancellation on, and avoid sharing system audio on
+          Windows 10.
+        </li>
+        <li>Robotic or cutting-out audio usually means Wi-Fi loss; try a wired connection.</li>
+        <li>Unplugged a headset? Discord 2.0 switches to your default device automatically.</li>
+      </ul>
+      <button
+        type="button"
+        className="button secondary"
+        onClick={() =>
+          onChange({
+            inputDeviceId: '',
+            outputDeviceId: '',
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            inputVolume: 100,
+            outputVolume: 100,
+            inputSensitivityAuto: true
+          })
+        }
+      >
+        Reset Voice Settings
+      </button>
     </>
   )
 }

@@ -18,6 +18,14 @@ export const defaultSettings: UserSettings = {
   pushToTalkKey: 'Backquote',
   pushToTalkGlobal: false,
   userVolumes: {},
+  streamVolumes: {},
+  inputSensitivityAuto: true,
+  inputSensitivityDb: -50,
+  screenShareProfile: 'smooth',
+  screenShareAudio: true,
+  screenShareHint: 'motion',
+  screenShareCodec: 'h264',
+  showStreamStats: false,
   desktopNotifications: true,
   notificationSounds: true
 }

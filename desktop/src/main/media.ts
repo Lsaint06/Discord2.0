@@ -8,6 +8,7 @@ import {
   systemPreferences,
   type IpcMainInvokeEvent
 } from 'electron'
+import { takeDisplayCapturePermission } from './screenCapture'
 
 /**
  * Narrowly scoped main-process media integration:
@@ -52,14 +53,27 @@ export function setupMediaIntegration(): void {
     if (!isAppUrl(details.requestingUrl ?? webContents.getURL())) return callback(false)
     if (permission === 'media') {
       const types = 'mediaTypes' in details ? (details.mediaTypes ?? []) : []
-      // Microphone only for now. Screen sharing will add an explicit video/display policy.
-      return callback(types.length > 0 && types.every((t) => t === 'audio'))
+      // Display capture (getDisplayMedia, or legacy chromeMediaSource constraints) arrives with
+      // no media types: allow it only for an explicit, armed picker selection from this window.
+      if (types.length === 0) return callback(takeDisplayCapturePermission(webContents.id))
+      // getUserMedia: microphone only. Camera is never granted.
+      return callback(types.every((t) => t === 'audio'))
     }
-    callback(permission === 'clipboard-sanitized-write')
+    // display-capture is still gated by the one-time selection in screenCapture.ts;
+    // fullscreen is used by the stream viewer.
+    callback(
+      permission === 'clipboard-sanitized-write' ||
+        permission === 'display-capture' ||
+        permission === 'fullscreen'
+    )
   })
 
-  ses.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
-    if (permission !== 'media') return false
+  ses.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
+    if (permission !== 'media' && permission !== 'display-capture' && permission !== 'fullscreen') {
+      return false
+    }
+    // Never expose cameras (this also hides them from enumerateDevices).
+    if (permission === 'media' && details?.mediaType === 'video') return false
     return isAppUrl(requestingOrigin)
   })
 

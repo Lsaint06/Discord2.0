@@ -1,3 +1,5 @@
+import type { ScreenCodec, ScreenContentHint, ScreenProfileId } from './media/screenProfiles'
+
 export type PresenceStatus = 'online' | 'idle' | 'dnd' | 'offline'
 
 export type SelectableStatus = 'online' | 'idle' | 'dnd' | 'invisible'
@@ -88,6 +90,18 @@ export interface UserSettings {
   pushToTalkGlobal: boolean
   /** Per-user playback volume, percent (0–200), keyed by user id. */
   userVolumes: Record<string, number>
+  /** Per-user stream (screen-share audio) volume, percent (0–200), keyed by user id. */
+  streamVolumes: Record<string, number>
+  /** Automatic input sensitivity; when false, inputSensitivityDb is used as a noise gate. */
+  inputSensitivityAuto: boolean
+  /** Manual noise gate threshold in dBFS (-100 … 0). */
+  inputSensitivityDb: number
+  screenShareProfile: ScreenProfileId
+  screenShareAudio: boolean
+  screenShareHint: ScreenContentHint
+  screenShareCodec: ScreenCodec
+  /** Show the live stats overlay in the stream viewer by default. */
+  showStreamStats: boolean
   desktopNotifications: boolean
   notificationSounds: boolean
 }

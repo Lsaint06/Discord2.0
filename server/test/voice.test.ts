@@ -97,7 +97,7 @@ function collectFrames(base: string, token: string) {
     }
     throw new Error('timed out waiting for gateway frame')
   }
-  return { ws, waitFor }
+  return { ws, waitFor, frames }
 }
 
 describe('voice: config', () => {
@@ -157,6 +157,37 @@ describe('voice: rooms and state store', () => {
     await assert.rejects(authorizeVoiceJoin(repo, bot, 'hangout-lounge'), { statusCode: 403 })
     await repo.close()
   })
+
+  test('tracks screen-share state only for members of the channel', () => {
+    const store = new VoiceStateStore()
+    // Not in the channel yet: ignored.
+    assert.deepEqual(store.setStreaming('u1', 'a', true), [])
+    store.join('u1', 'a')
+    assert.deepEqual(store.setStreaming('u1', 'a', true), [
+      { userId: 'u1', channelId: 'a', streaming: true }
+    ])
+    assert.deepEqual(store.setStreaming('u1', 'a', true), [])
+    // Wrong channel: ignored.
+    assert.deepEqual(store.setStreaming('u1', 'b', false), [])
+    assert.deepEqual(store.snapshot(), [{ userId: 'u1', channelId: 'a', streaming: true }])
+
+    // Moving channels ends the share; leaving clears it.
+    store.join('u1', 'b')
+    assert.equal(store.isStreaming('u1'), false)
+    store.setStreaming('u1', 'b', true)
+    store.leave('u1', 'b')
+    assert.equal(store.isStreaming('u1'), false)
+    assert.deepEqual(store.snapshot(), [])
+  })
+
+  test('reconciles streaming state from authoritative snapshots', () => {
+    const store = new VoiceStateStore()
+    store.join('u1', 'a')
+    const changes = store.replaceAll(new Map([['u1', { channelId: 'a', streaming: true }]]))
+    assert.deepEqual(changes, [{ userId: 'u1', channelId: 'a', streaming: true }])
+    const stopped = store.replaceAll(new Map([['u1', 'a']]))
+    assert.deepEqual(stopped, [{ userId: 'u1', channelId: 'a', streaming: false }])
+  })
 })
 
 describe('voice: token endpoint', () => {
@@ -196,7 +227,16 @@ describe('voice: token endpoint', () => {
     assert.equal(claims.video?.room, 'voice_hangout-lounge')
     assert.equal(claims.video?.roomJoin, true)
     assert.equal(claims.video?.roomAdmin, undefined)
-    assert.deepEqual(claims.video?.canPublishSources, ['microphone'])
+    assert.equal(claims.video?.roomCreate, undefined)
+    assert.equal(claims.video?.roomList, undefined)
+    assert.equal(claims.video?.canPublishData, false)
+    // Microphone + screen share (video and system audio); never camera.
+    assert.deepEqual(claims.video?.canPublishSources, [
+      'microphone',
+      'screen_share',
+      'screen_share_audio'
+    ])
+    assert.equal(claims.video?.canPublishSources?.includes('camera'), false)
     const lifetime = (claims.exp as number) - (claims.nbf as number)
     assert.ok(lifetime <= VOICE_TOKEN_TTL_SECONDS, `token lives ${lifetime}s`)
 
@@ -276,6 +316,60 @@ describe('voice: presence via LiveKit webhooks', () => {
     await gw.waitFor(
       (f) => f.op === 'voice_state_update' && f.d.userId === alice.userId && f.d.channelId === null
     )
+    gw.ws.close()
+  })
+
+  test('broadcasts screen-share start/stop from track webhooks', async () => {
+    const alice = await login(server.base, 'streamer')
+    const bob = await login(server.base, 'viewer')
+    const gw = collectFrames(server.base, bob.token)
+    await gw.waitFor((f) => f.op === 'ready')
+    const base = { room: { name: 'voice_hangout-lounge' }, participant: { identity: alice.userId } }
+
+    await postWebhook(server.base, { ...base, event: 'participant_joined', id: 's-1' })
+    // Microphone publications don't make anyone "live".
+    await postWebhook(server.base, {
+      ...base,
+      event: 'track_published',
+      id: 's-2',
+      track: { sid: 'TR_mic', source: 'MICROPHONE', type: 'AUDIO' }
+    })
+    const published = await postWebhook(server.base, {
+      ...base,
+      event: 'track_published',
+      id: 's-3',
+      track: { sid: 'TR_screen', source: 'SCREEN_SHARE', type: 'VIDEO' }
+    })
+    assert.equal(published.status, 200)
+    await gw.waitFor(
+      (f) =>
+        f.op === 'voice_state_update' && f.d.userId === alice.userId && f.d.streaming === true
+    )
+    const streamingFrames = () =>
+      gw.frames.filter((f) => f.op === 'voice_state_update' && f.d.streaming !== undefined)
+    assert.equal(streamingFrames().length, 1, 'mic publish must not toggle streaming')
+
+    const states = (await (
+      await fetch(`${server.base}/api/voice/states`, {
+        headers: { Authorization: `Bearer ${bob.token}` }
+      })
+    ).json()) as ApiVoiceState[]
+    assert.deepEqual(
+      states.find((s) => s.userId === alice.userId),
+      { userId: alice.userId, channelId: 'hangout-lounge', streaming: true }
+    )
+
+    await postWebhook(server.base, {
+      ...base,
+      event: 'track_unpublished',
+      id: 's-4',
+      track: { sid: 'TR_screen', source: 'SCREEN_SHARE', type: 'VIDEO' }
+    })
+    await gw.waitFor(
+      (f) =>
+        f.op === 'voice_state_update' && f.d.userId === alice.userId && f.d.streaming === false
+    )
+    await postWebhook(server.base, { ...base, event: 'participant_left', id: 's-5' })
     gw.ws.close()
   })
 

@@ -23,6 +23,13 @@ interface ChannelSidebarProps {
   voiceDetails: (userId: string) => VoiceUserDetails | undefined
   getUserVolume: (userId: string) => number
   onUserVolumeChange: (userId: string, volume: number) => void
+  /** Users currently screen sharing (from the backend, so visible outside the room too). */
+  isStreaming: (userId: string) => boolean
+  /** Identity whose stream is being watched. */
+  watchingId: string | null
+  onWatch: (userId: string, channel: Channel) => void
+  getStreamVolume: (userId: string) => number
+  onStreamVolumeChange: (userId: string, volume: number) => void
   onSelectChannel: (channel: Channel) => void
   footer: ReactNode
 }
@@ -38,6 +45,11 @@ function ChannelSidebar({
   voiceDetails,
   getUserVolume,
   onUserVolumeChange,
+  isStreaming,
+  watchingId,
+  onWatch,
+  getStreamVolume,
+  onStreamVolumeChange,
   onSelectChannel,
   footer
 }: ChannelSidebarProps): React.JSX.Element {
@@ -118,8 +130,10 @@ function ChannelSidebar({
                             const details = connected ? voiceDetails(userId) : undefined
                             const canAdjust = connected && !isSelf && details !== undefined
                             const volume = getUserVolume(userId)
+                            const live = isStreaming(userId)
+                            const watched = watchingId === userId
                             return (
-                              <li key={userId}>
+                              <li key={userId} className="voice-user-row">
                                 <button
                                   type="button"
                                   className={`voice-user${canAdjust ? ' adjustable' : ''}`}
@@ -142,22 +156,60 @@ function ChannelSidebar({
                                     </span>
                                   )}
                                 </button>
+                                {live && (
+                                  <button
+                                    type="button"
+                                    className={`live-badge clickable${watched ? ' watching' : ''}`}
+                                    onClick={() => onWatch(userId, channel)}
+                                    title={
+                                      watched
+                                        ? `Watching ${user.name}`
+                                        : isSelf
+                                          ? 'Preview your stream'
+                                          : connected
+                                            ? `Watch ${user.name}'s stream`
+                                            : `Join ${channel.name} and watch ${user.name}`
+                                    }
+                                    aria-label={`Watch ${user.name}'s stream`}
+                                  >
+                                    LIVE
+                                  </button>
+                                )}
                                 {canAdjust && volumeFor === userId && (
-                                  <label className="voice-user-volume">
-                                    <span>Volume {volume}%</span>
-                                    <input
-                                      className="slider"
-                                      type="range"
-                                      min={0}
-                                      max={200}
-                                      step={5}
-                                      value={volume}
-                                      onChange={(e) =>
-                                        onUserVolumeChange(userId, Number(e.target.value))
-                                      }
-                                      aria-label={`${user.name} volume`}
-                                    />
-                                  </label>
+                                  <div className="voice-user-volume">
+                                    <label>
+                                      <span>Volume {volume}%</span>
+                                      <input
+                                        className="slider"
+                                        type="range"
+                                        min={0}
+                                        max={200}
+                                        step={5}
+                                        value={volume}
+                                        onChange={(e) =>
+                                          onUserVolumeChange(userId, Number(e.target.value))
+                                        }
+                                        aria-label={`${user.name} volume`}
+                                      />
+                                    </label>
+                                    {live && (
+                                      <label>
+                                        <span>Stream volume {getStreamVolume(userId)}%</span>
+                                        <input
+                                          className="slider"
+                                          type="range"
+                                          min={0}
+                                          max={200}
+                                          step={5}
+                                          value={getStreamVolume(userId)}
+                                          onChange={(e) =>
+                                            onStreamVolumeChange(userId, Number(e.target.value))
+                                          }
+                                          aria-label={`${user.name} stream volume`}
+                                        />
+                                      </label>
+                                    )}
+                                  </div>
                                 )}
                               </li>
                             )

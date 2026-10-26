@@ -1,19 +1,38 @@
 import {
   AudioPresets,
+  ConnectionQuality,
   ConnectionState,
   DisconnectReason,
   MediaDeviceFailure,
   Room,
   RoomEvent,
   Track,
+  VideoPreset,
   type AudioCaptureOptions,
   type LocalAudioTrack,
+  type LocalTrackPublication,
   type Participant,
   type RemoteTrack,
   type RemoteTrackPublication
 } from 'livekit-client'
 import type { ApiVoiceToken } from '../net/protocol'
 import { GainProcessor } from './GainProcessor'
+import {
+  ScreenShareController,
+  type CapturedScreen,
+  type ScreenShareOptions,
+  type ScreenShareState,
+  type ScreenSource
+} from './ScreenShareController'
+import {
+  captureConstraints,
+  degradationPreference,
+  lowLayerFor,
+  scaledBitrate,
+  type ScreenProfile,
+  type ScreenProfileId
+} from './screenProfiles'
+import { shouldSubscribe } from './subscriptions'
 import {
   backoffDelay,
   describeDisconnect,
@@ -31,7 +50,13 @@ export interface VoiceParticipant {
   speaking: boolean
   micEnabled: boolean
   deafened: boolean
+  /** Publishing a screen share in this room. */
+  sharingScreen: boolean
+  /** Publishing system audio with the screen share. */
+  sharingAudio: boolean
 }
+
+export type ConnectionQualityLabel = 'excellent' | 'good' | 'poor' | 'lost' | 'unknown'
 
 export interface MediaSnapshot {
   status: VoiceStatus
@@ -40,8 +65,18 @@ export interface MediaSnapshot {
   error?: string
   /** Problem with the local microphone; we stay connected and can still listen. */
   micError?: string
+  /** Informational device message (e.g. a headset was unplugged and we fell back). */
+  deviceNotice?: string
   retryInMs?: number
   participants: VoiceParticipant[]
+  /** Identity whose screen share we're watching (may be ourselves for a preview). */
+  watching: string | null
+  /** Bumped whenever a watchable video track appears/disappears so viewers re-attach. */
+  streamRevision: number
+  screenShare: ScreenShareState
+  connectionQuality: ConnectionQualityLabel
+  /** The browser blocked audio playback until a user gesture (rare in Electron). */
+  audioBlocked: boolean
 }
 
 export interface MediaPreferences {
@@ -53,6 +88,10 @@ export interface MediaPreferences {
   inputVolume: number
   outputVolume: number
   userVolumes: Record<string, number>
+  /** Per-user volume for shared screen audio (percent), keyed by user id. */
+  streamVolumes: Record<string, number>
+  /** Manual voice-activity threshold (noise gate). null = automatic (no gate). */
+  inputSensitivityDb: number | null
 }
 
 export interface MediaSessionDeps {
@@ -63,7 +102,32 @@ export interface MediaSessionDeps {
 
 export type TokenSource = (channelId: string) => Promise<ApiVoiceToken>
 
-const INITIAL: MediaSnapshot = { status: 'idle', channelId: null, participants: [] }
+const INITIAL: MediaSnapshot = {
+  status: 'idle',
+  channelId: null,
+  participants: [],
+  watching: null,
+  streamRevision: 0,
+  screenShare: { status: 'idle', audio: 'off' },
+  connectionQuality: 'unknown',
+  audioBlocked: false
+}
+
+const QUALITY_LABELS: Record<ConnectionQuality, ConnectionQualityLabel> = {
+  [ConnectionQuality.Excellent]: 'excellent',
+  [ConnectionQuality.Good]: 'good',
+  [ConnectionQuality.Poor]: 'poor',
+  [ConnectionQuality.Lost]: 'lost',
+  [ConnectionQuality.Unknown]: 'unknown'
+}
+
+/** Thrown for screen-capture problems detected before getDisplayMedia (e.g. window closed). */
+class CaptureError extends Error {
+  constructor(name: string, message: string) {
+    super(message)
+    this.name = name
+  }
+}
 
 function micErrorMessage(err: unknown): string {
   switch (MediaDeviceFailure.getFailure(err)) {
@@ -100,6 +164,9 @@ export class MediaSession {
   private readonly capturedTracks = new Set<MediaStreamTrack>()
   private audioContainer: HTMLDivElement | null = null
   private tokenSource: TokenSource | null = null
+  private watching: string | null = null
+  private streamRevision = 0
+  private readonly screen: ScreenShareController
   private micState: MicState = {
     muted: false,
     deafened: false,
@@ -111,11 +178,24 @@ export class MediaSession {
   constructor(
     private readonly deps: MediaSessionDeps,
     private prefs: MediaPreferences
-  ) {}
+  ) {
+    this.screen = new ScreenShareController(
+      {
+        capture: (source, options, profile) => this.captureScreen(source, options, profile),
+        publishVideo: (track, options, profile) => this.publishScreenVideo(track, options, profile),
+        publishAudio: (track) => this.publishScreenAudio(track)
+      },
+      (screenShare) => {
+        this.set({ screenShare })
+        this.refreshParticipants()
+      }
+    )
+  }
 
-  /** Starts listening for network changes. Pair with deactivate(). */
+  /** Starts listening for network and device changes. Pair with deactivate(). */
   activate(): void {
     window.addEventListener('online', this.onNetworkOnline)
+    navigator.mediaDevices?.addEventListener('devicechange', this.onDeviceChange)
   }
 
   /** Where join credentials come from (the backend's voice-token endpoint). */
@@ -126,6 +206,7 @@ export class MediaSession {
   /** Leaves voice and releases every resource. The session can be activated again later. */
   async deactivate(): Promise<void> {
     window.removeEventListener('online', this.onNetworkOnline)
+    navigator.mediaDevices?.removeEventListener('devicechange', this.onDeviceChange)
     await this.leave()
     this.audioContainer?.remove()
     this.audioContainer = null
@@ -160,12 +241,202 @@ export class MediaSession {
     return [...this.capturedTracks].some((t) => t.readyState === 'live')
   }
 
+  /** True while a screen (or system-audio) capture is live. */
+  isCapturingScreen(): boolean {
+    return this.screen.isCapturing()
+  }
+
+  /** Current microphone level in dBFS (pre-gate), or null when not capturing. */
+  getInputLevelDb(): number | null {
+    return this.gain?.getLevelDb() ?? null
+  }
+
+  // ---- Screen sharing ----
+
+  /** Starts sharing a source the user explicitly picked. Voice is unaffected. */
+  async startScreenShare(source: ScreenSource, options: ScreenShareOptions): Promise<void> {
+    if (this.snapshot.status !== 'connected' || !this.room) {
+      this.set({
+        screenShare: {
+          status: 'error',
+          audio: 'off',
+          error: 'Join a voice channel before sharing.'
+        }
+      })
+      return
+    }
+    await this.screen.start(source, options)
+  }
+
+  async stopScreenShare(): Promise<void> {
+    await this.screen.stop('user')
+  }
+
+  async setScreenShareProfile(profileId: ScreenProfileId): Promise<void> {
+    await this.screen.setProfile(profileId)
+  }
+
+  dismissScreenShareMessage(): void {
+    this.screen.dismiss()
+  }
+
+  /** Watch someone's stream (or null to stop). Only the watched stream is subscribed/decoded. */
+  watch(identity: string | null): void {
+    if (this.watching === identity) return
+    this.watching = identity
+    this.set({ watching: identity })
+    this.applySubscriptions()
+  }
+
+  /** The video track to render for a watched identity (local preview for ourselves). */
+  getScreenTrack(identity: string): Track | undefined {
+    const room = this.room
+    if (!room) return undefined
+    const participant =
+      identity === room.localParticipant.identity
+        ? room.localParticipant
+        : room.remoteParticipants.get(identity)
+    return participant?.getTrackPublication(Track.Source.ScreenShare)?.track ?? undefined
+  }
+
+  /** Tracks the diagnostics panel can sample. */
+  getStatsTargets(): { localScreen?: Track; watched?: Track; microphone?: Track } {
+    const room = this.room
+    if (!room) return {}
+    const local = room.localParticipant
+    return {
+      localScreen: local.getTrackPublication(Track.Source.ScreenShare)?.track,
+      watched:
+        this.watching && this.watching !== local.identity
+          ? this.getScreenTrack(this.watching)
+          : undefined,
+      microphone: local.getTrackPublication(Track.Source.Microphone)?.track
+    }
+  }
+
+  /** Resumes audio playback if the browser blocked it (needs a user gesture). */
+  async startAudio(): Promise<void> {
+    await this.room?.startAudio().catch(() => undefined)
+    this.set({ audioBlocked: this.room ? !this.room.canPlaybackAudio : false })
+  }
+
+  dismissDeviceNotice(): void {
+    if (this.snapshot.deviceNotice) this.set({ deviceNotice: undefined })
+  }
+
+  private async captureScreen(
+    source: ScreenSource,
+    options: ScreenShareOptions,
+    profile: ScreenProfile
+  ): Promise<CapturedScreen> {
+    const bridge = window.d2
+    if (bridge) {
+      // Arm exactly this source in the main process; getDisplayMedia is denied otherwise.
+      const armed = await bridge.screen.select(source.id, { audio: options.audio })
+      if (!armed.ok) {
+        throw new CaptureError(
+          'NotFoundError',
+          armed.error === 'source-gone'
+            ? 'That window or screen is no longer available.'
+            : 'That source can’t be shared.'
+        )
+      }
+    }
+    const audio: MediaTrackConstraints | false = options.audio
+      ? ({
+          // Exclude Discord 2.0's own playback (voices) from system audio where the OS allows.
+          restrictOwnAudio: true,
+          suppressLocalAudioPlayback: false,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        } as MediaTrackConstraints)
+      : false
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: captureConstraints(profile),
+      audio
+    })
+    const [video] = stream.getVideoTracks()
+    if (!video) {
+      for (const t of stream.getTracks()) t.stop()
+      throw new CaptureError('NotFoundError', 'No video was captured from that source.')
+    }
+    return { video, audio: stream.getAudioTracks()[0] }
+  }
+
+  private async publishScreenVideo(
+    track: MediaStreamTrack,
+    options: ScreenShareOptions,
+    profile: ScreenProfile
+  ): Promise<() => Promise<void>> {
+    const room = this.room
+    if (!room) throw new Error('Not connected to voice.')
+    const settings = track.getSettings()
+    const actual = {
+      width: settings.width ?? profile.width,
+      height: settings.height ?? profile.height,
+      fps: settings.frameRate ?? profile.fps
+    }
+    const low = lowLayerFor(actual)
+    const svc = options.codec !== 'h264'
+    const pub = await room.localParticipant.publishTrack(track, {
+      source: Track.Source.ScreenShare,
+      name: 'screen',
+      videoCodec: options.codec,
+      screenShareEncoding: {
+        maxBitrate: scaledBitrate(profile, actual),
+        maxFramerate: profile.fps,
+        priority: 'high'
+      },
+      // H.264 uses one 720p backup simulcast layer; VP9/AV1 use SVC instead.
+      simulcast: !svc && low !== null,
+      screenShareSimulcastLayers:
+        !svc && low ? [new VideoPreset(low.width, low.height, low.maxBitrate, low.fps)] : [],
+      degradationPreference: degradationPreference(options.hint)
+    })
+    this.bumpStreams()
+    return async () => {
+      // Keep the capture alive: the controller decides when to stop it.
+      if (pub.track) await room.localParticipant.unpublishTrack(pub.track, false)
+      this.bumpStreams()
+    }
+  }
+
+  private async publishScreenAudio(track: MediaStreamTrack): Promise<() => Promise<void>> {
+    const room = this.room
+    if (!room) throw new Error('Not connected to voice.')
+    const pub: LocalTrackPublication = await room.localParticipant.publishTrack(track, {
+      source: Track.Source.ScreenShareAudio,
+      name: 'screen-audio',
+      audioPreset: AudioPresets.musicHighQualityStereo,
+      forceStereo: true,
+      dtx: false,
+      red: false
+    })
+    return async () => {
+      if (pub.track) await room.localParticipant.unpublishTrack(pub.track, false)
+    }
+  }
+
+  private bumpStreams(): void {
+    this.streamRevision++
+    this.set({ streamRevision: this.streamRevision })
+    this.refreshParticipants()
+  }
+
   // ---- Public API ----
 
-  async join(channelId: string): Promise<void> {
+  /** Joins (or switches to) a voice channel; optionally starts watching someone's stream there. */
+  async join(channelId: string, options: { watch?: string } = {}): Promise<void> {
     const s = this.snapshot
     if (this.desiredChannel === channelId && s.status !== 'error' && s.status !== 'disconnected') {
+      if (options.watch) this.watch(options.watch)
       return
+    }
+    // Streams belong to a room: switching channels stops watching the old one.
+    if (channelId !== s.channelId || options.watch) {
+      this.watching = options.watch ?? null
+      this.set({ watching: this.watching })
     }
     this.desiredChannel = channelId
     this.rejoinAttempt = 0
@@ -177,8 +448,9 @@ export class MediaSession {
     this.desiredChannel = null
     this.joinSeq++
     this.clearRejoinTimer()
-    await this.teardownRoom()
-    this.set({ ...INITIAL })
+    this.watching = null
+    await this.teardownRoom('left')
+    this.set({ ...INITIAL, screenShare: this.screen.getState() })
   }
 
   /** Retry after an error or a give-up. */
@@ -189,9 +461,11 @@ export class MediaSession {
 
   setMicState(next: MicState): void {
     const deafenChanged = next.deafened !== this.micState.deafened
+    const modeChanged = next.pushToTalk !== this.micState.pushToTalk
     this.micState = next
     this.applyMic()
     if (deafenChanged) this.applyDeafen()
+    if (modeChanged) this.applyGate()
   }
 
   setPreferences(next: MediaPreferences): void {
@@ -225,7 +499,12 @@ export class MediaSession {
       }
     }
     if (next.inputVolume !== prev.inputVolume) this.gain?.setGain(next.inputVolume / 100)
-    if (next.outputVolume !== prev.outputVolume || next.userVolumes !== prev.userVolumes) {
+    if (next.inputSensitivityDb !== prev.inputSensitivityDb) this.applyGate()
+    if (
+      next.outputVolume !== prev.outputVolume ||
+      next.userVolumes !== prev.userVolumes ||
+      next.streamVolumes !== prev.streamVolumes
+    ) {
       this.applyVolumes()
     }
   }
@@ -234,14 +513,16 @@ export class MediaSession {
 
   private async connect(channelId: string): Promise<void> {
     const seq = ++this.joinSeq
-    await this.teardownRoom()
+    // Switching channels (or rejoining) always ends any screen share from the previous room.
+    await this.teardownRoom(this.room ? 'left' : 'disconnected')
     if (seq !== this.joinSeq) return
 
     this.set({
       status: this.rejoinAttempt > 0 ? 'reconnecting' : 'connecting',
       channelId,
       retryInMs: undefined,
-      participants: []
+      participants: [],
+      connectionQuality: 'unknown'
     })
 
     let grant: ApiVoiceToken
@@ -275,7 +556,8 @@ export class MediaSession {
     this.wire(room)
 
     try {
-      await room.connect(grant.url, grant.token, { autoSubscribe: !this.micState.deafened })
+      // Manual subscriptions: see applySubscriptions() / subscriptions.ts.
+      await room.connect(grant.url, grant.token, { autoSubscribe: false })
     } catch (err) {
       if (seq !== this.joinSeq) return
       room.removeAllListeners()
@@ -290,8 +572,15 @@ export class MediaSession {
     }
 
     this.rejoinAttempt = 0
-    this.set({ status: 'connected', error: undefined, micError: undefined, retryInMs: undefined })
+    this.set({
+      status: 'connected',
+      error: undefined,
+      micError: undefined,
+      retryInMs: undefined,
+      audioBlocked: !room.canPlaybackAudio
+    })
     this.applyDeafen()
+    this.applySubscriptions()
     this.applyVolumes()
     this.applyMic()
     this.refreshParticipants()
@@ -299,37 +588,56 @@ export class MediaSession {
 
   private wire(room: Room): void {
     const refresh = (): void => this.refreshParticipants()
+    const resubscribe = (): void => {
+      this.applySubscriptions()
+      refresh()
+    }
 
     room
       .on(RoomEvent.Reconnecting, () => this.set({ status: 'reconnecting', retryInMs: undefined }))
       .on(RoomEvent.SignalReconnecting, () => this.set({ status: 'reconnecting' }))
       .on(RoomEvent.Reconnected, () => {
         this.set({ status: 'connected', error: undefined })
-        refresh()
+        resubscribe()
       })
       .on(RoomEvent.Disconnected, (reason?: DisconnectReason) => this.onDisconnected(room, reason))
-      .on(RoomEvent.ParticipantConnected, refresh)
-      .on(RoomEvent.ParticipantDisconnected, refresh)
+      .on(RoomEvent.ParticipantConnected, resubscribe)
+      .on(RoomEvent.ParticipantDisconnected, () => this.bumpStreams())
       .on(RoomEvent.TrackMuted, refresh)
       .on(RoomEvent.TrackUnmuted, refresh)
       .on(RoomEvent.LocalTrackPublished, refresh)
+      .on(RoomEvent.LocalTrackUnpublished, refresh)
       .on(RoomEvent.ActiveSpeakersChanged, refresh)
       .on(RoomEvent.ParticipantAttributesChanged, refresh)
-      .on(RoomEvent.TrackPublished, (pub: RemoteTrackPublication) => {
-        if (pub.kind === Track.Kind.Audio && this.micState.deafened) pub.setSubscribed(false)
-        refresh()
-      })
-      .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub, participant) => {
-        if (track.kind !== Track.Kind.Audio) return
-        const element = track.attach()
-        element.dataset.identity = participant.identity
-        element.dataset.trackSid = track.sid
-        this.container().appendChild(element)
-        participant.setVolume(
-          playbackVolume(this.prefs.outputVolume, this.prefs.userVolumes[participant.identity])
-        )
-        refresh()
-      })
+      .on(RoomEvent.TrackPublished, resubscribe)
+      .on(RoomEvent.TrackUnpublished, () => this.bumpStreams())
+      .on(
+        RoomEvent.ConnectionQualityChanged,
+        (quality: ConnectionQuality, participant: Participant) => {
+          if (participant.isLocal)
+            this.set({ connectionQuality: QUALITY_LABELS[quality] ?? 'unknown' })
+        }
+      )
+      .on(RoomEvent.AudioPlaybackStatusChanged, () =>
+        this.set({ audioBlocked: !room.canPlaybackAudio })
+      )
+      .on(
+        RoomEvent.TrackSubscribed,
+        (track: RemoteTrack, pub: RemoteTrackPublication, participant) => {
+          if (track.kind === Track.Kind.Video) {
+            // Rendered by the stream viewer (which attaches/detaches its own element).
+            this.bumpStreams()
+            return
+          }
+          const element = track.attach()
+          element.dataset.identity = participant.identity
+          element.dataset.trackSid = track.sid
+          element.dataset.source = pub.source
+          this.container().appendChild(element)
+          this.applyVolumes()
+          refresh()
+        }
+      )
       .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
         for (const el of track.detach()) el.remove()
         // LiveKit may already have detached the element itself; remove anything we attached.
@@ -339,7 +647,8 @@ export class MediaSession {
             el.remove()
           }
         }
-        refresh()
+        if (track.kind === Track.Kind.Video) this.bumpStreams()
+        else refresh()
       })
       .on(RoomEvent.MediaDevicesError, (err: Error) => this.set({ micError: micErrorMessage(err) }))
   }
@@ -347,16 +656,22 @@ export class MediaSession {
   private onDisconnected(room: Room, reason?: DisconnectReason): void {
     if (room !== this.room) return
     this.room = null
-    void this.teardownRoom()
+    void this.teardownRoom(reason === DisconnectReason.CLIENT_INITIATED ? 'left' : 'disconnected')
     if (this.desiredChannel && shouldAutoRejoin(reason)) {
       this.scheduleRejoin(describeDisconnect(reason))
       return
     }
     this.desiredChannel = null
+    this.watching = null
     if (reason === DisconnectReason.CLIENT_INITIATED) {
-      this.set({ ...INITIAL })
+      this.set({ ...INITIAL, screenShare: this.screen.getState() })
     } else {
-      this.set({ status: 'disconnected', error: describeDisconnect(reason), participants: [] })
+      this.set({
+        status: 'disconnected',
+        error: describeDisconnect(reason),
+        participants: [],
+        watching: null
+      })
     }
   }
 
@@ -384,7 +699,7 @@ export class MediaSession {
   private fail(message: string): void {
     this.desiredChannel = null
     this.clearRejoinTimer()
-    void this.teardownRoom()
+    void this.teardownRoom('disconnected')
     this.set({ status: 'error', error: message, retryInMs: undefined, participants: [] })
   }
 
@@ -395,13 +710,43 @@ export class MediaSession {
     }
   }
 
+  /** Hot-plug: fall back to the default device if the selected one disappears. */
+  private readonly onDeviceChange = (): void => {
+    void (async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices().catch(() => [])
+      const has = (kind: MediaDeviceKind, id: string): boolean =>
+        devices.some((d) => d.kind === kind && d.deviceId === id)
+      const room = this.room
+      if (this.prefs.inputDeviceId && !has('audioinput', this.prefs.inputDeviceId)) {
+        this.set({
+          deviceNotice: 'Your selected microphone was disconnected. Using the default microphone.'
+        })
+        if (room) {
+          await room.switchActiveDevice('audioinput', 'default').catch(() => undefined)
+          this.trackCaptured()
+        }
+      }
+      if (this.prefs.outputDeviceId && !has('audiooutput', this.prefs.outputDeviceId)) {
+        this.set({
+          deviceNotice:
+            'Your selected speakers/headset were disconnected. Using the default output.'
+        })
+        if (room) await room.switchActiveDevice('audiooutput', 'default').catch(() => undefined)
+      }
+    })()
+  }
+
   private clearRejoinTimer(): void {
     if (this.rejoinTimer) clearTimeout(this.rejoinTimer)
     this.rejoinTimer = null
   }
 
-  /** Disconnects and releases every media resource (mic device, processors, audio elements). */
-  private async teardownRoom(): Promise<void> {
+  /**
+   * Disconnects and releases every media resource: screen capture first (so it's cleanly
+   * unpublished), then the room, mic device, processors and audio elements.
+   */
+  private async teardownRoom(reason: 'left' | 'disconnected' = 'left'): Promise<void> {
+    await this.screen.stop(reason)
     const room = this.room
     this.room = null
     if (room) {
@@ -487,6 +832,7 @@ export class MediaSession {
         this.capturedTracks.add(raw)
       )
       await track.setProcessor(this.gain)
+      this.applyGate()
     } catch (err) {
       // Not fatal: the raw microphone is still published, just without the gain stage.
       console.warn('[voice] input gain unavailable', err)
@@ -494,18 +840,37 @@ export class MediaSession {
     }
   }
 
-  // ---- Remote audio ----
+  /** Manual input sensitivity (noise gate) applies to voice activity only, never push-to-talk. */
+  private applyGate(): void {
+    const threshold = this.prefs.inputSensitivityDb
+    this.gain?.setGate(!this.micState.pushToTalk && threshold !== null ? threshold : null)
+  }
+
+  // ---- Remote audio & video ----
 
   private applyDeafen(): void {
     const room = this.room
     if (!room || room.state !== ConnectionState.Connected) return
-    const deafened = this.micState.deafened
-    for (const participant of room.remoteParticipants.values()) {
-      for (const pub of participant.audioTrackPublications.values()) pub.setSubscribed(!deafened)
-    }
+    this.applySubscriptions()
     void room.localParticipant
-      .setAttributes({ deafened: deafened ? '1' : '0' })
+      .setAttributes({ deafened: this.micState.deafened ? '1' : '0' })
       .catch(() => undefined)
+  }
+
+  /** Subscribe only to what we need: microphones, plus the one stream we're watching. */
+  private applySubscriptions(): void {
+    const room = this.room
+    if (!room || room.state !== ConnectionState.Connected) return
+    for (const participant of room.remoteParticipants.values()) {
+      for (const pub of participant.trackPublications.values()) {
+        const want = shouldSubscribe(pub.source, {
+          identity: participant.identity,
+          deafened: this.micState.deafened,
+          watching: this.watching
+        })
+        if (pub.isDesired !== want) pub.setSubscribed(want)
+      }
+    }
   }
 
   private applyVolumes(): void {
@@ -513,7 +878,12 @@ export class MediaSession {
     if (!room) return
     for (const participant of room.remoteParticipants.values()) {
       participant.setVolume(
-        playbackVolume(this.prefs.outputVolume, this.prefs.userVolumes[participant.identity])
+        playbackVolume(this.prefs.outputVolume, this.prefs.userVolumes[participant.identity]),
+        Track.Source.Microphone
+      )
+      participant.setVolume(
+        playbackVolume(this.prefs.outputVolume, this.prefs.streamVolumes[participant.identity]),
+        Track.Source.ScreenShareAudio
       )
     }
   }
@@ -527,7 +897,9 @@ export class MediaSession {
       isLocal: p.isLocal,
       speaking: speakers.has(p.identity),
       micEnabled: p.isMicrophoneEnabled,
-      deafened: p.attributes?.deafened === '1'
+      deafened: p.attributes?.deafened === '1',
+      sharingScreen: p.getTrackPublication(Track.Source.ScreenShare) !== undefined,
+      sharingAudio: p.getTrackPublication(Track.Source.ScreenShareAudio) !== undefined
     })
     this.set({
       participants: [room.localParticipant, ...room.remoteParticipants.values()].map(describe)

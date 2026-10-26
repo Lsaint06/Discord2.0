@@ -10,10 +10,14 @@ const ROOM_PREFIX = 'voice_'
 export const VOICE_TOKEN_TTL_SECONDS = 5 * 60
 
 /**
- * Sources a voice participant may publish. Screen sharing (SCREEN_SHARE, SCREEN_SHARE_AUDIO)
- * will be added here in a later milestone; it's the single switch for that capability.
+ * Sources a voice participant may publish: microphone plus screen sharing (video and its
+ * system audio). Camera is intentionally excluded. This is the single switch for publish rights.
  */
-export const VOICE_PUBLISH_SOURCES: TrackSource[] = [TrackSource.MICROPHONE]
+export const VOICE_PUBLISH_SOURCES: TrackSource[] = [
+  TrackSource.MICROPHONE,
+  TrackSource.SCREEN_SHARE,
+  TrackSource.SCREEN_SHARE_AUDIO
+]
 
 export function roomNameForChannel(channelId: string): string {
   return `${ROOM_PREFIX}${channelId}`

@@ -6,9 +6,9 @@ A self-hosted, Discord-inspired chat app for friends: an **Electron + React + Ty
 | --- | --- |
 | [`desktop/`](desktop/) | Electron desktop client |
 | [`server/`](server/) | Backend API + real-time gateway + Docker Compose (backend + LiveKit) ([server README](server/README.md)) |
-| [`docs/`](docs/) | Design notes and the [Jetson voice deployment guide](docs/voice-deployment-jetson.md) |
+| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md) and the [screen sharing guide](docs/screen-sharing-jetson.md) |
 
-**Status — Milestone 4:** real voice channels (WebRTC via self-hosted LiveKit): join/leave/switch, mute, deafen, push-to-talk, active-speaker indicators, device selection, per-user volume, automatic reconnection. Text messaging, persistent history, and presence from Milestone 2 are unchanged.
+**Status — Milestone 5:** screen sharing ("Go Live") in voice channels: in-app source picker (screens and windows), optional Windows system audio, 1080p30 / 1080p60 / 1440p60 presets with GPU H.264 encoding, a stream viewer (focus, mini player, fullscreen, live stats), LIVE badges, per-stream volume, input sensitivity with a level meter, a mic test, and a diagnostics page. Voice (Milestone 4) and text messaging, history and presence (Milestone 2) are unchanged.
 
 > ⚠️ Sign-in currently uses **development identities** (no password). Keep the server on your own PC or a trusted LAN. Details: [server/README.md → Development-only capabilities](server/README.md#development-only-capabilities).
 
@@ -104,7 +104,38 @@ Ideally use two Windows PCs (Alice, Bob) with headsets, both pointed at `http://
 8. **Recovery:** reconnect Bob's network → Bob rejoins Lounge automatically and audio resumes. (Server-side variant: `docker compose restart livekit` on the Jetson → both clients rejoin by themselves.)
 9. **Leaving stops the mic:** click the hang-up button. The Windows microphone indicator in the taskbar disappears within a second and the user is removed from Lounge on both clients.
 
-Extras: Settings → Voice & Audio for input/output device, input/output volume, echo cancellation / noise suppression / auto gain, and push-to-talk (default key `` ` ``; hold while the app is focused). Click a user in your voice channel to set their volume (0–200%).
+Extras: Settings → Voice & Audio for input/output device, input/output volume, input sensitivity (live meter, manual noise gate), a local mic test ("Let's Check"), echo cancellation / noise suppression / auto gain, and push-to-talk (default key `` ` ``; hold while the app is focused). Click a user in your voice channel to set their volume (0–200%).
+
+## Screen sharing (Go Live)
+
+Requires the Milestone 5 server (see [docs/screen-sharing-jetson.md](docs/screen-sharing-jetson.md); it adds a LiveKit codec setting that enables GPU encoding on Windows).
+
+- **Share:** join a voice channel → **Share Screen** in the voice panel → pick a screen or application window, quality (default 1080p 60fps), *Optimize for* and *Share system audio* → **Go Live**. While live, the panel shows a LIVE badge, a quality switch, a preview button and **Stop Streaming**.
+- **Watch:** click the red **LIVE** badge next to a user in the channel list (works from another channel too, it joins you there). Click a text channel to keep watching in a mini player; use the viewer's buttons for fullscreen, actual size, stats and stream volume.
+- **Diagnostics:** Settings → Diagnostics shows the encoder/decoder actually in use (and whether Chromium reports it as hardware), bitrate, fps, loss, RTT, CPU, memory and GPU status.
+
+### Hardware test checklist (two Windows PCs, Jetson deployed)
+
+1. Both PCs on `milestone-5-screen-sharing`, pointed at `http://192.168.68.65:3001`; both join *Lounge* and hear each other (voice unchanged).
+2. Alice: **Share Screen** → the picker lists screens (with resolution) and windows with thumbnails; Discord 2.0 itself isn't listed.
+3. Alice picks her screen, 1080p 60fps, system audio on → **Go Live**. Her panel shows LIVE + the source name.
+4. Bob sees a red **LIVE** badge next to Alice (no video is downloaded yet).
+5. Bob clicks LIVE → Alice's screen appears in focus view; header shows resolution · fps · H264.
+6. Bob opens stats (chart icon): ~1920×1080, close to 60 fps on moving content, 0% loss on wired LAN.
+7. Alice: Settings → Diagnostics → *Hardware encoder: Yes*, encoder shows the GPU (e.g. NVIDIA … Encoder MFT).
+8. Alice plays a video with sound: Bob hears it; Bob's stream volume slider (bottom of the viewer) changes only the stream, not Alice's voice.
+9. Alice and Bob talk while streaming: voices still work. On Windows 11 Bob does **not** hear his own voice echoed back through Alice's stream.
+10. Bob deafens: stream audio and voices stop, the video continues. Undeafen → both resume.
+11. Bob clicks *#general*: the stream continues in the mini player (bottom-right); expand returns to focus view.
+12. Bob: fullscreen, then Esc; then the "actual size" toggle.
+13. Alice switches quality to 1440p 60fps (on a 1440p monitor): Bob's header shows 2560×1440 within a few seconds, without a new picker. On a 1080p monitor the picker warns it will stay at native size.
+14. Alice shares a single window, then closes that window: her stream stops with a notice; Bob sees *Stream ended*.
+15. Alice clicks **Stop Streaming**: Windows' capture indicator disappears; Bob sees *Stream ended*.
+16. Alice goes live again, then switches to *Chill Zone*: the stream stops automatically; voice moves with her.
+17. Bob (in Lounge) clicks Alice's LIVE badge under *Chill Zone* after she goes live there: Bob is moved to Chill Zone and watches.
+18. Unplug Alice's network for ~2 minutes while live: Bob sees *Stream ended*; Alice's panel shows reconnecting, then a notice that the stream stopped; after reconnecting she's back in voice and can Go Live again.
+19. Alice clicks the hang-up button while live: the stream stops, mic and screen capture are released.
+20. On the Jetson during the stream: `docker stats` (LiveKit low CPU), `nload eth0` (≈ bitrate × viewers). Record results.
 
 ## Checks
 

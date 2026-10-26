@@ -42,7 +42,13 @@ export function useVoice({ fetchToken, settings }: UseVoiceOptions): Voice {
       autoGainControl: settings.autoGainControl,
       inputVolume: settings.inputVolume,
       outputVolume: settings.outputVolume,
-      userVolumes: settings.userVolumes
+      userVolumes: settings.userVolumes,
+      streamVolumes: settings.streamVolumes,
+      // The manual noise gate only applies in voice-activity mode.
+      inputSensitivityDb:
+        settings.inputSensitivityAuto || settings.inputMode === 'push-to-talk'
+          ? null
+          : settings.inputSensitivityDb
     }),
     [
       settings.inputDeviceId,
@@ -52,7 +58,11 @@ export function useVoice({ fetchToken, settings }: UseVoiceOptions): Voice {
       settings.autoGainControl,
       settings.inputVolume,
       settings.outputVolume,
-      settings.userVolumes
+      settings.userVolumes,
+      settings.streamVolumes,
+      settings.inputSensitivityAuto,
+      settings.inputMode,
+      settings.inputSensitivityDb
     ]
   )
 

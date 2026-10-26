@@ -127,14 +127,10 @@ The client's Content-Security-Policy allows any port on that host, so `ws://192.
 ## Security notes
 
 - **Development identities are not authentication.** With `DEV_AUTH=true`, anyone on your LAN can sign in as any username and therefore obtain a voice token. Voice access is exactly as strong as that sign-in. Keep the deployment LAN-only until real accounts replace dev identities.
-- Voice tokens: 5-minute lifetime, one room each, identity = the backend user id, microphone-only publish rights, no admin rights.
+- Voice tokens: 5-minute lifetime, one room each, identity = the backend user id, publish rights limited to microphone + screen share (+ its audio), no camera, no admin rights.
 - Media is encrypted in transit (DTLS-SRTP) but the SFU can technically access it (no end-to-end encryption yet). Signaling is plain `ws://` on the LAN; add TLS (`wss://`) via a reverse proxy before any wider exposure.
 - Secrets live only in `server/.env` on the Jetson (mode 600) and inside the containers' environment.
 
-## Future screen sharing (1080p60 / 1440p60)
+## Screen sharing (1080p60 / 1440p60)
 
-The deployment is ready for it without structural changes:
-
-- Media already flows through the SFU without transcoding; screen video will be encoded on the sharer's PC (hardware encoders via Chromium) and only forwarded by the Jetson, which has no NVENC.
-- Enabling it means adding `SCREEN_SHARE` / `SCREEN_SHARE_AUDIO` to `VOICE_PUBLISH_SOURCES` on the backend and a display-capture permission policy in Electron's main process.
-- Bandwidth, not CPU, is the constraint: 1440p60 ≈ 8–16 Mbps per viewer. Simulcast/dynacast (already enabled in the client) let low-bandwidth viewers receive lower layers. A single UDP mux port is fine on a LAN; switch to a UDP port range if packet rates ever become a bottleneck.
+Implemented in Milestone 5. See **[screen-sharing-jetson.md](screen-sharing-jetson.md)** for the architecture, the LiveKit codec setting that enables GPU encoding on Windows, deployment and rollback commands, bandwidth figures and the benchmark procedure. The Jetson still only forwards packets; it never transcodes.

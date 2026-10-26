@@ -50,6 +50,22 @@ services:
           empty_timeout: 300
           departure_timeout: 20
           max_participants: 25
+          # LiveKit's default codec list, plus H.264 profile 42001f: Chromium on Windows only
+          # hardware-encodes (NVENC/AMF/QSV via Media Foundation) that profile; with the default
+          # 42e01f it falls back to software OpenH264. The SFU only forwards packets (no transcoding).
+          enabled_codecs:
+            - mime: audio/pcmu
+            - mime: audio/pcma
+            - mime: audio/opus
+            - mime: audio/red
+            - mime: video/vp8
+            - mime: video/h264
+              fmtp_line: level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f
+            - mime: video/h264
+            - mime: video/vp9
+            - mime: video/av1
+            - mime: video/h265
+            - mime: video/rtx
         logging:
           level: ${LIVEKIT_LOG_LEVEL:-info}
     ports:

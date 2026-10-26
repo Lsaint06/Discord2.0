@@ -89,10 +89,10 @@ All `/api/*` routes except `/api/meta` and `/api/dev/login` require `Authorizati
 `POST /api/voice/channels/:channelId/token` requires a session and:
 
 - validates the channel exists, is a **voice** channel, and that the user is a member of its server (bots are refused);
-- signs a LiveKit JWT with the server-held secret: identity = the session's user id (any client-supplied identity is ignored), room = `voice_<channelId>`, `roomJoin` only (no admin), publish restricted to `microphone`, **5-minute TTL** (LiveKit refreshes it for live sessions; reconnects request a new one);
+- signs a LiveKit JWT with the server-held secret: identity = the session's user id (any client-supplied identity is ignored), room = `voice_<channelId>`, `roomJoin` only (no admin), publish restricted to `microphone`, `screen_share` and `screen_share_audio` (never camera; no data channel), **5-minute TTL** (LiveKit refreshes it for live sessions; reconnects request a new one);
 - is rate limited (10 burst, ~1 per 3 s per user); returns `503 voice_unavailable` when LiveKit isn't configured.
 
-Screen sharing will later be enabled by adding sources to `VOICE_PUBLISH_SOURCES` in [`src/voice/access.ts`](src/voice/access.ts).
+Allowed sources live in `VOICE_PUBLISH_SOURCES` in [`src/voice/access.ts`](src/voice/access.ts). Screen-share presence (`streaming`) comes from LiveKit `track_published` / `track_unpublished` webhooks plus the 30 s reconciliation. See [docs/screen-sharing-jetson.md](../docs/screen-sharing-jetson.md).
 
 ### Real-time gateway (`GET /gateway`, WebSocket)
 
@@ -102,7 +102,7 @@ JSON frames `{ op, d }`. Types live in [`src/protocol.ts`](src/protocol.ts) (mir
 2. Client → `identify { token }` (token sent in a frame, never in the URL, so it can't leak into logs)
 3. Server → `ready { user, users, voiceStates }`
 4. Client → `heartbeat` every interval; server → `heartbeat_ack`. No traffic for 60 s ⇒ server closes the socket.
-5. Server pushes `message_create`, `user_update` (profile + presence), `server_create`, `voice_state_update { userId, channelId | null }` (from LiveKit webhooks, reconciled with LiveKit every 30 s).
+5. Server pushes `message_create`, `user_update` (profile + presence), `server_create`, `voice_state_update { userId, channelId | null, streaming? }` (from LiveKit webhooks, reconciled with LiveKit every 30 s; `streaming: true` while the user is screen sharing).
 6. Client may send `set_status { status: online|idle|dnd|invisible }`.
 
 Close codes: `4001` auth failed (don't reconnect), `4002` identify timeout, `4003` invalid frame, `4004` heartbeat timeout, `4008` rate limited, `4010` server shutdown.

@@ -52,6 +52,22 @@ room:
   auto_create: true
   empty_timeout: 300
   departure_timeout: 20
+  # LiveKit's default codec list, plus H.264 profile 42001f: Chromium on Windows only uses the
+  # GPU (e.g. NVENC via Media Foundation) for that profile; the default 42e01f falls back to
+  # software OpenH264. See docs/screen-sharing-jetson.md.
+  enabled_codecs:
+    - mime: audio/pcmu
+    - mime: audio/pcma
+    - mime: audio/opus
+    - mime: audio/red
+    - mime: video/vp8
+    - mime: video/h264
+      fmtp_line: level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f
+    - mime: video/h264
+    - mime: video/vp9
+    - mime: video/av1
+    - mime: video/h265
+    - mime: video/rtx
 logging:
   level: info
 "@

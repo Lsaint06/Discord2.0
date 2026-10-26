@@ -53,6 +53,8 @@ export interface ApiErrorBody {
 export interface ApiVoiceState {
   userId: string
   channelId: string
+  /** Present (true) while the user is screen sharing. */
+  streaming?: boolean
 }
 
 /** Short-lived credentials for joining one voice channel's LiveKit room. */
@@ -89,7 +91,10 @@ export type GatewayServerFrame =
   | { op: 'user_update'; d: ApiUser }
   | { op: 'server_create'; d: ApiServer }
   /** channelId null = the user left voice. */
-  | { op: 'voice_state_update'; d: { userId: string; channelId: string | null } }
+  | {
+      op: 'voice_state_update'
+      d: { userId: string; channelId: string | null; streaming?: boolean }
+    }
 
 /** Custom WebSocket close codes (4000–4999 are application-defined). */
 export const CloseCodes = {

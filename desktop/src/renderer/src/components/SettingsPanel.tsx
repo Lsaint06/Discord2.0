@@ -3,24 +3,39 @@ import type { SelectableStatus, UserSettings } from '../types'
 import { accentChoices, defaultSettings } from '../data/defaults'
 import { presenceFromSetting, statusLabels } from '../lib/format'
 import { LIMITS } from '../net/protocol'
+import type { MediaSession, MediaSnapshot } from '../media/MediaSession'
+import {
+  projectedEgressMbps,
+  SCREEN_CODEC_LABELS,
+  SCREEN_PROFILES,
+  type ScreenCodec,
+  type ScreenContentHint,
+  type ScreenProfileId
+} from '../media/screenProfiles'
 import Avatar from './Avatar'
 import { CloseIcon } from './Icons'
 import { Field, Toggle } from './SettingsControls'
 import VoiceSettings from './VoiceSettings'
+import DiagnosticsPanel from './DiagnosticsPanel'
 
-type SectionId = 'account' | 'appearance' | 'voice' | 'notifications'
+type SectionId = 'account' | 'appearance' | 'voice' | 'streaming' | 'notifications' | 'diagnostics'
 
 const sections: { id: SectionId; label: string }[] = [
   { id: 'account', label: 'My Account' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'voice', label: 'Voice & Audio' },
-  { id: 'notifications', label: 'Notifications' }
+  { id: 'streaming', label: 'Screen Share' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'diagnostics', label: 'Diagnostics' }
 ]
 
 const statusOptions: SelectableStatus[] = ['online', 'idle', 'dnd', 'invisible']
 
 interface SettingsPanelProps {
   settings: UserSettings
+  voiceSession: MediaSession
+  voiceState: MediaSnapshot
+  userName: (userId: string) => string
   displayName: string
   username: string
   avatarColor: string
@@ -37,6 +52,9 @@ interface SettingsPanelProps {
 
 function SettingsPanel({
   settings,
+  voiceSession,
+  voiceState,
+  userName,
   displayName,
   username,
   avatarColor,
@@ -251,6 +269,7 @@ function SettingsPanel({
 
           {section === 'voice' && (
             <VoiceSettings
+              session={voiceSession}
               settings={settings}
               muted={muted}
               deafened={deafened}
@@ -258,6 +277,80 @@ function SettingsPanel({
               onToggleMute={onToggleMute}
               onToggleDeafen={onToggleDeafen}
             />
+          )}
+
+          {section === 'streaming' && (
+            <>
+              <h2>Screen Share</h2>
+              <p className="settings-note">
+                Defaults for the Go Live dialog. You can change quality during a stream from the
+                voice panel.
+              </p>
+              <div className="settings-grid">
+                <Field label="Default Quality">
+                  <select
+                    className="text-input"
+                    value={settings.screenShareProfile}
+                    onChange={(e) =>
+                      onChange({ screenShareProfile: e.target.value as ScreenProfileId })
+                    }
+                  >
+                    {Object.values(SCREEN_PROFILES).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Optimize For">
+                  <select
+                    className="text-input"
+                    value={settings.screenShareHint}
+                    onChange={(e) =>
+                      onChange({ screenShareHint: e.target.value as ScreenContentHint })
+                    }
+                  >
+                    <option value="motion">Motion (games, video)</option>
+                    <option value="detail">Clarity (text, code)</option>
+                  </select>
+                </Field>
+              </div>
+              <Field label="Video Codec">
+                <select
+                  className="text-input"
+                  value={settings.screenShareCodec}
+                  onChange={(e) => onChange({ screenShareCodec: e.target.value as ScreenCodec })}
+                >
+                  {(Object.keys(SCREEN_CODEC_LABELS) as ScreenCodec[]).map((c) => (
+                    <option key={c} value={c}>
+                      {SCREEN_CODEC_LABELS[c]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <p className="settings-note">
+                Projected upload from the server at{' '}
+                {SCREEN_PROFILES[settings.screenShareProfile].label}: about{' '}
+                {projectedEgressMbps(SCREEN_PROFILES[settings.screenShareProfile], 1)} Mbps per
+                viewer ({projectedEgressMbps(SCREEN_PROFILES[settings.screenShareProfile], 5)} Mbps
+                for 5 viewers). These are encoder ceilings, not measurements.
+              </p>
+              <Toggle
+                label="Share system audio by default"
+                description="Windows only. On Windows 10 other people's voices can be captured too."
+                checked={settings.screenShareAudio}
+                onChange={(screenShareAudio) => onChange({ screenShareAudio })}
+              />
+              <Toggle
+                label="Show stream stats when watching"
+                checked={settings.showStreamStats}
+                onChange={(showStreamStats) => onChange({ showStreamStats })}
+              />
+            </>
+          )}
+
+          {section === 'diagnostics' && (
+            <DiagnosticsPanel session={voiceSession} state={voiceState} userName={userName} />
           )}
 
           {section === 'notifications' && (

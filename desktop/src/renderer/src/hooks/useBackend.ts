@@ -97,6 +97,8 @@ export interface Backend {
   unread: Set<string>
   /** userId → voice channelId, from the backend (LiveKit webhooks). */
   voiceStates: Record<string, string>
+  /** userIds currently screen sharing (LIVE), from the backend. */
+  voiceStreaming: Record<string, true>
   gateway: { status: GatewayStatus; retryInMs?: number }
   focusChannel: (channelId: string) => void
   markRead: (channelId: string) => void
@@ -125,6 +127,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   const [channels, setChannels] = useState<Record<string, ChannelState>>({})
   const [unread, setUnread] = useState<Set<string>>(() => new Set())
   const [voiceStates, setVoiceStates] = useState<Record<string, string>>({})
+  const [voiceStreaming, setVoiceStreaming] = useState<Record<string, true>>({})
   const [gateway, setGateway] = useState<{ status: GatewayStatus; retryInMs?: number }>({
     status: 'connecting'
   })
@@ -246,13 +249,26 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         setMe(data.user)
         setUsers(Object.fromEntries(data.users.map((u) => [u.id, u])))
         setVoiceStates(Object.fromEntries(data.voiceStates.map((v) => [v.userId, v.channelId])))
+        setVoiceStreaming(
+          Object.fromEntries(
+            data.voiceStates.filter((v) => v.streaming).map((v) => [v.userId, true as const])
+          )
+        )
         if (isReconnect) void resync()
       },
-      onVoiceStateUpdate: ({ userId, channelId }) => {
+      onVoiceStateUpdate: ({ userId, channelId, streaming }) => {
         setVoiceStates((prev) => {
           if (prev[userId] === (channelId ?? undefined)) return prev
           const next = { ...prev }
           if (channelId) next[userId] = channelId
+          else delete next[userId]
+          return next
+        })
+        const live = Boolean(channelId && streaming)
+        setVoiceStreaming((prev) => {
+          if (Boolean(prev[userId]) === live) return prev
+          const next = { ...prev }
+          if (live) next[userId] = true
           else delete next[userId]
           return next
         })
@@ -520,6 +536,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     channels,
     unread,
     voiceStates,
+    voiceStreaming,
     gateway,
     focusChannel,
     markRead,

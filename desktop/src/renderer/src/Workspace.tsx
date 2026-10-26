@@ -15,6 +15,9 @@ import UserPanel, { type VoiceConnection } from './components/UserPanel'
 import SettingsPanel from './components/SettingsPanel'
 import CreateServerModal from './components/CreateServerModal'
 import ConnectionBanner from './components/ConnectionBanner'
+import ScreenSharePicker from './components/ScreenSharePicker'
+import StreamViewer, { type ViewerMode } from './components/StreamViewer'
+import type { ScreenShareOptions, ScreenSource } from './media/ScreenShareController'
 
 const EMPTY_MESSAGES: never[] = []
 
@@ -76,6 +79,8 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   const [showMembers, setShowMembers] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [createServerOpen, setCreateServerOpen] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [viewerMode, setViewerMode] = useState<ViewerMode>('focus')
 
   const handleSessionInvalid = useCallback(
     () => onSignOut('Your session is no longer valid. Please sign in again.'),
@@ -180,7 +185,11 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
         status: voiceStatus,
         error: voice.state.error,
         micError: voice.state.micError,
+        deviceNotice: voice.state.deviceNotice,
         retryInMs: voice.state.retryInMs,
+        quality: voice.state.connectionQuality,
+        audioBlocked: voice.state.audioBlocked,
+        screenShare: voice.state.screenShare,
         pushToTalk: pushToTalkMode
           ? {
               keyLabel: describeKey(settings.pushToTalkKey),
@@ -214,6 +223,62 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     [voice.state.participants, muted, deafened]
   )
 
+  // ---- Screen sharing ----
+  const selfSharing = voice.state.screenShare.status === 'live'
+  const isStreaming = useCallback(
+    (userId: string): boolean => {
+      if (userId === selfId && voiceActive) return selfSharing
+      // In our room LiveKit is authoritative (and instant); elsewhere use the backend's view.
+      const p = voice.state.participants.find((x) => x.identity === userId)
+      return p ? p.sharingScreen : Boolean(backend.voiceStreaming[userId])
+    },
+    [selfId, voiceActive, selfSharing, voice.state.participants, backend.voiceStreaming]
+  )
+
+  const watching = voice.state.watching
+  const watchingSelf = watching !== null && watching === selfId
+  const watchedParticipant = watching
+    ? voice.state.participants.find((p) => p.identity === watching)
+    : undefined
+  const watchedLive = watchingSelf ? selfSharing : Boolean(watchedParticipant?.sharingScreen)
+
+  const watchStream = (userId: string, channel: Channel): void => {
+    setViewerMode('focus')
+    if (channel.id !== voiceChannelId || !voiceActive) {
+      void voice.session.join(channel.id, { watch: userId })
+    } else {
+      voice.session.watch(userId)
+    }
+  }
+
+  const stopWatching = (): void => {
+    voice.session.watch(null)
+    setViewerMode('focus')
+  }
+
+  const shareDefaults: ScreenShareOptions = {
+    profileId: settings.screenShareProfile,
+    audio: settings.screenShareAudio,
+    hint: settings.screenShareHint,
+    codec: settings.screenShareCodec
+  }
+
+  const goLive = (source: ScreenSource, options: ScreenShareOptions): void => {
+    setPickerOpen(false)
+    updateSettings({
+      screenShareProfile: options.profileId,
+      screenShareAudio: options.audio,
+      screenShareHint: options.hint,
+      screenShareCodec: options.codec
+    })
+    void voice.session.startScreenShare(source, options)
+  }
+
+  const closePicker = useCallback((): void => {
+    setPickerOpen(false)
+    void window.d2?.screen.cancel()
+  }, [])
+
   const selectServer = (serverId: string): void => {
     setActiveServerId(serverId)
     const server = servers.find((s) => s.id === serverId)
@@ -229,6 +294,8 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     }
     setActiveChannelByServer((prev) => ({ ...prev, [activeServer.id]: channel.id }))
     backend.markRead(channel.id)
+    // Keep watching in a mini player while reading chat.
+    if (watching) setViewerMode('mini')
   }
 
   const toggleMute = (): void => {
@@ -322,6 +389,13 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
         onUserVolumeChange={(userId, volume) =>
           updateSettings({ userVolumes: { ...settings.userVolumes, [userId]: volume } })
         }
+        isStreaming={isStreaming}
+        watchingId={watching}
+        onWatch={watchStream}
+        getStreamVolume={(userId) => settings.streamVolumes[userId] ?? 100}
+        onStreamVolumeChange={(userId, volume) =>
+          updateSettings({ streamVolumes: { ...settings.streamVolumes, [userId]: volume } })
+        }
         onSelectChannel={selectChannel}
         footer={
           <UserPanel
@@ -340,11 +414,51 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             onOpenMicSettings={
               window.d2 ? () => void window.d2?.media.openMicrophoneSettings() : undefined
             }
+            onShareScreen={() => {
+              voice.session.dismissScreenShareMessage()
+              setPickerOpen(true)
+            }}
+            onStopShare={() => void voice.session.stopScreenShare()}
+            onPreviewShare={() => {
+              setViewerMode('focus')
+              voice.session.watch(selfId)
+            }}
+            onChangeShareProfile={(profileId) => {
+              updateSettings({ screenShareProfile: profileId })
+              void voice.session.setScreenShareProfile(profileId)
+            }}
+            onDismissShareMessage={() => voice.session.dismissScreenShareMessage()}
+            onDismissDeviceNotice={() => voice.session.dismissDeviceNotice()}
+            onStartAudio={() => void voice.session.startAudio()}
           />
         }
       />
 
-      {activeChannel ? (
+      {watching && viewerMode === 'focus' ? (
+        <main className="chat-panel stream-main">
+          <StreamViewer
+            session={voice.session}
+            identity={watching}
+            isSelf={watchingSelf}
+            sharerName={resolveUser(watching).name}
+            channelName={voiceNames?.channelName ?? ''}
+            live={watchedLive}
+            streamRevision={voice.state.streamRevision}
+            mode="focus"
+            volume={
+              !watchingSelf && watchedParticipant?.sharingAudio
+                ? (settings.streamVolumes[watching] ?? 100)
+                : null
+            }
+            defaultShowStats={settings.showStreamStats}
+            onVolumeChange={(volume) =>
+              updateSettings({ streamVolumes: { ...settings.streamVolumes, [watching]: volume } })
+            }
+            onModeChange={setViewerMode}
+            onStopWatching={stopWatching}
+          />
+        </main>
+      ) : activeChannel ? (
         <ChatPanel
           channel={activeChannel}
           messages={channelState?.messages ?? EMPTY_MESSAGES}
@@ -375,13 +489,38 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
         <main className="chat-panel empty-state">This server has no text channels yet.</main>
       )}
 
-      {showMembers && activeChannel && (
+      {showMembers && activeChannel && !(watching && viewerMode === 'focus') && (
         <MemberList server={activeServer} resolveUser={resolveUser} />
+      )}
+
+      {watching && viewerMode === 'mini' && (
+        <StreamViewer
+          session={voice.session}
+          identity={watching}
+          isSelf={watchingSelf}
+          sharerName={resolveUser(watching).name}
+          channelName={voiceNames?.channelName ?? ''}
+          live={watchedLive}
+          streamRevision={voice.state.streamRevision}
+          mode="mini"
+          volume={null}
+          defaultShowStats={false}
+          onVolumeChange={() => undefined}
+          onModeChange={setViewerMode}
+          onStopWatching={stopWatching}
+        />
+      )}
+
+      {pickerOpen && (
+        <ScreenSharePicker initial={shareDefaults} onGoLive={goLive} onClose={closePicker} />
       )}
 
       {settingsOpen && (
         <SettingsPanel
           settings={settings}
+          voiceSession={voice.session}
+          voiceState={voice.state}
+          userName={(id) => resolveUser(id).name}
           displayName={displayName}
           username={backend.me?.username ?? session.username}
           avatarColor={backend.me?.avatarColor ?? settings.accentColor}

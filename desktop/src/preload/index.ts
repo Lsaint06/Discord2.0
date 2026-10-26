@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { D2DesktopApi, MicrophoneAccess } from './types'
+import type {
+  AppMetrics,
+  D2DesktopApi,
+  MicrophoneAccess,
+  ScreenCaptureCapabilities,
+  ScreenSelectResult,
+  ScreenSourceInfo
+} from './types'
 
 // Custom APIs for renderer
 const api = {}
@@ -11,6 +18,19 @@ const d2: D2DesktopApi = {
   media: {
     getMicrophoneAccess: () => ipcRenderer.invoke('d2:mic-access') as Promise<MicrophoneAccess>,
     openMicrophoneSettings: () => ipcRenderer.invoke('d2:open-mic-settings') as Promise<boolean>
+  },
+  screen: {
+    getCapabilities: () =>
+      ipcRenderer.invoke('d2:screen-capabilities') as Promise<ScreenCaptureCapabilities | null>,
+    getSources: () => ipcRenderer.invoke('d2:screen-sources') as Promise<ScreenSourceInfo[]>,
+    select: (sourceId, options) =>
+      ipcRenderer.invoke('d2:screen-select', sourceId, {
+        audio: options.audio === true
+      }) as Promise<ScreenSelectResult>,
+    cancel: () => ipcRenderer.invoke('d2:screen-cancel') as Promise<void>
+  },
+  diagnostics: {
+    getAppMetrics: () => ipcRenderer.invoke('d2:app-metrics') as Promise<AppMetrics | null>
   },
   pushToTalk: {
     register: (accelerator) =>
