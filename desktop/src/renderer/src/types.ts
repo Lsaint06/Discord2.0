@@ -54,10 +54,15 @@ export interface Message {
   authorId: string
   content: string
   timestamp: number
+  /** Client-generated id used to reconcile optimistic messages with the server copy. */
+  nonce?: string
+  /** True while the message is being sent. */
+  pending?: boolean
+  /** Error text when sending failed. */
+  failed?: string
 }
 
 export interface UserSettings {
-  displayName: string
   status: SelectableStatus
   customStatus: string
   compactMode: boolean

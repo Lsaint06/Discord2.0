@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
-import { accentChoices } from '../data/mockData'
+import { accentChoices } from '../data/defaults'
 import { initials } from '../lib/format'
 import { CloseIcon } from './Icons'
 
 interface CreateServerModalProps {
-  onCreate: (name: string, color: string) => void
+  /** Resolves to an error message, or null on success. */
+  onCreate: (name: string, color: string) => Promise<string | null>
   onClose: () => void
 }
 
 function CreateServerModal({ onCreate, onClose }: CreateServerModalProps): React.JSX.Element {
   const [name, setName] = useState('')
   const [color, setColor] = useState(accentChoices[0])
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -30,9 +33,17 @@ function CreateServerModal({ onCreate, onClose }: CreateServerModalProps): React
         aria-modal="true"
         aria-labelledby="create-server-title"
         onMouseDown={(e) => e.stopPropagation()}
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault()
-          if (trimmed) onCreate(trimmed, color)
+          if (!trimmed || submitting) return
+          setSubmitting(true)
+          setError(null)
+          const failure = await onCreate(trimmed, color)
+          // On success the parent unmounts this modal.
+          if (failure) {
+            setError(failure)
+            setSubmitting(false)
+          }
         }}
       >
         <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
@@ -75,12 +86,18 @@ function CreateServerModal({ onCreate, onClose }: CreateServerModalProps): React
           </div>
         </div>
 
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+
         <div className="modal-footer">
           <button type="button" className="button secondary" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="button primary" disabled={!trimmed}>
-            Create
+          <button type="submit" className="button primary" disabled={!trimmed || submitting}>
+            {submitting ? 'Creating…' : 'Create'}
           </button>
         </div>
       </form>

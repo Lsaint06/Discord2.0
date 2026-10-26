@@ -1,0 +1,20 @@
+# Development/LAN deployment. See server/README.md before exposing this beyond your own machine.
+services:
+  server:
+    build: .
+    image: discord2-server:dev
+    restart: unless-stopped
+    environment:
+      # DEVELOPMENT ONLY identities. Disable (false) once real authentication exists.
+      DEV_AUTH: ${DEV_AUTH:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      # Published on loopback only by default. To let other PCs on a trusted LAN connect,
+      # set BIND_ADDRESS to this machine's LAN IP (e.g. 192.168.1.50). Never publish to the internet.
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3001}:3001"
+    volumes:
+      - discord2-data:/data
+
+volumes:
+  discord2-data:

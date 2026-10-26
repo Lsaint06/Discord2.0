@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { SelectableStatus, UserSettings } from '../types'
-import { accentChoices, defaultSettings } from '../data/mockData'
+import { accentChoices, defaultSettings } from '../data/defaults'
 import { presenceFromSetting, statusLabels } from '../lib/format'
+import { LIMITS } from '../net/protocol'
 import Avatar from './Avatar'
 import { CloseIcon } from './Icons'
 
@@ -18,9 +19,15 @@ const statusOptions: SelectableStatus[] = ['online', 'idle', 'dnd', 'invisible']
 
 interface SettingsPanelProps {
   settings: UserSettings
+  displayName: string
+  username: string
+  avatarColor: string
+  serverUrl: string
   muted: boolean
   deafened: boolean
   onChange: (patch: Partial<UserSettings>) => void
+  onSaveDisplayName: (name: string) => Promise<string | null>
+  onLogout: () => void
   onToggleMute: () => void
   onToggleDeafen: () => void
   onClose: () => void
@@ -65,14 +72,23 @@ function Field({ label, children }: { label: string; children: ReactNode }): Rea
 
 function SettingsPanel({
   settings,
+  displayName,
+  username,
+  avatarColor,
+  serverUrl,
   muted,
   deafened,
   onChange,
+  onSaveDisplayName,
+  onLogout,
   onToggleMute,
   onToggleDeafen,
   onClose
 }: SettingsPanelProps): React.JSX.Element {
   const [section, setSection] = useState<SectionId>('account')
+  const [nameDraft, setNameDraft] = useState(displayName)
+  const [nameSaving, setNameSaving] = useState(false)
+  const [nameMessage, setNameMessage] = useState<{ error: boolean; text: string } | null>(null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -82,7 +98,17 @@ function SettingsPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const displayName = settings.displayName.trim() || 'You'
+  const trimmedName = nameDraft.trim()
+  const nameChanged = trimmedName.length > 0 && trimmedName !== displayName
+
+  const saveName = async (): Promise<void> => {
+    if (!nameChanged || nameSaving) return
+    setNameSaving(true)
+    setNameMessage(null)
+    const error = await onSaveDisplayName(trimmedName)
+    setNameSaving(false)
+    setNameMessage(error ? { error: true, text: error } : { error: false, text: 'Saved' })
+  }
 
   return (
     <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="User Settings">
@@ -107,6 +133,9 @@ function SettingsPanel({
           >
             Reset to Defaults
           </button>
+          <button type="button" className="settings-nav-item danger" onClick={onLogout}>
+            Sign Out
+          </button>
         </div>
       </nav>
 
@@ -120,7 +149,7 @@ function SettingsPanel({
                 <div className="profile-card-body">
                   <Avatar
                     name={displayName}
-                    color={settings.accentColor}
+                    color={avatarColor}
                     size={80}
                     status={presenceFromSetting(settings.status)}
                     ringColor="var(--bg-floating)"
@@ -135,15 +164,45 @@ function SettingsPanel({
               </div>
 
               <Field label="Display Name">
-                <input
-                  className="text-input"
-                  type="text"
-                  value={settings.displayName}
-                  maxLength={32}
-                  placeholder="You"
-                  onChange={(e) => onChange({ displayName: e.target.value })}
-                />
+                <form
+                  className="inline-form"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    void saveName()
+                  }}
+                >
+                  <input
+                    className="text-input"
+                    type="text"
+                    value={nameDraft}
+                    maxLength={LIMITS.displayNameMaxLength}
+                    onChange={(e) => {
+                      setNameDraft(e.target.value)
+                      setNameMessage(null)
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    className="button primary"
+                    disabled={!nameChanged || nameSaving}
+                  >
+                    {nameSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </form>
+                {nameMessage && (
+                  <span className={`field-hint${nameMessage.error ? ' error' : ''}`}>
+                    {nameMessage.text}
+                  </span>
+                )}
               </Field>
+
+              <div className="dev-notice">
+                <strong>Development identity</strong>
+                <span>
+                  Signed in as <code>@{username}</code> on <code>{serverUrl}</code>. Dev identities
+                  have no password and are not secure authentication.
+                </span>
+              </div>
 
               <Field label="Custom Status">
                 <input

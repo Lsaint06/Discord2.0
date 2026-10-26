@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from 'react'
 import type { Channel, Server, User } from '../types'
-import { CURRENT_USER_ID } from '../data/mockData'
 import Avatar from './Avatar'
 import { ChevronDownIcon, HashIcon, HeadphonesIcon, MicIcon, SpeakerIcon } from './Icons'
 
@@ -9,6 +8,7 @@ interface ChannelSidebarProps {
   activeChannelId: string
   unreadChannelIds: Set<string>
   voiceChannelId: string | null
+  selfId: string
   selfMuted: boolean
   selfDeafened: boolean
   resolveUser: (id: string) => User
@@ -21,6 +21,7 @@ function ChannelSidebar({
   activeChannelId,
   unreadChannelIds,
   voiceChannelId,
+  selfId,
   selfMuted,
   selfDeafened,
   resolveUser,
@@ -67,7 +68,7 @@ function ChannelSidebar({
                   const connected = channel.id === voiceChannelId
                   const participants =
                     channel.type === 'voice'
-                      ? [...(channel.voiceUsers ?? []), ...(connected ? [CURRENT_USER_ID] : [])]
+                      ? [...(channel.voiceUsers ?? []), ...(connected ? [selfId] : [])]
                       : []
 
                   // Collapsed categories still show the active/connected channel.
@@ -102,7 +103,7 @@ function ChannelSidebar({
                         <ul className="voice-users">
                           {participants.map((userId) => {
                             const user = resolveUser(userId)
-                            const isSelf = userId === CURRENT_USER_ID
+                            const isSelf = userId === selfId
                             return (
                               <li key={userId} className="voice-user">
                                 <Avatar name={user.name} color={user.avatarColor} size={22} />

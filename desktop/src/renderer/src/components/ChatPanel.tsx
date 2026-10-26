@@ -1,16 +1,22 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Channel, Message, User } from '../types'
 import { formatDayDivider, formatTime, formatTimestamp, isSameDay } from '../lib/format'
+import { LIMITS } from '../net/protocol'
 import Avatar from './Avatar'
 import { CloseIcon, HashIcon, MembersIcon, SearchIcon, SendIcon, SmileIcon } from './Icons'
 
 const GROUP_WINDOW_MS = 7 * 60_000
-const MAX_LENGTH = 2000
+const MAX_LENGTH = LIMITS.messageMaxLength
 const QUICK_EMOJI = ['😀', '😂', '🥹', '😎', '🤔', '🔥', '🎉', '❤️', '👍', '👀', '🍜', '🎮']
 
 interface ChatPanelProps {
   channel: Channel
   messages: Message[]
+  loaded: boolean
+  loadError?: string
+  hasMore: boolean
+  loadingOlder: boolean
+  banner?: ReactNode
   selfName: string
   showMembers: boolean
   compactMode: boolean
@@ -19,11 +25,24 @@ interface ChatPanelProps {
   roleColor: (userId: string) => string | undefined
   onToggleMembers: () => void
   onSendMessage: (content: string) => void
+  onLoadOlder: () => void
+  onReload: () => void
+  onRetryMessage: (nonce: string) => void
+  onDiscardMessage: (nonce: string) => void
+}
+
+function stateClass(message: Message): string {
+  return message.failed ? ' failed' : message.pending ? ' pending' : ''
 }
 
 function ChatPanel({
   channel,
   messages,
+  loaded,
+  loadError,
+  hasMore,
+  loadingOlder,
+  banner,
   selfName,
   showMembers,
   compactMode,
@@ -31,7 +50,11 @@ function ChatPanel({
   resolveUser,
   roleColor,
   onToggleMembers,
-  onSendMessage
+  onSendMessage,
+  onLoadOlder,
+  onReload,
+  onRetryMessage,
+  onDiscardMessage
 }: ChatPanelProps): React.JSX.Element {
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [search, setSearch] = useState({ channelId: channel.id, query: '' })
@@ -55,10 +78,12 @@ function ChatPanel({
     [messages, trimmedQuery, resolveUser]
   )
 
+  // Stick to the bottom when the newest message changes, but not when older history is prepended.
+  const lastMessageKey = messages.length > 0 ? messages[messages.length - 1].id : ''
   useEffect(() => {
     const el = scrollerRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [channel.id, messages.length])
+  }, [channel.id, lastMessageKey, loaded])
 
   useEffect(() => {
     const el = inputRef.current
@@ -163,9 +188,35 @@ function ChatPanel({
         </div>
       </header>
 
+      {banner}
+
       <div className="message-scroller" ref={scrollerRef}>
         <div className="message-list">
-          {!trimmedQuery && (
+          {!loaded && !loadError && <div className="channel-status">Loading messages…</div>}
+
+          {loadError && (
+            <div className="channel-status error">
+              <span>Couldn&rsquo;t load messages: {loadError}</span>
+              <button type="button" className="link-button" onClick={onReload}>
+                Try again
+              </button>
+            </div>
+          )}
+
+          {loaded && hasMore && !trimmedQuery && (
+            <div className="load-older">
+              <button
+                type="button"
+                className="link-button"
+                onClick={onLoadOlder}
+                disabled={loadingOlder}
+              >
+                {loadingOlder ? 'Loading…' : 'Load older messages'}
+              </button>
+            </div>
+          )}
+
+          {loaded && !hasMore && !trimmedQuery && (
             <div className="channel-welcome">
               <div className="channel-welcome-icon">
                 <HashIcon size={42} />
@@ -196,6 +247,26 @@ function ChatPanel({
             const author = resolveUser(message.authorId)
             const nameColor = roleColor(message.authorId)
             const highlighted = mentionsSelf(message)
+            const status = stateClass(message)
+            const failure = message.failed && message.nonce && (
+              <div className="message-failure" role="alert">
+                <span>Not sent: {message.failed}</span>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => onRetryMessage(message.nonce!)}
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => onDiscardMessage(message.nonce!)}
+                >
+                  Discard
+                </button>
+              </div>
+            )
 
             return (
               <Fragment key={message.id}>
@@ -206,7 +277,7 @@ function ChatPanel({
                 )}
 
                 {compactMode ? (
-                  <article className={`message compact${highlighted ? ' mentioned' : ''}`}>
+                  <article className={`message compact${highlighted ? ' mentioned' : ''}${status}`}>
                     {showTimestamps && (
                       <time
                         className="message-compact-time"
@@ -220,16 +291,18 @@ function ChatPanel({
                     </span>
                     {author.bot && <span className="bot-tag">BOT</span>}
                     <span className="message-content">{message.content}</span>
+                    {failure}
                   </article>
                 ) : grouped ? (
-                  <article className={`message grouped${highlighted ? ' mentioned' : ''}`}>
+                  <article className={`message grouped${highlighted ? ' mentioned' : ''}${status}`}>
                     <time className="message-hover-time" title={formatTimestamp(message.timestamp)}>
                       {formatTime(message.timestamp)}
                     </time>
                     <div className="message-content">{message.content}</div>
+                    {failure}
                   </article>
                 ) : (
-                  <article className={`message${highlighted ? ' mentioned' : ''}`}>
+                  <article className={`message${highlighted ? ' mentioned' : ''}${status}`}>
                     <Avatar name={author.name} color={author.avatarColor} size={40} />
                     <div className="message-body">
                       <div className="message-meta">
@@ -242,6 +315,7 @@ function ChatPanel({
                         )}
                       </div>
                       <div className="message-content">{message.content}</div>
+                      {failure}
                     </div>
                   </article>
                 )}

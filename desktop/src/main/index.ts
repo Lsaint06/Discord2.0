@@ -3,6 +3,16 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
+// Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
+// Lets two clients run side by side on one PC for testing.
+const profile = process.env['D2_PROFILE']
+if (profile) {
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(profile)) {
+    throw new Error('D2_PROFILE may only contain letters, numbers, "_" and "-" (max 32).')
+  }
+  app.setPath('userData', `${app.getPath('userData')}-${profile}`)
+}
+
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -16,9 +26,18 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,
+      // Keep gateway heartbeats running while the window is minimized or hidden.
+      backgroundThrottling: false
     }
   })
+
+  if (profile) {
+    mainWindow.on('page-title-updated', (event, title) => {
+      event.preventDefault()
+      mainWindow.setTitle(`${title} — ${profile}`)
+    })
+  }
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
