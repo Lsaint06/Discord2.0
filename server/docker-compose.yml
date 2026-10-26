@@ -1,4 +1,6 @@
-# Development/LAN deployment. See server/README.md before exposing this beyond your own machine.
+# Development/LAN deployment (Linux ARM64, e.g. NVIDIA Jetson Orin Nano). LAN-only by design:
+# never port-forward these ports or expose them through a public tunnel.
+# All credentials come from an untracked .env next to this file (see .env.example).
 services:
   server:
     build: .
@@ -9,12 +11,62 @@ services:
       DEV_AUTH: ${DEV_AUTH:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Voice. The secret stays inside the backend; clients only ever receive short-lived JWTs.
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY in .env}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}
+      LIVEKIT_URL: http://livekit:7880
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:?set LIVEKIT_PUBLIC_URL in .env, e.g. ws://192.168.68.65:7880}
     ports:
-      # Published on loopback only by default. To let other PCs on a trusted LAN connect,
-      # set BIND_ADDRESS to this machine's LAN IP (e.g. 192.168.1.50). Never publish to the internet.
+      # Loopback by default. On the Jetson set BIND_ADDRESS to its LAN IP (192.168.68.65).
       - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3001}:3001"
     volumes:
       - discord2-data:/data
+    depends_on:
+      - livekit
+
+  livekit:
+    # Official multi-arch image (linux/amd64 + linux/arm64). Pinned for reproducible deploys.
+    image: livekit/livekit-server:v1.13.11
+    restart: unless-stopped
+    environment:
+      # Config is generated from .env so no secret ever lives in a tracked file.
+      LIVEKIT_CONFIG: |
+        port: 7880
+        rtc:
+          # ICE over TCP fallback and a single multiplexed UDP port for all media.
+          tcp_port: 7881
+          udp_port: 7882
+          # LAN-only: advertise the Jetson's LAN address instead of discovering a public IP via STUN.
+          use_external_ip: false
+          node_ip: ${LIVEKIT_NODE_IP:?set LIVEKIT_NODE_IP in .env, e.g. 192.168.68.65}
+        keys:
+          ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+        webhook:
+          api_key: ${LIVEKIT_API_KEY}
+          urls:
+            - http://server:3001/api/livekit/webhook
+        room:
+          auto_create: true
+          empty_timeout: 300
+          departure_timeout: 20
+          max_participants: 25
+        logging:
+          level: ${LIVEKIT_LOG_LEVEL:-info}
+    ports:
+      # Signaling (WebSocket) + ICE/TCP + ICE/UDP mux, all on the LAN address only.
+      - "${BIND_ADDRESS:-127.0.0.1}:7880:7880/tcp"
+      - "${BIND_ADDRESS:-127.0.0.1}:7881:7881/tcp"
+      - "${BIND_ADDRESS:-127.0.0.1}:7882:7882/udp"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7880/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
 volumes:
   discord2-data:

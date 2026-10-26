@@ -49,6 +49,23 @@ export interface ApiErrorBody {
   error: { code: string; message: string; retryAfterMs?: number }
 }
 
+/** A user currently connected to a voice channel (source of truth: LiveKit webhooks). */
+export interface ApiVoiceState {
+  userId: string
+  channelId: string
+}
+
+/** Short-lived credentials for joining one voice channel's LiveKit room. */
+export interface ApiVoiceToken {
+  /** LiveKit WebSocket URL to connect to. */
+  url: string
+  /** Signed JWT, valid only for `room`, expiring at `expiresAt` (epoch ms). */
+  token: string
+  room: string
+  identity: string
+  expiresAt: number
+}
+
 export const LIMITS = {
   messageMaxLength: 2000,
   displayNameMaxLength: 32,
@@ -66,11 +83,13 @@ export type GatewayClientFrame =
 /** Server → client gateway frames. */
 export type GatewayServerFrame =
   | { op: 'hello'; d: { heartbeatIntervalMs: number } }
-  | { op: 'ready'; d: { user: ApiUser; users: ApiUser[] } }
+  | { op: 'ready'; d: { user: ApiUser; users: ApiUser[]; voiceStates: ApiVoiceState[] } }
   | { op: 'heartbeat_ack' }
   | { op: 'message_create'; d: ApiMessage }
   | { op: 'user_update'; d: ApiUser }
   | { op: 'server_create'; d: ApiServer }
+  /** channelId null = the user left voice. */
+  | { op: 'voice_state_update'; d: { userId: string; channelId: string | null } }
 
 /** Custom WebSocket close codes (4000–4999 are application-defined). */
 export const CloseCodes = {

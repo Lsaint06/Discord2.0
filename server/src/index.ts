@@ -11,6 +11,11 @@ const seeded = await seedIfEmpty(repo)
 const { app } = await buildApp(config, repo)
 
 if (seeded) app.log.info('Seeded a fresh database with starter servers')
+if (config.livekit) {
+  app.log.info({ livekit: config.livekit.publicUrl }, 'Voice enabled (LiveKit)')
+} else {
+  app.log.info('Voice disabled: LIVEKIT_* variables are not set')
+}
 if (config.devAuth) {
   app.log.warn(
     'DEV_AUTH is enabled: anyone who can reach this server can sign in as any username. Development only.'

@@ -1,5 +1,15 @@
 import { isIP } from 'node:net'
 
+export interface LiveKitConfig {
+  apiKey: string
+  /** Server-side only. Never sent to clients. */
+  apiSecret: string
+  /** URL the backend uses for LiveKit's server API (e.g. http://livekit:7880). */
+  apiUrl: string
+  /** WebSocket URL handed to desktop clients (e.g. ws://192.168.68.65:7880). */
+  publicUrl: string
+}
+
 export interface Config {
   env: 'development' | 'production' | 'test'
   host: string
@@ -15,6 +25,34 @@ export interface Config {
   allowNullOrigin: boolean
   trustProxy: boolean
   logLevel: string
+  /** Voice (LiveKit). null = voice disabled. */
+  livekit: LiveKitConfig | null
+}
+
+function parseLiveKit(env: NodeJS.ProcessEnv): LiveKitConfig | null {
+  const apiKey = env.LIVEKIT_API_KEY?.trim()
+  const apiSecret = env.LIVEKIT_API_SECRET?.trim()
+  const apiUrl = env.LIVEKIT_URL?.trim()
+  const publicUrl = env.LIVEKIT_PUBLIC_URL?.trim()
+  const provided = [apiKey, apiSecret, apiUrl, publicUrl].filter(Boolean).length
+  if (provided === 0) return null
+  if (provided !== 4) {
+    throw new Error(
+      'Voice config is incomplete: set all of LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL and LIVEKIT_PUBLIC_URL (or none).'
+    )
+  }
+  if (apiSecret!.length < 32) {
+    throw new Error('LIVEKIT_API_SECRET must be at least 32 characters.')
+  }
+  const api = new URL(apiUrl!)
+  if (api.protocol !== 'http:' && api.protocol !== 'https:') {
+    throw new Error('LIVEKIT_URL must be an http(s):// URL (server-to-server API).')
+  }
+  const pub = new URL(publicUrl!)
+  if (pub.protocol !== 'ws:' && pub.protocol !== 'wss:') {
+    throw new Error('LIVEKIT_PUBLIC_URL must be a ws(s):// URL reachable by desktop clients.')
+  }
+  return { apiKey: apiKey!, apiSecret: apiSecret!, apiUrl: api.origin, publicUrl: pub.origin }
 }
 
 function bool(value: string | undefined, fallback: boolean): boolean {
@@ -50,7 +88,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowLocalhostOrigins: bool(env.ALLOW_LOCALHOST_ORIGINS, !isProd),
     allowNullOrigin: bool(env.ALLOW_NULL_ORIGIN, true),
     trustProxy: bool(env.TRUST_PROXY, false),
-    logLevel: env.LOG_LEVEL ?? (isProd ? 'info' : 'debug')
+    logLevel: env.LOG_LEVEL ?? (isProd ? 'info' : 'debug'),
+    livekit: parseLiveKit(env)
   }
 }
 

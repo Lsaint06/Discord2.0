@@ -3,6 +3,7 @@ import {
   type ApiMessage,
   type ApiServer,
   type ApiUser,
+  type ApiVoiceState,
   type GatewayClientFrame,
   type GatewayServerFrame,
   type SelectableStatus
@@ -12,10 +13,14 @@ export type GatewayStatus = 'connecting' | 'connected' | 'reconnecting' | 'auth_
 
 export interface GatewayHandlers {
   onStatus: (status: GatewayStatus, retryInMs?: number) => void
-  onReady: (data: { user: ApiUser; users: ApiUser[] }, isReconnect: boolean) => void
+  onReady: (
+    data: { user: ApiUser; users: ApiUser[]; voiceStates: ApiVoiceState[] },
+    isReconnect: boolean
+  ) => void
   onMessage: (message: ApiMessage) => void
   onUserUpdate: (user: ApiUser) => void
   onServerCreate: (server: ApiServer) => void
+  onVoiceStateUpdate: (state: { userId: string; channelId: string | null }) => void
 }
 
 const BACKOFF_BASE_MS = 1_000
@@ -143,6 +148,9 @@ export class GatewayClient {
         break
       case 'server_create':
         this.handlers.onServerCreate(frame.d)
+        break
+      case 'voice_state_update':
+        this.handlers.onVoiceStateUpdate(frame.d)
         break
     }
   }

@@ -3,15 +3,26 @@ import type { Channel, Server, User } from '../types'
 import Avatar from './Avatar'
 import { ChevronDownIcon, HashIcon, HeadphonesIcon, MicIcon, SpeakerIcon } from './Icons'
 
+export interface VoiceUserDetails {
+  speaking: boolean
+  muted: boolean
+  deafened: boolean
+}
+
 interface ChannelSidebarProps {
   server: Server
   activeChannelId: string
   unreadChannelIds: Set<string>
+  /** Voice channel we're in (or joining), if any. */
   voiceChannelId: string | null
   selfId: string
-  selfMuted: boolean
-  selfDeafened: boolean
   resolveUser: (id: string) => User
+  /** User ids currently in a voice channel. */
+  voiceMembers: (channelId: string) => string[]
+  /** Live details for users in our current voice room (undefined elsewhere). */
+  voiceDetails: (userId: string) => VoiceUserDetails | undefined
+  getUserVolume: (userId: string) => number
+  onUserVolumeChange: (userId: string, volume: number) => void
   onSelectChannel: (channel: Channel) => void
   footer: ReactNode
 }
@@ -22,13 +33,16 @@ function ChannelSidebar({
   unreadChannelIds,
   voiceChannelId,
   selfId,
-  selfMuted,
-  selfDeafened,
   resolveUser,
+  voiceMembers,
+  voiceDetails,
+  getUserVolume,
+  onUserVolumeChange,
   onSelectChannel,
   footer
 }: ChannelSidebarProps): React.JSX.Element {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [volumeFor, setVolumeFor] = useState<string | null>(null)
 
   const toggleCategory = (id: string): void => {
     setCollapsed((prev) => {
@@ -66,10 +80,7 @@ function ChannelSidebar({
                   const active = channel.id === activeChannelId
                   const unread = unreadChannelIds.has(channel.id)
                   const connected = channel.id === voiceChannelId
-                  const participants =
-                    channel.type === 'voice'
-                      ? [...(channel.voiceUsers ?? []), ...(connected ? [selfId] : [])]
-                      : []
+                  const participants = channel.type === 'voice' ? voiceMembers(channel.id) : []
 
                   // Collapsed categories still show the active/connected channel.
                   if (isCollapsed && !active && !connected) return null
@@ -104,18 +115,49 @@ function ChannelSidebar({
                           {participants.map((userId) => {
                             const user = resolveUser(userId)
                             const isSelf = userId === selfId
+                            const details = connected ? voiceDetails(userId) : undefined
+                            const canAdjust = connected && !isSelf && details !== undefined
+                            const volume = getUserVolume(userId)
                             return (
-                              <li key={userId} className="voice-user">
-                                <Avatar name={user.name} color={user.avatarColor} size={22} />
-                                <span className="voice-user-name">{user.name}</span>
-                                {isSelf && (selfMuted || selfDeafened) && (
-                                  <span className="voice-user-flags">
-                                    {selfDeafened ? (
-                                      <HeadphonesIcon size={14} slashed />
-                                    ) : (
-                                      <MicIcon size={14} slashed />
-                                    )}
+                              <li key={userId}>
+                                <button
+                                  type="button"
+                                  className={`voice-user${canAdjust ? ' adjustable' : ''}`}
+                                  onClick={() =>
+                                    canAdjust && setVolumeFor((v) => (v === userId ? null : userId))
+                                  }
+                                  aria-expanded={canAdjust ? volumeFor === userId : undefined}
+                                  title={canAdjust ? `Adjust ${user.name}'s volume` : user.name}
+                                >
+                                  <span
+                                    className={`voice-avatar${details?.speaking ? ' speaking' : ''}`}
+                                  >
+                                    <Avatar name={user.name} color={user.avatarColor} size={22} />
                                   </span>
+                                  <span className="voice-user-name">{user.name}</span>
+                                  {(details?.muted || details?.deafened) && (
+                                    <span className="voice-user-flags">
+                                      {details.muted && <MicIcon size={14} slashed />}
+                                      {details.deafened && <HeadphonesIcon size={14} slashed />}
+                                    </span>
+                                  )}
+                                </button>
+                                {canAdjust && volumeFor === userId && (
+                                  <label className="voice-user-volume">
+                                    <span>Volume {volume}%</span>
+                                    <input
+                                      className="slider"
+                                      type="range"
+                                      min={0}
+                                      max={200}
+                                      step={5}
+                                      value={volume}
+                                      onChange={(e) =>
+                                        onUserVolumeChange(userId, Number(e.target.value))
+                                      }
+                                      aria-label={`${user.name} volume`}
+                                    />
+                                  </label>
                                 )}
                               </li>
                             )

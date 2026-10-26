@@ -62,6 +62,8 @@ export interface Message {
   failed?: string
 }
 
+export type InputMode = 'voice-activity' | 'push-to-talk'
+
 export interface UserSettings {
   status: SelectableStatus
   customStatus: string
@@ -69,8 +71,23 @@ export interface UserSettings {
   showTimestamps: boolean
   fontSize: number
   accentColor: string
+  /** Microphone gain, percent (0–200). */
   inputVolume: number
+  /** Master playback volume, percent (0–200). */
   outputVolume: number
+  /** '' = system default. */
+  inputDeviceId: string
+  outputDeviceId: string
+  echoCancellation: boolean
+  noiseSuppression: boolean
+  autoGainControl: boolean
+  inputMode: InputMode
+  /** KeyboardEvent.code of the push-to-talk key, e.g. 'Backquote'. */
+  pushToTalkKey: string
+  /** Experimental: system-wide push-to-talk as a toggle (Electron globalShortcut). */
+  pushToTalkGlobal: boolean
+  /** Per-user playback volume, percent (0–200), keyed by user id. */
+  userVolumes: Record<string, number>
   desktopNotifications: boolean
   notificationSounds: boolean
 }

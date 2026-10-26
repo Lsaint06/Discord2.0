@@ -1,6 +1,6 @@
 # Discord 2.0 — Server
 
-Self-hosted backend for Discord 2.0: **Node.js + TypeScript + Fastify + WebSockets**, storing data in **SQLite** (via Node's built-in `node:sqlite`, no native build step) with a planned path to **PostgreSQL**.
+Self-hosted backend for Discord 2.0: **Node.js + TypeScript + Fastify + WebSockets**, storing data in **SQLite** (via Node's built-in `node:sqlite`, no native build step) with a planned path to **PostgreSQL**. Voice runs through a self-hosted **LiveKit** SFU; this server only issues LiveKit access tokens and tracks voice presence.
 
 > ⚠️ **Development-stage software.** Sign-in uses password-less *development identities*. Run it on your own PC or a trusted LAN only — never expose it directly to the internet. See [Development-only capabilities](#development-only-capabilities).
 
@@ -24,7 +24,22 @@ On first start the database is created at `server/data/discord2.db`, migrated, a
 | `npm run build` | Compile TypeScript to `dist/` |
 | `npm start` | Run the compiled build |
 | `npm run typecheck` | Type-check without emitting |
-| `npm test` | Integration tests (two users, real-time delivery, persistence, validation, rate limits) |
+| `npm test` | Integration tests (messaging, persistence, validation, rate limits, voice authorization/tokens/webhooks) |
+
+### Voice locally on Windows (optional)
+
+Voice is off until the four `LIVEKIT_*` variables are set. To develop voice on one PC:
+
+1. Download `livekit_<version>_windows_amd64.zip` from [LiveKit releases](https://github.com/livekit/livekit/releases) and extract `livekit-server.exe` anywhere (not into the repo).
+2. In `server/.env` set `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (letters/digits, ≥ 32 chars), `LIVEKIT_URL=http://127.0.0.1:7880`, and `LIVEKIT_PUBLIC_URL=ws://localhost:7880` (the host must match the desktop's `RENDERER_VITE_SERVER_URL` host so the CSP allows it).
+3. Run LiveKit in its own terminal (it reads the credentials from `.env`; nothing secret goes on the command line):
+
+   ```powershell
+   cd server
+   powershell -ExecutionPolicy Bypass -File scripts\livekit-dev.ps1 -Binary C:\path\to\livekit-server.exe
+   ```
+
+4. Start the backend (`npm run dev`); the log shows `Voice enabled (LiveKit)`.
 
 ## Configuration
 
@@ -41,6 +56,10 @@ All settings are environment variables. Copy `.env.example` to `.env` (git-ignor
 | `ALLOW_NULL_ORIGIN` | `true` | Allows the `null` origin sent by the packaged Electron app (`file://`). |
 | `TRUST_PROXY` | `false` | Set `true` only behind a reverse proxy you control. |
 | `LOG_LEVEL` | `debug` (dev), `info` (prod) | Pino log level. |
+| `LIVEKIT_API_KEY` | *(empty)* | Voice: LiveKit API key. All four `LIVEKIT_*` must be set together, or none (voice disabled). |
+| `LIVEKIT_API_SECRET` | *(empty)* | Voice: ≥ 32 chars. **Server-side only — never put it in the desktop app.** |
+| `LIVEKIT_URL` | *(empty)* | Voice: `http(s)://` URL the backend uses for LiveKit's API (compose sets `http://livekit:7880`). |
+| `LIVEKIT_PUBLIC_URL` | *(empty)* | Voice: `ws(s)://` URL given to clients, e.g. `ws://192.168.68.65:7880`. |
 
 The server holds no secrets today. When real secrets arrive (database passwords, signing keys), they belong in the server's environment only — **never** in the desktop app.
 
@@ -61,6 +80,19 @@ All `/api/*` routes except `/api/meta` and `/api/dev/login` require `Authorizati
 | `GET /api/servers/:serverId/channels` | Channels of one server |
 | `GET /api/channels/:channelId/messages?before=&after=&limit=` | Message history, oldest→newest. Cursor = message id; `limit` ≤ 100 (default 50) |
 | `POST /api/channels/:channelId/messages` `{ content, nonce? }` | Send a message (broadcasts `message_create`) |
+| `POST /api/voice/channels/:channelId/token` | Voice: `{ url, token, room, identity, expiresAt }` for one voice channel (see below) |
+| `GET /api/voice/states` | Voice: who is in which voice channel `[{ userId, channelId }]` |
+| `POST /api/livekit/webhook` | LiveKit → backend only. Verified with LiveKit's signed `Authorization` header |
+
+### Voice tokens
+
+`POST /api/voice/channels/:channelId/token` requires a session and:
+
+- validates the channel exists, is a **voice** channel, and that the user is a member of its server (bots are refused);
+- signs a LiveKit JWT with the server-held secret: identity = the session's user id (any client-supplied identity is ignored), room = `voice_<channelId>`, `roomJoin` only (no admin), publish restricted to `microphone`, **5-minute TTL** (LiveKit refreshes it for live sessions; reconnects request a new one);
+- is rate limited (10 burst, ~1 per 3 s per user); returns `503 voice_unavailable` when LiveKit isn't configured.
+
+Screen sharing will later be enabled by adding sources to `VOICE_PUBLISH_SOURCES` in [`src/voice/access.ts`](src/voice/access.ts).
 
 ### Real-time gateway (`GET /gateway`, WebSocket)
 
@@ -68,9 +100,9 @@ JSON frames `{ op, d }`. Types live in [`src/protocol.ts`](src/protocol.ts) (mir
 
 1. Server → `hello { heartbeatIntervalMs }`
 2. Client → `identify { token }` (token sent in a frame, never in the URL, so it can't leak into logs)
-3. Server → `ready { user, users }`
+3. Server → `ready { user, users, voiceStates }`
 4. Client → `heartbeat` every interval; server → `heartbeat_ack`. No traffic for 60 s ⇒ server closes the socket.
-5. Server pushes `message_create`, `user_update` (profile + presence), `server_create`.
+5. Server pushes `message_create`, `user_update` (profile + presence), `server_create`, `voice_state_update { userId, channelId | null }` (from LiveKit webhooks, reconciled with LiveKit every 30 s).
 6. Client may send `set_status { status: online|idle|dnd|invisible }`.
 
 Close codes: `4001` auth failed (don't reconnect), `4002` identify timeout, `4003` invalid frame, `4004` heartbeat timeout, `4008` rate limited, `4010` server shutdown.
@@ -93,6 +125,7 @@ Messages are **sent over REST** (clear status codes, validation, rate limiting) 
 | Profile updates, per user | 10 | 1 per 5 s |
 | Gateway connections, per IP | 10 | 1 per 2 s |
 | Gateway frames, per connection | 20 | 2/s (excess ⇒ close `4008`) |
+| Voice tokens, per user | 10 | 1 per 3 s |
 
 - Browser requests from origins not on the allow-list are rejected with `403` (REST and WebSocket upgrade).
 - All SQL uses bound parameters; no query is built from user input.
@@ -107,24 +140,24 @@ Messages are **sent over REST** (clear status codes, validation, rate limiting) 
 | Sessions never expire | Stolen tokens stay valid | Add expiry, rotation, and a sign-out-everywhere endpoint |
 | Every user is a member of every server | No permissions model yet | Membership, roles, and per-channel permissions |
 | In-memory rate limits & presence | Reset on restart; single process only | Fine for one Jetson; use Redis if ever scaled out |
+| Voice access via dev identities | Anyone who can sign in (i.e. anyone on the LAN) can get a voice token for any voice channel | Real authentication + per-server membership; voice tokens are only as trustworthy as the session that requested them |
+| Plain `ws://` LiveKit signaling | Signaling unencrypted on the LAN (media is still DTLS-SRTP) | `wss://` via a TLS reverse proxy |
 
 Even in development the server never trusts a client-supplied user id: the user is always derived from the session token, whose SHA-256 hash is what's stored.
 
 ## Docker (Linux ARM64 / Jetson)
 
-The image is multi-arch and needs no native compilation (`node:sqlite` is built into Node).
+`docker-compose.yml` runs the backend **and** the LiveKit SFU (`livekit/livekit-server`, multi-arch). Both images run natively on ARM64 (`node:sqlite` is built into Node; no native addons). Full Jetson walkthrough — credentials, firewall, monitoring, troubleshooting: [docs/voice-deployment-jetson.md](../docs/voice-deployment-jetson.md).
 
 ```bash
 cd server
-docker compose up -d --build          # data persists in the discord2-data volume
+cp .env.example .env && chmod 600 .env   # set LIVEKIT_*, LIVEKIT_NODE_IP, BIND_ADDRESS
+docker compose up -d --build              # data persists in the discord2-data volume
+docker compose ps                         # livekit becomes "healthy"
 curl http://127.0.0.1:3001/health
 ```
 
-By default the port is published on **127.0.0.1 only**. To let other PCs on your trusted LAN connect, set `BIND_ADDRESS` to the host's LAN IP:
-
-```bash
-BIND_ADDRESS=192.168.1.50 docker compose up -d
-```
+By default all ports are published on **127.0.0.1 only**. To let other PCs on your trusted LAN connect, set `BIND_ADDRESS` (and `LIVEKIT_NODE_IP`) to the host's LAN IP in `.env`.
 
 Build an ARM64 image from a Windows/x64 machine (requires Docker Buildx + QEMU):
 
@@ -132,7 +165,7 @@ Build an ARM64 image from a Windows/x64 machine (requires Docker Buildx + QEMU):
 docker buildx build --platform linux/arm64 -t discord2-server:arm64 --load .
 ```
 
-> The Dockerfile has not yet been built on this development PC (Docker isn't installed here); verify on the Jetson with the commands above.
+> The images have not been built on this Windows development PC (Docker isn't installed here). The compose file was validated by parsing it with sample values, and the same LiveKit configuration was run live with the official Windows binary. Verify on the Jetson with the commands above.
 
 Do **not** port-forward this server on your router. For remote friends, prefer a private overlay network (e.g. WireGuard/Tailscale) or a TLS reverse proxy once real authentication exists.
 

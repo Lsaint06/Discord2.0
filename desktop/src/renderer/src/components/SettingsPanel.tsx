@@ -1,10 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import type { SelectableStatus, UserSettings } from '../types'
 import { accentChoices, defaultSettings } from '../data/defaults'
 import { presenceFromSetting, statusLabels } from '../lib/format'
 import { LIMITS } from '../net/protocol'
 import Avatar from './Avatar'
 import { CloseIcon } from './Icons'
+import { Field, Toggle } from './SettingsControls'
+import VoiceSettings from './VoiceSettings'
 
 type SectionId = 'account' | 'appearance' | 'voice' | 'notifications'
 
@@ -31,43 +33,6 @@ interface SettingsPanelProps {
   onToggleMute: () => void
   onToggleDeafen: () => void
   onClose: () => void
-}
-
-function Toggle({
-  label,
-  description,
-  checked,
-  onChange
-}: {
-  label: string
-  description?: string
-  checked: boolean
-  onChange: (value: boolean) => void
-}): React.JSX.Element {
-  return (
-    <label className="setting-row">
-      <div className="setting-row-text">
-        <span className="setting-label">{label}</span>
-        {description && <span className="setting-description">{description}</span>}
-      </div>
-      <input
-        type="checkbox"
-        className="switch"
-        role="switch"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-    </label>
-  )
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }): React.JSX.Element {
-  return (
-    <div className="setting-field">
-      <span className="setting-field-label">{label}</span>
-      {children}
-    </div>
-  )
 }
 
 function SettingsPanel({
@@ -285,34 +250,14 @@ function SettingsPanel({
           )}
 
           {section === 'voice' && (
-            <>
-              <h2>Voice &amp; Audio</h2>
-              <Field label={`Input Volume — ${settings.inputVolume}%`}>
-                <input
-                  className="slider"
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={settings.inputVolume}
-                  onChange={(e) => onChange({ inputVolume: Number(e.target.value) })}
-                />
-              </Field>
-              <Field label={`Output Volume — ${settings.outputVolume}%`}>
-                <input
-                  className="slider"
-                  type="range"
-                  min={0}
-                  max={200}
-                  value={settings.outputVolume}
-                  onChange={(e) => onChange({ outputVolume: Number(e.target.value) })}
-                />
-              </Field>
-              <Toggle label="Mute Microphone" checked={muted || deafened} onChange={onToggleMute} />
-              <Toggle label="Deafen" checked={deafened} onChange={onToggleDeafen} />
-              <p className="settings-note">
-                Voice is simulated for now — no audio devices are accessed yet.
-              </p>
-            </>
+            <VoiceSettings
+              settings={settings}
+              muted={muted}
+              deafened={deafened}
+              onChange={onChange}
+              onToggleMute={onToggleMute}
+              onToggleDeafen={onToggleDeafen}
+            />
           )}
 
           {section === 'notifications' && (

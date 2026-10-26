@@ -11,10 +11,15 @@ import { registerDevAuthRoutes } from './routes/devAuth.js'
 import { registerMessageRoutes } from './routes/messages.js'
 import { registerServerRoutes } from './routes/servers.js'
 import { registerUserRoutes } from './routes/users.js'
+import { registerVoiceRoutes } from './routes/voice.js'
+import { LiveKitBridge } from './voice/livekitBridge.js'
+import { VoiceStateStore } from './voice/voiceStates.js'
 
 export interface BuildOptions {
   gateway?: Partial<GatewayOptions>
   logger?: boolean
+  /** How often to reconcile voice presence with LiveKit; 0 disables (tests). */
+  voiceReconcileIntervalMs?: number
 }
 
 function errorBody(code: string, message: string, retryAfterMs?: number): ApiErrorBody {
@@ -34,8 +39,33 @@ export async function buildApp(
     ajv: { customOptions: { coerceTypes: false } }
   })
 
-  const hub = new GatewayHub(repo, app.log, options.gateway)
-  const ctx: AppContext = { config, repo, hub, limiters: createLimiters() }
+  const voiceStore = new VoiceStateStore()
+  const hub = new GatewayHub(repo, app.log, options.gateway, () => voiceStore.snapshot())
+  const bridge = config.livekit
+    ? new LiveKitBridge(
+        config.livekit,
+        voiceStore,
+        repo,
+        (changes) => {
+          for (const change of changes) hub.broadcast({ op: 'voice_state_update', d: change })
+        },
+        app.log
+      )
+    : null
+  const ctx: AppContext = {
+    config,
+    repo,
+    hub,
+    voice: { store: voiceStore, bridge },
+    limiters: createLimiters()
+  }
+
+  // LiveKit posts webhooks as application/webhook+json; keep the raw body for signature checks.
+  app.addContentTypeParser(
+    'application/webhook+json',
+    { parseAs: 'string', bodyLimit: 64 * 1024 },
+    (_request, body, done) => done(null, body)
+  )
 
   app.addHook('onRequest', async (request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff')
@@ -84,7 +114,8 @@ export async function buildApp(
   app.get('/api/meta', async () => ({
     name: 'Discord 2.0',
     apiVersion: 1,
-    devAuth: config.devAuth
+    devAuth: config.devAuth,
+    voice: config.livekit !== null
   }))
 
   app.get(
@@ -105,8 +136,13 @@ export async function buildApp(
   registerUserRoutes(app, ctx)
   registerServerRoutes(app, ctx)
   registerMessageRoutes(app, ctx)
+  registerVoiceRoutes(app, ctx)
+
+  const reconcileMs = options.voiceReconcileIntervalMs ?? 30_000
+  if (bridge && reconcileMs > 0) app.addHook('onReady', async () => bridge.start(reconcileMs))
 
   app.addHook('onClose', async () => {
+    bridge?.stop()
     hub.shutdown()
     for (const limiter of Object.values(ctx.limiters)) limiter.dispose()
   })

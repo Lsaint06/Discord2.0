@@ -7,8 +7,17 @@ export const defaultSettings: UserSettings = {
   showTimestamps: true,
   fontSize: 15,
   accentColor: '#6d72f6',
-  inputVolume: 80,
+  inputVolume: 100,
   outputVolume: 100,
+  inputDeviceId: '',
+  outputDeviceId: '',
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  inputMode: 'voice-activity',
+  pushToTalkKey: 'Backquote',
+  pushToTalkGlobal: false,
+  userVolumes: {},
   desktopNotifications: true,
   notificationSounds: true
 }

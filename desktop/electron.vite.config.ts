@@ -4,26 +4,32 @@ import { loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
 /**
- * Builds the Content-Security-Policy `connect-src` list from RENDERER_VITE_SERVER_URL so the
- * renderer may talk to exactly one configured backend (HTTP + WebSocket) and nothing else.
+ * Builds the Content-Security-Policy `connect-src` list so the renderer may only talk to the
+ * configured backend host (HTTP + WebSocket, any port — the self-hosted LiveKit SFU runs on the
+ * same machine, e.g. :7880) plus an optional separate LiveKit host.
  */
-function connectSources(serverUrl: string | undefined): string {
-  if (!serverUrl) return ''
-  try {
-    const url = new URL(serverUrl)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
-    const ws = `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}`
-    return `${url.origin} ${ws}`
-  } catch {
-    return ''
+function connectSources(serverUrl: string | undefined, livekitUrl: string | undefined): string {
+  const sources = new Set<string>()
+  for (const raw of [serverUrl, livekitUrl]) {
+    if (!raw) continue
+    try {
+      const url = new URL(raw)
+      const secure = url.protocol === 'https:' || url.protocol === 'wss:'
+      if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) continue
+      sources.add(`${secure ? 'https' : 'http'}://${url.hostname}:*`)
+      sources.add(`${secure ? 'wss' : 'ws'}://${url.hostname}:*`)
+    } catch {
+      // Ignore malformed values; the app reports configuration errors at runtime.
+    }
   }
+  return [...sources].join(' ')
 }
 
-function cspPlugin(serverUrl: string | undefined): Plugin {
+function cspPlugin(serverUrl: string | undefined, livekitUrl: string | undefined): Plugin {
   return {
     name: 'd2-csp-connect-src',
     transformIndexHtml(html) {
-      return html.replace('__D2_CONNECT_SRC__', connectSources(serverUrl))
+      return html.replace('__D2_CONNECT_SRC__', connectSources(serverUrl, livekitUrl))
     }
   }
 }
@@ -40,7 +46,7 @@ export default defineConfig(({ mode }) => {
           '@renderer': resolve('src/renderer/src')
         }
       },
-      plugins: [react(), cspPlugin(env.RENDERER_VITE_SERVER_URL)]
+      plugins: [react(), cspPlugin(env.RENDERER_VITE_SERVER_URL, env.RENDERER_VITE_LIVEKIT_URL)]
     }
   }
 })

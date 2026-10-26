@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Message, SelectableStatus } from '../types'
 import { ApiClient, ApiError } from '../net/api'
 import { GatewayClient, type GatewayStatus } from '../net/gateway'
-import { LIMITS, type ApiMessage, type ApiServer, type ApiUser } from '../net/protocol'
+import {
+  LIMITS,
+  type ApiMessage,
+  type ApiServer,
+  type ApiUser,
+  type ApiVoiceToken
+} from '../net/protocol'
 
 export interface ChannelState {
   messages: Message[]
@@ -89,6 +95,8 @@ export interface Backend {
   servers: ApiServer[]
   channels: Record<string, ChannelState>
   unread: Set<string>
+  /** userId → voice channelId, from the backend (LiveKit webhooks). */
+  voiceStates: Record<string, string>
   gateway: { status: GatewayStatus; retryInMs?: number }
   focusChannel: (channelId: string) => void
   markRead: (channelId: string) => void
@@ -100,6 +108,7 @@ export interface Backend {
   createServer: (name: string, color: string) => Promise<{ server?: ApiServer; error?: string }>
   updateDisplayName: (displayName: string) => Promise<string | null>
   setPresence: (status: SelectableStatus) => void
+  fetchVoiceToken: (channelId: string) => Promise<ApiVoiceToken>
   retryInitialLoad: () => void
 }
 
@@ -115,6 +124,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   const [servers, setServers] = useState<ApiServer[]>([])
   const [channels, setChannels] = useState<Record<string, ChannelState>>({})
   const [unread, setUnread] = useState<Set<string>>(() => new Set())
+  const [voiceStates, setVoiceStates] = useState<Record<string, string>>({})
   const [gateway, setGateway] = useState<{ status: GatewayStatus; retryInMs?: number }>({
     status: 'connecting'
   })
@@ -235,7 +245,17 @@ export function useBackend(session: BackendSession, options: Options): Backend {
       onReady: (data, isReconnect) => {
         setMe(data.user)
         setUsers(Object.fromEntries(data.users.map((u) => [u.id, u])))
+        setVoiceStates(Object.fromEntries(data.voiceStates.map((v) => [v.userId, v.channelId])))
         if (isReconnect) void resync()
+      },
+      onVoiceStateUpdate: ({ userId, channelId }) => {
+        setVoiceStates((prev) => {
+          if (prev[userId] === (channelId ?? undefined)) return prev
+          const next = { ...prev }
+          if (channelId) next[userId] = channelId
+          else delete next[userId]
+          return next
+        })
       },
       onMessage: (m) => {
         applyMessages(m.channelId, [toMessage(m)])
@@ -473,6 +493,18 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     gatewayRef.current?.setStatus(status)
   }, [])
 
+  const fetchVoiceToken = useCallback(
+    async (channelId: string): Promise<ApiVoiceToken> => {
+      try {
+        return await api.voiceToken(channelId)
+      } catch (err) {
+        handleAuthError(err)
+        throw err
+      }
+    },
+    [api, handleAuthError]
+  )
+
   const retryInitialLoad = useCallback(() => {
     setPhase('loading')
     setLoadError(undefined)
@@ -487,6 +519,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     servers,
     channels,
     unread,
+    voiceStates,
     gateway,
     focusChannel,
     markRead,
@@ -498,6 +531,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     createServer,
     updateDisplayName,
     setPresence,
+    fetchVoiceToken,
     retryInitialLoad
   }
 }

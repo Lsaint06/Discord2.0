@@ -4,11 +4,14 @@ import { presenceFromSetting, statusLabels } from './lib/format'
 import { loadSettings, saveSettings } from './net/session'
 import type { ApiServer, ApiUser } from './net/protocol'
 import { useBackend, type BackendSession } from './hooks/useBackend'
+import { useVoice } from './hooks/useVoice'
+import { usePushToTalk } from './hooks/usePushToTalk'
+import { describeKey } from './media/voiceLogic'
 import ServerSidebar from './components/ServerSidebar'
-import ChannelSidebar from './components/ChannelSidebar'
+import ChannelSidebar, { type VoiceUserDetails } from './components/ChannelSidebar'
 import ChatPanel from './components/ChatPanel'
 import MemberList from './components/MemberList'
-import UserPanel from './components/UserPanel'
+import UserPanel, { type VoiceConnection } from './components/UserPanel'
 import SettingsPanel from './components/SettingsPanel'
 import CreateServerModal from './components/CreateServerModal'
 import ConnectionBanner from './components/ConnectionBanner'
@@ -68,7 +71,6 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   const [settings, setSettings] = useState<UserSettings>(loadSettings)
   const [activeServerId, setActiveServerId] = useState<string | null>(null)
   const [activeChannelByServer, setActiveChannelByServer] = useState<Record<string, string>>({})
-  const [voiceChannelId, setVoiceChannelId] = useState<string | null>(null)
   const [muted, setMuted] = useState(false)
   const [deafened, setDeafened] = useState(false)
   const [showMembers, setShowMembers] = useState(true)
@@ -87,6 +89,27 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   useEffect(() => {
     saveSettings(settings)
   }, [settings])
+
+  // ---- Voice ----
+  const voice = useVoice({ fetchToken: backend.fetchVoiceToken, settings })
+  const voiceStatus = voice.state.status
+  const voiceActive =
+    voiceStatus === 'connecting' || voiceStatus === 'connected' || voiceStatus === 'reconnecting'
+  const voiceChannelId = voiceStatus === 'idle' ? null : voice.state.channelId
+  const pushToTalkMode = settings.inputMode === 'push-to-talk'
+  const ptt = usePushToTalk({
+    enabled: pushToTalkMode && voiceActive,
+    code: settings.pushToTalkKey,
+    global: settings.pushToTalkGlobal
+  })
+  useEffect(() => {
+    voice.session.setMicState({
+      muted,
+      deafened,
+      pushToTalk: pushToTalkMode,
+      pushToTalkActive: ptt.active
+    })
+  }, [voice.session, muted, deafened, pushToTalkMode, ptt.active])
 
   const selfId = backend.me?.id ?? ''
   const displayName = backend.me?.displayName ?? session.username
@@ -150,7 +173,46 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     [servers, backend.unread]
   )
 
-  const voiceConnection = findVoiceConnection(servers, voiceChannelId)
+  const voiceNames = findVoiceConnection(servers, voiceChannelId)
+  const voiceConnection: VoiceConnection | null = voiceNames
+    ? {
+        ...voiceNames,
+        status: voiceStatus,
+        error: voice.state.error,
+        micError: voice.state.micError,
+        retryInMs: voice.state.retryInMs,
+        pushToTalk: pushToTalkMode
+          ? {
+              keyLabel: describeKey(settings.pushToTalkKey),
+              active: ptt.active,
+              global: settings.pushToTalkGlobal && Boolean(window.d2),
+              error: ptt.globalError
+            }
+          : undefined
+      }
+    : null
+
+  const voiceMembers = useCallback(
+    (channelId: string): string[] => {
+      const members = Object.entries(backend.voiceStates)
+        .filter(([userId, ch]) => ch === channelId && !(voiceActive && userId === selfId))
+        .map(([userId]) => userId)
+      // Show ourselves immediately (and only) in the channel we're actually in.
+      if (voiceActive && voiceChannelId === channelId && selfId) members.unshift(selfId)
+      return members
+    },
+    [backend.voiceStates, voiceActive, voiceChannelId, selfId]
+  )
+
+  const voiceDetails = useCallback(
+    (userId: string): VoiceUserDetails | undefined => {
+      const p = voice.state.participants.find((x) => x.identity === userId)
+      if (!p) return undefined
+      if (p.isLocal) return { speaking: p.speaking, muted: muted || deafened, deafened }
+      return { speaking: p.speaking, muted: !p.micEnabled, deafened: p.deafened }
+    },
+    [voice.state.participants, muted, deafened]
+  )
 
   const selectServer = (serverId: string): void => {
     setActiveServerId(serverId)
@@ -162,8 +224,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   const selectChannel = (channel: Channel): void => {
     if (!activeServer) return
     if (channel.type === 'voice') {
-      // Voice is still simulated locally (Milestone 3).
-      setVoiceChannelId(channel.id)
+      void voice.session.join(channel.id)
       return
     }
     setActiveChannelByServer((prev) => ({ ...prev, [activeServer.id]: channel.id }))
@@ -254,9 +315,13 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
         unreadChannelIds={backend.unread}
         voiceChannelId={voiceChannelId}
         selfId={selfId}
-        selfMuted={muted}
-        selfDeafened={deafened}
         resolveUser={resolveUser}
+        voiceMembers={voiceMembers}
+        voiceDetails={voiceDetails}
+        getUserVolume={(userId) => settings.userVolumes[userId] ?? 100}
+        onUserVolumeChange={(userId, volume) =>
+          updateSettings({ userVolumes: { ...settings.userVolumes, [userId]: volume } })
+        }
         onSelectChannel={selectChannel}
         footer={
           <UserPanel
@@ -270,7 +335,11 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             onToggleMute={toggleMute}
             onToggleDeafen={toggleDeafen}
             onOpenSettings={() => setSettingsOpen(true)}
-            onDisconnect={() => setVoiceChannelId(null)}
+            onDisconnect={() => void voice.session.leave()}
+            onRetryVoice={() => voice.session.retry()}
+            onOpenMicSettings={
+              window.d2 ? () => void window.d2?.media.openMicrophoneSettings() : undefined
+            }
           />
         }
       />

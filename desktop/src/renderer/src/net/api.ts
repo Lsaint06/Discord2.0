@@ -1,4 +1,4 @@
-import type { ApiErrorBody, ApiMessage, ApiServer, ApiUser } from './protocol'
+import type { ApiErrorBody, ApiMessage, ApiServer, ApiUser, ApiVoiceToken } from './protocol'
 
 const REQUEST_TIMEOUT_MS = 10_000
 
@@ -25,6 +25,7 @@ export interface ServerMeta {
   name: string
   apiVersion: number
   devAuth: boolean
+  voice?: boolean
 }
 
 export class ApiClient {
@@ -116,5 +117,10 @@ export class ApiClient {
       content,
       nonce
     })
+  }
+
+  /** Short-lived LiveKit credentials for one voice channel (minted server-side). */
+  voiceToken(channelId: string): Promise<ApiVoiceToken> {
+    return this.request('POST', `/api/voice/channels/${encodeURIComponent(channelId)}/token`)
   }
 }

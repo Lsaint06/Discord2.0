@@ -7,6 +7,7 @@ import { TokenBucketLimiter } from './lib/rateLimit.js'
 import {
   CloseCodes,
   type ApiUser,
+  type ApiVoiceState,
   type GatewayServerFrame,
   type PresenceStatus,
   type SelectableStatus
@@ -45,7 +46,8 @@ export class GatewayHub {
   constructor(
     private readonly repo: Repository,
     private readonly log: FastifyBaseLogger,
-    options: Partial<GatewayOptions> = {}
+    options: Partial<GatewayOptions> = {},
+    private readonly voiceStates: () => ApiVoiceState[] = () => []
   ) {
     this.options = { ...DEFAULTS, ...options }
     this.sweeper = setInterval(() => this.sweep(), 5_000)
@@ -146,7 +148,10 @@ export class GatewayHub {
         conn.userId = user.id
         conn.identifying = false
         const users = (await this.repo.listUsers()).map((u) => this.toApiUser(u))
-        this.send(conn, { op: 'ready', d: { user: this.toApiUser(user), users } })
+        this.send(conn, {
+          op: 'ready',
+          d: { user: this.toApiUser(user), users, voiceStates: this.voiceStates() }
+        })
         if (!wasOnline) this.broadcast({ op: 'user_update', d: this.toApiUser(user) })
         this.log.info({ conn: conn.id, user: user.username }, 'gateway identified')
         return

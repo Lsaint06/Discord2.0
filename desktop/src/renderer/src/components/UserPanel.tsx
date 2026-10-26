@@ -1,10 +1,17 @@
 import type { PresenceStatus } from '../types'
+import type { VoiceStatus } from '../media/voiceLogic'
 import Avatar from './Avatar'
 import { GearIcon, HangUpIcon, HeadphonesIcon, MicIcon, SignalIcon } from './Icons'
 
-interface VoiceConnection {
+export interface VoiceConnection {
   channelName: string
   serverName: string
+  status: VoiceStatus
+  error?: string
+  micError?: string
+  retryInMs?: number
+  /** Present in push-to-talk mode. */
+  pushToTalk?: { keyLabel: string; active: boolean; global: boolean; error?: string }
 }
 
 interface UserPanelProps {
@@ -19,6 +26,17 @@ interface UserPanelProps {
   onToggleDeafen: () => void
   onOpenSettings: () => void
   onDisconnect: () => void
+  onRetryVoice: () => void
+  onOpenMicSettings?: () => void
+}
+
+const STATUS_LABEL: Record<VoiceStatus, string> = {
+  idle: 'Voice Disconnected',
+  connecting: 'Connecting…',
+  connected: 'Voice Connected',
+  reconnecting: 'Reconnecting…',
+  disconnected: 'Voice Disconnected',
+  error: 'Voice Error'
 }
 
 function UserPanel({
@@ -32,32 +50,74 @@ function UserPanel({
   onToggleMute,
   onToggleDeafen,
   onOpenSettings,
-  onDisconnect
+  onDisconnect,
+  onRetryVoice,
+  onOpenMicSettings
 }: UserPanelProps): React.JSX.Element {
   const micOff = muted || deafened
+  const failed = voice?.status === 'error' || voice?.status === 'disconnected'
 
   return (
     <div className="user-panel-wrap">
       {voice && (
         <div className="voice-panel">
-          <div className="voice-panel-info">
-            <div className="voice-panel-status">
-              <SignalIcon size={16} />
-              <span>Voice Connected</span>
+          <div className="voice-panel-row">
+            <div className="voice-panel-info">
+              <div className={`voice-panel-status ${voice.status}`} role="status">
+                <SignalIcon size={16} />
+                <span>
+                  {STATUS_LABEL[voice.status]}
+                  {voice.status === 'reconnecting' && voice.retryInMs !== undefined
+                    ? ` (${Math.max(1, Math.round(voice.retryInMs / 1000))}s)`
+                    : ''}
+                </span>
+              </div>
+              <div
+                className="voice-panel-where"
+                title={`${voice.channelName} / ${voice.serverName}`}
+              >
+                {voice.channelName} / {voice.serverName}
+              </div>
             </div>
-            <div className="voice-panel-where" title={`${voice.channelName} / ${voice.serverName}`}>
-              {voice.channelName} / {voice.serverName}
-            </div>
+            <button
+              type="button"
+              className="icon-button danger"
+              onClick={onDisconnect}
+              aria-label={failed ? 'Dismiss' : 'Disconnect'}
+              title={failed ? 'Dismiss' : 'Disconnect'}
+            >
+              <HangUpIcon size={20} />
+            </button>
           </div>
-          <button
-            type="button"
-            className="icon-button danger"
-            onClick={onDisconnect}
-            aria-label="Disconnect"
-            title="Disconnect"
-          >
-            <HangUpIcon size={20} />
-          </button>
+
+          {voice.error && voice.status !== 'connected' && (
+            <div className="voice-panel-message error">
+              <span>{voice.error}</span>
+              {failed && (
+                <button type="button" className="link-button" onClick={onRetryVoice}>
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
+          {voice.micError && (
+            <div className="voice-panel-message error">
+              <span>{voice.micError}</span>
+              {onOpenMicSettings && (
+                <button type="button" className="link-button" onClick={onOpenMicSettings}>
+                  Open settings
+                </button>
+              )}
+            </div>
+          )}
+          {voice.pushToTalk && voice.status === 'connected' && (
+            <div className={`voice-panel-message ptt${voice.pushToTalk.active ? ' active' : ''}`}>
+              {voice.pushToTalk.error ??
+                (voice.pushToTalk.global
+                  ? `Push-to-talk (toggle): ${voice.pushToTalk.keyLabel} — ${voice.pushToTalk.active ? 'talking' : 'off'}`
+                  : `Push-to-talk: hold ${voice.pushToTalk.keyLabel}${voice.pushToTalk.active ? ' — talking' : ''}`)}
+            </div>
+          )}
         </div>
       )}
 
