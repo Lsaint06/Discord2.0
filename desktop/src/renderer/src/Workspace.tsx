@@ -17,6 +17,7 @@ import CreateServerModal from './components/CreateServerModal'
 import ConnectionBanner from './components/ConnectionBanner'
 import ScreenSharePicker from './components/ScreenSharePicker'
 import StreamViewer, { type ViewerMode } from './components/StreamViewer'
+import ShareHealthNote from './components/ShareHealthNote'
 import type { ScreenShareOptions, ScreenSource } from './media/ScreenShareController'
 
 const EMPTY_MESSAGES: never[] = []
@@ -260,7 +261,9 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     profileId: settings.screenShareProfile,
     audio: settings.screenShareAudio,
     hint: settings.screenShareHint,
-    codec: settings.screenShareCodec
+    codec: settings.screenShareCodec,
+    layering: settings.screenShareLayering,
+    backupLayer: settings.screenShareBackupLayer
   }
 
   const goLive = (source: ScreenSource, options: ScreenShareOptions): void => {
@@ -430,12 +433,21 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             onDismissShareMessage={() => voice.session.dismissScreenShareMessage()}
             onDismissDeviceNotice={() => voice.session.dismissDeviceNotice()}
             onStartAudio={() => void voice.session.startAudio()}
+            shareStatus={
+              voice.state.screenShare.options ? (
+                <ShareHealthNote
+                  session={voice.session}
+                  profileId={voice.state.screenShare.options.profileId}
+                />
+              ) : undefined
+            }
           />
         }
       />
 
-      {watching && viewerMode === 'focus' ? (
-        <main className="chat-panel stream-main">
+      {watching && (
+        // One viewer instance for both modes, so switching focus/mini never remounts the video.
+        <main className={viewerMode === 'focus' ? 'chat-panel stream-main' : 'stream-slot-mini'}>
           <StreamViewer
             session={voice.session}
             identity={watching}
@@ -444,7 +456,8 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             channelName={voiceNames?.channelName ?? ''}
             live={watchedLive}
             streamRevision={voice.state.streamRevision}
-            mode="focus"
+            mode={viewerMode}
+            quality={voice.state.connectionQuality}
             volume={
               !watchingSelf && watchedParticipant?.sharingAudio
                 ? (settings.streamVolumes[watching] ?? 100)
@@ -458,7 +471,9 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             onStopWatching={stopWatching}
           />
         </main>
-      ) : activeChannel ? (
+      )}
+
+      {watching && viewerMode === 'focus' ? null : activeChannel ? (
         <ChatPanel
           channel={activeChannel}
           messages={channelState?.messages ?? EMPTY_MESSAGES}
@@ -491,24 +506,6 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
 
       {showMembers && activeChannel && !(watching && viewerMode === 'focus') && (
         <MemberList server={activeServer} resolveUser={resolveUser} />
-      )}
-
-      {watching && viewerMode === 'mini' && (
-        <StreamViewer
-          session={voice.session}
-          identity={watching}
-          isSelf={watchingSelf}
-          sharerName={resolveUser(watching).name}
-          channelName={voiceNames?.channelName ?? ''}
-          live={watchedLive}
-          streamRevision={voice.state.streamRevision}
-          mode="mini"
-          volume={null}
-          defaultShowStats={false}
-          onVolumeChange={() => undefined}
-          onModeChange={setViewerMode}
-          onStopWatching={stopWatching}
-        />
       )}
 
       {pickerOpen && (

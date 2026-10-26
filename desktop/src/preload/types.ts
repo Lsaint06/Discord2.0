@@ -34,6 +34,18 @@ export interface AppMetrics {
   videoDecode?: string
 }
 
+export interface EncoderFlags {
+  /** Allow Chromium's GPU AV1 encoder for WebRTC (feature WebRtcAV1HWEncode). */
+  av1HardwareEncode: boolean
+}
+
+export interface EncoderFlagsState {
+  /** Stored preference (applies on next launch). */
+  saved: EncoderFlags
+  /** What this running app was started with. */
+  active: EncoderFlags
+}
+
 export interface D2DesktopApi {
   platform: string
   media: {
@@ -55,6 +67,10 @@ export interface D2DesktopApi {
   }
   diagnostics: {
     getAppMetrics: () => Promise<AppMetrics | null>
+    getEncoderFlags: () => Promise<EncoderFlagsState | null>
+    setEncoderFlags: (flags: EncoderFlags) => Promise<EncoderFlagsState | null>
+    /** Restarts the app (needed for encoder flag changes). */
+    relaunch: () => Promise<void>
   }
   pushToTalk: {
     /** Registers one system-wide shortcut (Electron accelerator). Resolves false if unavailable. */

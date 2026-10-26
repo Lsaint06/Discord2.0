@@ -7,9 +7,11 @@ import type { MediaSession, MediaSnapshot } from '../media/MediaSession'
 import {
   projectedEgressMbps,
   SCREEN_CODEC_LABELS,
+  SCREEN_MODE_LABELS,
   SCREEN_PROFILES,
   type ScreenCodec,
   type ScreenContentHint,
+  type ScreenLayering,
   type ScreenProfileId
 } from '../media/screenProfiles'
 import Avatar from './Avatar'
@@ -17,6 +19,7 @@ import { CloseIcon } from './Icons'
 import { Field, Toggle } from './SettingsControls'
 import VoiceSettings from './VoiceSettings'
 import DiagnosticsPanel from './DiagnosticsPanel'
+import EncoderSettings from './EncoderSettings'
 
 type SectionId = 'account' | 'appearance' | 'voice' | 'streaming' | 'notifications' | 'diagnostics'
 
@@ -302,7 +305,7 @@ function SettingsPanel({
                     ))}
                   </select>
                 </Field>
-                <Field label="Optimize For">
+                <Field label="Mode">
                   <select
                     className="text-input"
                     value={settings.screenShareHint}
@@ -310,11 +313,17 @@ function SettingsPanel({
                       onChange({ screenShareHint: e.target.value as ScreenContentHint })
                     }
                   >
-                    <option value="motion">Motion (games, video)</option>
-                    <option value="detail">Clarity (text, code)</option>
+                    {(Object.keys(SCREEN_MODE_LABELS) as ScreenContentHint[]).map((h) => (
+                      <option key={h} value={h}>
+                        {SCREEN_MODE_LABELS[h].label}
+                      </option>
+                    ))}
                   </select>
                 </Field>
               </div>
+              <p className="settings-note">
+                {SCREEN_MODE_LABELS[settings.screenShareHint].description}
+              </p>
               <Field label="Video Codec">
                 <select
                   className="text-input"
@@ -328,6 +337,31 @@ function SettingsPanel({
                   ))}
                 </select>
               </Field>
+              {settings.screenShareCodec !== 'h264' && (
+                <Field label="AV1 / VP9 Layering">
+                  <select
+                    className="text-input"
+                    value={settings.screenShareLayering}
+                    onChange={(e) =>
+                      onChange({ screenShareLayering: e.target.value as ScreenLayering })
+                    }
+                  >
+                    <option value="simulcast">
+                      Single-layer simulcast (GPU encoder, recommended)
+                    </option>
+                    <option value="svc">
+                      Temporal SVC L1T3 (LiveKit default, software encoder)
+                    </option>
+                  </select>
+                </Field>
+              )}
+              <Toggle
+                label="Send a 720p backup layer"
+                description="Lets viewers on slow connections fall back to 720p30 instead of stuttering. Costs about 1.8 Mbps of extra upload."
+                checked={settings.screenShareBackupLayer}
+                onChange={(screenShareBackupLayer) => onChange({ screenShareBackupLayer })}
+              />
+              <EncoderSettings />
               <p className="settings-note">
                 Projected upload from the server at{' '}
                 {SCREEN_PROFILES[settings.screenShareProfile].label}: about{' '}

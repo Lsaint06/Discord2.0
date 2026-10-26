@@ -6,7 +6,7 @@ A self-hosted, Discord-inspired chat app for friends: an **Electron + React + Ty
 | --- | --- |
 | [`desktop/`](desktop/) | Electron desktop client |
 | [`server/`](server/) | Backend API + real-time gateway + Docker Compose (backend + LiveKit) ([server README](server/README.md)) |
-| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md) and the [screen sharing guide](docs/screen-sharing-jetson.md) |
+| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md) and [screen sharing performance](docs/screen-sharing-performance.md) |
 
 **Status — Milestone 5:** screen sharing ("Go Live") in voice channels: in-app source picker (screens and windows), optional Windows system audio, 1080p30 / 1080p60 / 1440p60 presets with GPU H.264 encoding, a stream viewer (focus, mini player, fullscreen, live stats), LIVE badges, per-stream volume, input sensitivity with a level meter, a mic test, and a diagnostics page. Voice (Milestone 4) and text messaging, history and presence (Milestone 2) are unchanged.
 
@@ -110,9 +110,10 @@ Extras: Settings → Voice & Audio for input/output device, input/output volume,
 
 Requires the Milestone 5 server (see [docs/screen-sharing-jetson.md](docs/screen-sharing-jetson.md); it adds a LiveKit codec setting that enables GPU encoding on Windows).
 
-- **Share:** join a voice channel → **Share Screen** in the voice panel → pick a screen or application window, quality (default 1080p 60fps), *Optimize for* and *Share system audio* → **Go Live**. While live, the panel shows a LIVE badge, a quality switch, a preview button and **Stop Streaming**.
+- **Share:** join a voice channel → **Share Screen** in the voice panel → pick a screen or application window, quality (default 1080p 60fps), *Mode* (Smooth Gaming / Sharp Desktop), codec and *Share system audio* → **Go Live**. While live, the panel shows a LIVE badge, a quality switch, a preview button and **Stop Streaming**.
 - **Watch:** click the red **LIVE** badge next to a user in the channel list (works from another channel too, it joins you there). Click a text channel to keep watching in a mini player; use the viewer's buttons for fullscreen, actual size, stats and stream volume.
-- **Diagnostics:** Settings → Diagnostics shows the encoder/decoder actually in use (and whether Chromium reports it as hardware), bitrate, fps, loss, RTT, CPU, memory and GPU status.
+- **Diagnostics:** Settings → Diagnostics shows each stage separately: capture, encoded and sent fps on the sharer; received, decoded and shown fps on the viewer. It also shows the encoder/decoder actually in use (and whether Chromium reports it as hardware), encode time, send pacer delay, jitter buffer, arrival → display time, freezes, loss, RTT, CPU, memory and GPU status. How to read it and the gaming benchmark procedure: [docs/screen-sharing-performance.md](docs/screen-sharing-performance.md).
+- **Best gaming settings (RTX 40-series):** AV1 · 1440p 60fps · Smooth Gaming, with *Hardware AV1 encoding* on (Settings → Screen Share).
 
 ### Hardware test checklist (two Windows PCs, Jetson deployed)
 

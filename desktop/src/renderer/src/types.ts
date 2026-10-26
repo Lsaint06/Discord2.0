@@ -1,4 +1,9 @@
-import type { ScreenCodec, ScreenContentHint, ScreenProfileId } from './media/screenProfiles'
+import type {
+  ScreenCodec,
+  ScreenContentHint,
+  ScreenLayering,
+  ScreenProfileId
+} from './media/screenProfiles'
 
 export type PresenceStatus = 'online' | 'idle' | 'dnd' | 'offline'
 
@@ -100,6 +105,10 @@ export interface UserSettings {
   screenShareAudio: boolean
   screenShareHint: ScreenContentHint
   screenShareCodec: ScreenCodec
+  /** VP9/AV1 layering: 'simulcast' (GPU-friendly L1T1) or LiveKit's 'svc' (L1T3). */
+  screenShareLayering: ScreenLayering
+  /** Send an extra 720p30 layer for viewers on weak connections. */
+  screenShareBackupLayer: boolean
   /** Show the live stats overlay in the stream viewer by default. */
   showStreamStats: boolean
   desktopNotifications: boolean

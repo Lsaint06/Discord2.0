@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import type { MediaSession } from '../media/MediaSession'
+import type { ConnectionQualityLabel, MediaSession } from '../media/MediaSession'
 import { useTrackStats } from '../hooks/useTrackStats'
+import { receiverRows, senderRows, type StatRow } from '../media/statsFormat'
 import type { InboundVideoStats, OutboundVideoStats } from '../media/stats'
 import { ChartIcon, CloseIcon, ExpandIcon, FullscreenIcon, PopOutIcon, SpeakerIcon } from './Icons'
 
@@ -14,9 +15,10 @@ interface StreamViewerProps {
   channelName: string
   /** The sharer is still publishing. */
   live: boolean
-  /** Re-render trigger: changes whenever stream tracks appear/disappear. */
+  /** Changes whenever stream tracks appear/disappear, so the current track is looked up again. */
   streamRevision: number
   mode: ViewerMode
+  quality: ConnectionQualityLabel
   /** Stream (system audio) volume in percent, or null when there is no stream audio to adjust. */
   volume: number | null
   defaultShowStats: boolean
@@ -25,62 +27,19 @@ interface StreamViewerProps {
   onStopWatching: () => void
 }
 
-function fmt(n: number | undefined, unit = ''): string {
-  return n === undefined ? '—' : `${Math.round(n)}${unit}`
-}
-
-function StatsOverlay({
-  stats,
-  isSelf
-}: {
-  stats: InboundVideoStats | OutboundVideoStats | null
-  isSelf: boolean
-}): React.JSX.Element {
-  if (!stats) return <div className="stream-stats">Collecting stats…</div>
-  const out = isSelf ? (stats as OutboundVideoStats) : null
-  const inb = isSelf ? null : (stats as InboundVideoStats)
-  const impl = out?.encoder ?? inb?.decoder
+function StatsOverlay({ rows }: { rows: StatRow[] | null }): React.JSX.Element {
+  if (!rows) return <div className="stream-stats">Collecting stats…</div>
   return (
     <dl className="stream-stats">
-      <dt>Resolution</dt>
-      <dd>{stats.width && stats.height ? `${stats.width}×${stats.height}` : '—'}</dd>
-      <dt>Frame rate</dt>
-      <dd>{fmt(stats.fps, ' fps')}</dd>
-      <dt>Bitrate</dt>
-      <dd>
-        {stats.bitrateKbps === undefined ? '—' : `${(stats.bitrateKbps / 1000).toFixed(1)} Mbps`}
-      </dd>
-      <dt>Codec</dt>
-      <dd>{stats.codec ?? '—'}</dd>
-      <dt>{isSelf ? 'Encoder' : 'Decoder'}</dt>
-      <dd>
-        {impl ?? '—'}
-        {stats.powerEfficient === true
-          ? ' (hardware)'
-          : stats.powerEfficient === false
-            ? ' (software)'
-            : ''}
-      </dd>
-      {out && (
-        <>
-          <dt>Encode time</dt>
-          <dd>{out.encodeMsPerFrame === undefined ? '—' : `${out.encodeMsPerFrame} ms/frame`}</dd>
-          <dt>Limited by</dt>
-          <dd>{out.qualityLimitation ?? '—'}</dd>
-        </>
-      )}
-      {inb && (
-        <>
-          <dt>Dropped frames</dt>
-          <dd>{fmt(inb.framesDropped)}</dd>
-          <dt>Jitter</dt>
-          <dd>{fmt(inb.jitterMs, ' ms')}</dd>
-        </>
-      )}
-      <dt>Packet loss</dt>
-      <dd>{stats.packetLossPct === undefined ? '—' : `${stats.packetLossPct}%`}</dd>
-      <dt>Round trip</dt>
-      <dd>{fmt(stats.rttMs, ' ms')}</dd>
+      {rows.map((r) => (
+        <div key={r.label} className="stream-stats-row">
+          <dt>{r.label}</dt>
+          <dd>
+            {r.kind === 'estimated' ? '≈ ' : ''}
+            {r.value}
+          </dd>
+        </div>
+      ))}
     </dl>
   )
 }
@@ -94,6 +53,7 @@ function StreamViewer({
   live,
   streamRevision,
   mode,
+  quality,
   volume,
   defaultShowStats,
   onVolumeChange,
@@ -105,12 +65,13 @@ function StreamViewer({
   const [fit, setFit] = useState(true)
   const [showStats, setShowStats] = useState(defaultShowStats)
   const [fullscreen, setFullscreen] = useState(false)
-  const [size, setSize] = useState<{ w: number; h: number } | null>(null)
 
-  // streamRevision is part of the key so a republished track is picked up.
+  // Re-evaluated on every streamRevision change; the attach effect below only runs when the
+  // underlying MediaStreamTrack actually changes (no detach/re-attach churn).
+  void streamRevision
   const track = live ? session.getScreenTrack(identity) : undefined
-  const trackKey = `${streamRevision}:${track?.sid ?? ''}`
-  const stats = useTrackStats(track, isSelf ? 'outbound' : 'inbound', showStats ? 1000 : 2000)
+  const mediaTrackId = track?.mediaStreamTrack?.id
+  const stats = useTrackStats(track, isSelf ? 'outbound' : 'inbound', 1000)
 
   useEffect(() => {
     const el = videoRef.current
@@ -119,8 +80,7 @@ function StreamViewer({
     return () => {
       track.detach(el)
     }
-    // trackKey covers re-attachment after a republish of the same Track object.
-  }, [track, trackKey])
+  }, [track, mediaTrackId])
 
   useEffect(() => {
     const onChange = (): void => setFullscreen(document.fullscreenElement === rootRef.current)
@@ -146,9 +106,31 @@ function StreamViewer({
     else void rootRef.current?.requestFullscreen().catch(() => undefined)
   }
 
-  const resolution = size ? `${size.w}×${size.h}` : null
-  const fps = stats?.fps
-  const codec = stats?.codec?.toUpperCase()
+  let format: string[] = []
+  let rows: StatRow[] | null = null
+  let stalled = false
+  if (stats) {
+    if (isSelf) {
+      const out = stats.rtc as OutboundVideoStats
+      const top = out.top
+      format = [
+        top?.width ? `${top.width}×${top.height}` : '',
+        top?.encodedFps !== undefined ? `${Math.round(top.encodedFps)} fps sent` : '',
+        top?.codec?.toUpperCase() ?? ''
+      ]
+      rows = senderRows(out)
+    } else {
+      const inb = stats.rtc as InboundVideoStats
+      const shown = stats.playback.presentedFps ?? inb.decodedFps
+      format = [
+        inb.width ? `${inb.width}×${inb.height}` : '',
+        shown !== undefined ? `${Math.round(shown)} fps shown` : '',
+        inb.codec?.toUpperCase() ?? ''
+      ]
+      rows = receiverRows(inb, stats.playback)
+      stalled = (inb.receivedFps ?? 1) < 1 && (shown ?? 1) < 1
+    }
+  }
 
   return (
     <div
@@ -159,17 +141,19 @@ function StreamViewer({
     >
       <header className="stream-header">
         <span className="live-badge">LIVE</span>
+        <span
+          className={`stream-quality quality-${quality}`}
+          title={`Connection: ${quality}`}
+          aria-label={`Connection ${quality}`}
+        />
         <span className="stream-title" title={`${sharerName} in ${channelName}`}>
           {isSelf ? 'Your stream' : sharerName}
           {mode === 'focus' && <span className="stream-where"> · {channelName}</span>}
         </span>
         {mode === 'focus' && live && (
-          <span className="stream-format">
-            {[resolution, fps !== undefined ? `${Math.round(fps)} fps` : null, codec]
-              .filter(Boolean)
-              .join(' · ')}
-          </span>
+          <span className="stream-format">{format.filter(Boolean).join(' · ')}</span>
         )}
+        {live && stalled && <span className="stream-stalled">Stalled</span>}
         <span className="stream-actions">
           {mode === 'focus' ? (
             <>
@@ -240,16 +224,7 @@ function StreamViewer({
         className="stream-stage"
         onDoubleClick={mode === 'focus' ? toggleFullscreen : () => onModeChange('focus')}
       >
-        <video
-          ref={videoRef}
-          className="stream-video"
-          autoPlay
-          playsInline
-          muted
-          onResize={(e) =>
-            setSize({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight })
-          }
-        />
+        <video ref={videoRef} className="stream-video" autoPlay playsInline muted />
         {!live ? (
           <div className="stream-overlay">
             <strong>Stream ended</strong>
@@ -264,7 +239,7 @@ function StreamViewer({
             <span>Joining stream…</span>
           </div>
         ) : null}
-        {showStats && live && mode === 'focus' && <StatsOverlay stats={stats} isSelf={isSelf} />}
+        {showStats && live && mode === 'focus' && <StatsOverlay rows={rows} />}
       </div>
 
       {mode === 'focus' && volume !== null && live && (

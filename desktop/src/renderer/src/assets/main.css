@@ -2156,3 +2156,53 @@ select.text-input:disabled {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- Milestone 5.1: stream health & diagnostics ---------- */
+
+.stream-slot-mini {
+  display: contents;
+}
+.stream-quality {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.stream-quality.quality-excellent,
+.stream-quality.quality-good {
+  background: var(--success);
+}
+.stream-quality.quality-poor {
+  background: var(--warning);
+}
+.stream-quality.quality-lost {
+  background: var(--danger);
+}
+.stream-stalled {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warning) 25%, transparent);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 700;
+}
+.stream-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: min(520px, calc(100% - 20px));
+}
+.stream-stats-row {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.stream-stats-row dd {
+  text-align: right;
+}
+.diag-row.estimated dd {
+  color: var(--text-muted);
+  font-style: italic;
+}

@@ -25,6 +25,8 @@ export const defaultSettings: UserSettings = {
   screenShareAudio: true,
   screenShareHint: 'motion',
   screenShareCodec: 'h264',
+  screenShareLayering: 'simulcast',
+  screenShareBackupLayer: true,
   showStreamStats: false,
   desktopNotifications: true,
   notificationSounds: true

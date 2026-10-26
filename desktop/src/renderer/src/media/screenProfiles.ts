@@ -6,9 +6,16 @@
  * upscaled, and the encoder may reduce resolution/frame rate under CPU or network pressure.
  */
 
-export type ScreenProfileId = 'balanced' | 'smooth' | 'high'
+export type ScreenProfileId = 'low' | 'balanced' | 'smooth' | 'high'
+/** 'motion' = Smooth Gaming, 'detail' = Sharp Desktop. */
 export type ScreenContentHint = 'motion' | 'detail'
 export type ScreenCodec = 'h264' | 'vp9' | 'av1'
+/**
+ * How VP9/AV1 are layered. 'simulcast' publishes independent single-layer (L1T1) streams per
+ * resolution, which Windows GPU encoders support. 'svc' is LiveKit's default for screen shares
+ * (one L1T3 stream with three temporal layers), which Chromium can only encode in software.
+ */
+export type ScreenLayering = 'simulcast' | 'svc'
 
 export interface ScreenProfile {
   id: ScreenProfileId
@@ -22,6 +29,15 @@ export interface ScreenProfile {
 }
 
 export const SCREEN_PROFILES: Record<ScreenProfileId, ScreenProfile> = {
+  low: {
+    id: 'low',
+    label: '720p 30fps',
+    description: 'Lowest bandwidth; for slow connections.',
+    width: 1280,
+    height: 720,
+    fps: 30,
+    maxBitrate: 2_500_000
+  },
   balanced: {
     id: 'balanced',
     label: '1080p 30fps',
@@ -56,9 +72,22 @@ export const DEFAULT_SCREEN_CODEC: ScreenCodec = 'h264'
 
 export const SCREEN_CODEC_LABELS: Record<ScreenCodec, string> = {
   h264: 'H.264 (widest hardware support)',
-  vp9: 'VP9',
-  av1: 'AV1 (newest GPUs only)'
+  vp9: 'VP9 (software encode)',
+  av1: 'AV1 (RTX 40 / RX 7000 / Arc GPUs)'
 }
+
+export const SCREEN_MODE_LABELS: Record<ScreenContentHint, { label: string; description: string }> =
+  {
+    motion: {
+      label: 'Smooth Gaming',
+      description:
+        'Keeps frame rate first; lowers resolution only if the encoder or network can’t keep up.'
+    },
+    detail: {
+      label: 'Sharp Desktop',
+      description: 'Keeps text sharp; frame rate drops when the screen is still, saving bandwidth.'
+    }
+  }
 
 export interface Size {
   width: number
@@ -123,6 +152,35 @@ export function lowLayerFor(actual: Size): SimulcastLayer | null {
 /** Games want frame rate; text/slides want sharpness. */
 export function degradationPreference(hint: ScreenContentHint): RTCDegradationPreference {
   return hint === 'motion' ? 'maintain-framerate' : 'maintain-resolution'
+}
+
+export interface VideoPublishPlan {
+  simulcast: boolean
+  /** Only for VP9/AV1. */
+  scalabilityMode?: 'L1T1' | 'L1T3'
+  /** Extra low-resolution layers (besides the full-resolution one). */
+  layers: SimulcastLayer[]
+}
+
+/**
+ * How a screen-share video track is layered.
+ * - H.264: full resolution + a 720p30 backup simulcast layer (above 720p).
+ * - VP9/AV1 'simulcast' (default): the same shape, each layer single-layer L1T1, so Windows GPU
+ *   encoders (Media Foundation) can encode them. Requires LiveKit server > 1.13.6 (the SDK
+ *   falls back to L1T3 by itself on older servers).
+ * - VP9/AV1 'svc': LiveKit's default L1T3 (three temporal layers in one stream). Chromium encodes
+ *   this in software (libaom/libvpx) and the SFU may forward only 15 or 30 fps to a viewer.
+ */
+export function videoPublishPlan(
+  codec: ScreenCodec,
+  layering: ScreenLayering,
+  actual: Size,
+  backupLayer = true
+): VideoPublishPlan {
+  const low = backupLayer ? lowLayerFor(actual) : null
+  if (codec === 'h264') return { simulcast: low !== null, layers: low ? [low] : [] }
+  if (layering === 'svc') return { simulcast: false, scalabilityMode: 'L1T3', layers: [] }
+  return { simulcast: true, scalabilityMode: 'L1T1', layers: low ? [low] : [] }
 }
 
 /** Safe default: 1080p60 unless the machine looks underpowered. */

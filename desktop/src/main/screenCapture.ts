@@ -11,6 +11,7 @@ import {
 } from 'electron'
 import { release } from 'os'
 import { CaptureSelectionStore, isValidSourceId } from './captureSelection'
+import { isAppUrl } from './appUrl'
 import type {
   AppMetrics,
   ScreenCaptureCapabilities,
@@ -34,18 +35,6 @@ const selection = new CaptureSelectionStore()
 /** See CaptureSelectionStore.takePermission. */
 export function takeDisplayCapturePermission(webContentsId: number): boolean {
   return selection.takePermission(webContentsId)
-}
-
-function isAppUrl(url: string | undefined): boolean {
-  if (!url) return false
-  if (url.startsWith('file://')) return true
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (!devUrl) return false
-  try {
-    return new URL(url).origin === new URL(devUrl).origin
-  } catch {
-    return false
-  }
 }
 
 function fromApp(event: IpcMainInvokeEvent): boolean {

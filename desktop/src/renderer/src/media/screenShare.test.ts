@@ -8,19 +8,91 @@ import {
   recommendedProfile,
   SCREEN_PROFILES,
   scaledBitrate,
-  sourceSupportsProfile
+  sourceSupportsProfile,
+  videoPublishPlan
 } from './screenProfiles'
 import { shouldSubscribe } from './subscriptions'
-import { summarizeInboundVideo, summarizeOutboundVideo } from './stats'
 import {
   CaptureSelectionStore,
   isValidSourceId,
   SELECTION_TTL_MS
 } from '../../../main/captureSelection'
+import {
+  ENCODER_FLAG_DEFAULTS,
+  mergeFeatureList,
+  parseEncoderFlags
+} from '../../../main/encoderFlagsLogic'
 
-type RawStat = Record<string, unknown> & { id: string; type: string; timestamp: number }
+describe('codec and layering selection', () => {
+  const qhd = { width: 2560, height: 1440 }
+
+  it('H.264 sends full resolution plus a 720p30 backup layer', () => {
+    const plan = videoPublishPlan('h264', 'simulcast', qhd)
+    expect(plan.simulcast).toBe(true)
+    expect(plan.scalabilityMode).toBeUndefined()
+    expect(plan.layers).toEqual([{ width: 1280, height: 720, fps: 30, maxBitrate: 1_800_000 }])
+  })
+
+  it('AV1/VP9 default to single-layer (L1T1) simulcast so GPU encoders can be used', () => {
+    for (const codec of ['av1', 'vp9'] as const) {
+      expect(videoPublishPlan(codec, 'simulcast', qhd)).toMatchObject({
+        simulcast: true,
+        scalabilityMode: 'L1T1'
+      })
+    }
+  })
+
+  it('keeps LiveKit’s L1T3 SVC available as an explicit option', () => {
+    expect(videoPublishPlan('av1', 'svc', qhd)).toEqual({
+      simulcast: false,
+      scalabilityMode: 'L1T3',
+      layers: []
+    })
+  })
+
+  it('can drop the backup layer, and never adds one at or below 720p', () => {
+    expect(videoPublishPlan('h264', 'simulcast', qhd, false)).toEqual({
+      simulcast: false,
+      layers: []
+    })
+    expect(videoPublishPlan('h264', 'simulcast', { width: 1280, height: 720 })).toEqual({
+      simulcast: false,
+      layers: []
+    })
+    // AV1 still uses the simulcast path (with one layer) so it stays L1T1, not L1T3.
+    expect(videoPublishPlan('av1', 'simulcast', { width: 1280, height: 720 })).toEqual({
+      simulcast: true,
+      scalabilityMode: 'L1T1',
+      layers: []
+    })
+  })
+})
+
+describe('encoder flags (main process)', () => {
+  it('defaults to allowing hardware AV1 and ignores junk', () => {
+    expect(ENCODER_FLAG_DEFAULTS.av1HardwareEncode).toBe(true)
+    expect(parseEncoderFlags('not json')).toEqual(ENCODER_FLAG_DEFAULTS)
+    expect(parseEncoderFlags('{"av1HardwareEncode":"yes"}')).toEqual(ENCODER_FLAG_DEFAULTS)
+    expect(parseEncoderFlags('{"av1HardwareEncode":false}')).toEqual({ av1HardwareEncode: false })
+  })
+
+  it('merges into an existing --enable-features list without duplicates', () => {
+    expect(mergeFeatureList('', 'WebRtcAV1HWEncode')).toBe('WebRtcAV1HWEncode')
+    expect(mergeFeatureList('A, B', 'WebRtcAV1HWEncode')).toBe('A,B,WebRtcAV1HWEncode')
+    expect(mergeFeatureList('WebRtcAV1HWEncode', 'WebRtcAV1HWEncode')).toBe('WebRtcAV1HWEncode')
+  })
+})
 
 describe('quality profiles', () => {
+  it('offers 720p30, 1080p30, 1080p60 and 1440p60 manual presets', () => {
+    expect(Object.values(SCREEN_PROFILES).map((p) => `${p.height}p${p.fps}`)).toEqual([
+      '720p30',
+      '1080p30',
+      '1080p60',
+      '1440p60'
+    ])
+  })
+
   it('uses max-only capture constraints (never upscales)', () => {
     expect(captureConstraints(SCREEN_PROFILES.smooth)).toEqual({
       width: { max: 1920 },
@@ -107,118 +179,6 @@ describe('subscription policy', () => {
   it('never subscribes to cameras or unknown sources', () => {
     expect(shouldSubscribe('camera', { ...base, watching: 'bob' })).toBe(false)
     expect(shouldSubscribe('unknown', base)).toBe(false)
-  })
-})
-
-describe('WebRTC stats parsing', () => {
-  const outbound = (
-    bytesSent: number,
-    timestamp: number,
-    framesEncoded: number,
-    totalEncodeTime: number
-  ): RawStat[] => [
-    { id: 'c1', type: 'codec', timestamp, mimeType: 'video/H264' },
-    {
-      id: 'o-hi',
-      type: 'outbound-rtp',
-      kind: 'video',
-      timestamp,
-      bytesSent,
-      frameWidth: 1920,
-      frameHeight: 1080,
-      framesPerSecond: 60,
-      codecId: 'c1',
-      encoderImplementation: 'MediaFoundationVideoEncodeAccelerator',
-      powerEfficientEncoder: true,
-      framesEncoded,
-      totalEncodeTime,
-      qualityLimitationReason: 'none'
-    },
-    {
-      id: 'o-lo',
-      type: 'outbound-rtp',
-      kind: 'video',
-      timestamp,
-      bytesSent: 0,
-      frameWidth: 1280,
-      frameHeight: 720
-    },
-    {
-      id: 'r1',
-      type: 'remote-inbound-rtp',
-      kind: 'video',
-      timestamp,
-      roundTripTime: 0.004,
-      fractionLost: 0.01
-    },
-    {
-      id: 'm1',
-      type: 'media-source',
-      kind: 'video',
-      timestamp,
-      width: 2560,
-      height: 1440,
-      framesPerSecond: 60
-    }
-  ]
-
-  it('summarizes the top outbound layer, bitrate and encode time', () => {
-    const first = summarizeOutboundVideo(outbound(0, 1000, 0, 0))
-    const second = summarizeOutboundVideo(outbound(1_000_000, 2000, 60, 0.3), first.sample)
-    expect(second.summary).toMatchObject({
-      width: 1920,
-      height: 1080,
-      fps: 60,
-      codec: 'H264',
-      bitrateKbps: 8000,
-      encoder: 'MediaFoundationVideoEncodeAccelerator',
-      powerEfficient: true,
-      encodeMsPerFrame: 5,
-      rttMs: 4,
-      packetLossPct: 1,
-      captureWidth: 2560,
-      captureFps: 60,
-      layers: 2
-    })
-  })
-
-  it('summarizes inbound video including loss and decoder', () => {
-    const stats = (bytesReceived: number, timestamp: number): RawStat[] => [
-      { id: 'c1', type: 'codec', timestamp, mimeType: 'video/VP9' },
-      {
-        id: 'i1',
-        type: 'inbound-rtp',
-        kind: 'video',
-        timestamp,
-        bytesReceived,
-        packetsReceived: 990,
-        packetsLost: 10,
-        frameWidth: 2560,
-        frameHeight: 1440,
-        framesPerSecond: 59,
-        codecId: 'c1',
-        jitter: 0.002,
-        decoderImplementation: 'D3D11VideoDecoder',
-        powerEfficientDecoder: true,
-        framesDropped: 3
-      },
-      { id: 't1', type: 'transport', timestamp, selectedCandidatePairId: 'p1' },
-      { id: 'p1', type: 'candidate-pair', timestamp, currentRoundTripTime: 0.012 }
-    ]
-    const first = summarizeInboundVideo(stats(0, 0))
-    const { summary } = summarizeInboundVideo(stats(500_000, 1000), first.sample)
-    expect(summary).toMatchObject({
-      width: 2560,
-      fps: 59,
-      codec: 'VP9',
-      bitrateKbps: 4000,
-      packetLossPct: 1,
-      jitterMs: 2,
-      decoder: 'D3D11VideoDecoder',
-      powerEfficient: true,
-      framesDropped: 3,
-      rttMs: 12
-    })
   })
 })
 

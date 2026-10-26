@@ -49,9 +49,9 @@ Verified on the real app:
 | 1440p 60fps | 2560×1440 | 60 | 14 Mbps | Needs a 1440p+ source and a GPU encoder |
 
 - **No upscaling.** Constraints are maximum-only, so a 1080p monitor shared on the 1440p preset is sent at 1080p, and the picker warns about this. Bitrate ceilings scale with the pixels actually sent.
-- **Optimize for.** "Motion" keeps frame rate (`maintain-framerate`); "Clarity" keeps resolution (`maintain-resolution`, for text and code).
+- **Mode.** "Smooth Gaming" keeps frame rate (`maintain-framerate`); "Sharp Desktop" keeps resolution (`maintain-resolution`, for text and code). A 720p30 preset was added in Milestone 5.1.
 - **Changing quality while live** re-applies constraints to the same capture and republishes it. There's no new picker, and viewers re-attach automatically.
-- **Codec.** H.264 is the default and the only one hardware-encoded on the test PC. VP9 and AV1 are selectable but were software-encoded (libvpx and libaom) on the test machine.
+- **Codec.** H.264 is the default. Since Milestone 5.1, AV1 is hardware-encoded on GPUs with an AV1 encoder (RTX 40 / RX 7000 / Arc), using single-layer simulcast and Chromium's `WebRtcAV1HWEncode` feature. VP9 stays software (libvpx). See [screen-sharing-performance.md](screen-sharing-performance.md).
 
 ### Hardware encoding (important: LiveKit codec config)
 
@@ -131,7 +131,7 @@ These are encoder ceilings. Real bitrates are usually lower, especially for desk
 1. Deploy as above, then point both PCs at `http://192.168.68.65:3001`.
 2. Sharer: *Share Screen → 1440p 60fps → Entire screen → Go Live*. Play a 60 fps video or game.
 3. Viewer: click **LIVE**, then turn on the stats overlay (chart icon). Record resolution, FPS, bitrate, decoder, dropped frames and loss over 2 minutes.
-4. Sharer: *Settings → Diagnostics*. Record the encoder, "Hardware encoder", encode ms/frame and "Quality limited by".
+4. Sharer: *Settings → Diagnostics*. Record the encoder (and its "(hardware)" / "(software)" label), encode time, send pacer delay and "Limited by". See [screen-sharing-performance.md](screen-sharing-performance.md) for the full procedure.
 5. On the Jetson: `docker stats` (LiveKit CPU and memory), `sudo tegrastats`, and `nload eth0` (egress).
 6. Repeat for 1080p60 and for 2–3 simultaneous viewers.
 
@@ -143,7 +143,7 @@ Investigate if "Quality limited by" shows `cpu` (the GPU encoder isn't in use), 
 | --- | --- |
 | "Screen capture was blocked or cancelled" | The picker selection expired (more than 15 s) or the window closed; pick again |
 | Black or frozen video from one window | Protected (DRM) content, or a minimized window; share the screen instead |
-| Diagnostics show `OpenH264` / "Hardware encoder: No" | LiveKit is running without the `42001f` codec entry (redeploy), outdated GPU drivers, or a VP9/AV1 codec was selected |
+| Diagnostics show `OpenH264` / "(software)" for H.264 | LiveKit is running without the `42001f` codec entry (redeploy), outdated GPU drivers, or a VP9/AV1 codec was selected |
 | Viewers get 720p | Their player is small (mini player), or bandwidth is limited; expand to focus or fullscreen |
 | Others hear themselves through the stream | Windows 10 can't exclude our own audio: turn off system audio or use headphones |
 | LIVE badge missing outside the channel | Webhook not reaching the backend: `docker compose logs server \| grep webhook` (reconciliation fixes it within 30 s) |

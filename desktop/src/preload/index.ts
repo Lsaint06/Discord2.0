@@ -3,6 +3,7 @@ import { electronAPI } from '@electron-toolkit/preload'
 import type {
   AppMetrics,
   D2DesktopApi,
+  EncoderFlagsState,
   MicrophoneAccess,
   ScreenCaptureCapabilities,
   ScreenSelectResult,
@@ -30,7 +31,14 @@ const d2: D2DesktopApi = {
     cancel: () => ipcRenderer.invoke('d2:screen-cancel') as Promise<void>
   },
   diagnostics: {
-    getAppMetrics: () => ipcRenderer.invoke('d2:app-metrics') as Promise<AppMetrics | null>
+    getAppMetrics: () => ipcRenderer.invoke('d2:app-metrics') as Promise<AppMetrics | null>,
+    getEncoderFlags: () =>
+      ipcRenderer.invoke('d2:encoder-flags') as Promise<EncoderFlagsState | null>,
+    setEncoderFlags: (flags) =>
+      ipcRenderer.invoke('d2:encoder-flags-set', {
+        av1HardwareEncode: flags.av1HardwareEncode === true
+      }) as Promise<EncoderFlagsState | null>,
+    relaunch: () => ipcRenderer.invoke('d2:app-relaunch') as Promise<void>
   },
   pushToTalk: {
     register: (accelerator) =>

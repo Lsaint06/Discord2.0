@@ -9,6 +9,7 @@ import {
   type IpcMainInvokeEvent
 } from 'electron'
 import { takeDisplayCapturePermission } from './screenCapture'
+import { isAppUrl } from './appUrl'
 
 /**
  * Narrowly scoped main-process media integration:
@@ -24,18 +25,6 @@ const ACCELERATOR =
   /^(?:(?:CommandOrControl|Control|Ctrl|Alt|Shift|Super)\+){0,3}(?:[A-Z0-9]|F(?:[1-9]|1\d|2[0-4])|Space|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Up|Down|Left|Right|Plus|`|-|=|\[|\]|\\|;|'|,|\.|\/|num[0-9]|numdec|numadd|numsub|nummult|numdiv)$/
 
 let registeredAccelerator: string | null = null
-
-function isAppUrl(url: string | undefined): boolean {
-  if (!url) return false
-  if (url.startsWith('file://')) return true
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (!devUrl) return false
-  try {
-    return new URL(url).origin === new URL(devUrl).origin
-  } catch {
-    return false
-  }
-}
 
 function fromApp(event: IpcMainInvokeEvent): boolean {
   return isAppUrl(event.senderFrame?.url)

@@ -3,6 +3,7 @@ import {
   SCREEN_PROFILES,
   type ScreenCodec,
   type ScreenContentHint,
+  type ScreenLayering,
   type ScreenProfile,
   type ScreenProfileId
 } from './screenProfiles'
@@ -31,6 +32,10 @@ export interface ScreenShareOptions {
   audio: boolean
   hint: ScreenContentHint
   codec: ScreenCodec
+  /** VP9/AV1 layering (ignored for H.264). Defaults to 'simulcast'. */
+  layering?: ScreenLayering
+  /** Also send a 720p30 layer for viewers on weak connections. Defaults to true. */
+  backupLayer?: boolean
 }
 
 export interface CapturedScreen {

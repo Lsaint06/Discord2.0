@@ -4,6 +4,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { setupMediaIntegration } from './media'
 import { setupScreenCapture } from './screenCapture'
+import { applyEncoderFlags, setupEncoderFlagsIpc } from './encoderFlags'
+import { isAppUrl } from './appUrl'
 
 // Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
 // Lets two clients run side by side on one PC for testing.
@@ -14,6 +16,9 @@ if (profile) {
   }
   app.setPath('userData', `${app.getPath('userData')}-${profile}`)
 }
+
+// Must run before 'ready' so Chromium's GPU process sees the features.
+applyEncoderFlags()
 
 function createWindow(): void {
   // Create the browser window.
@@ -78,6 +83,7 @@ app.whenReady().then(() => {
 
   setupMediaIntegration()
   setupScreenCapture()
+  setupEncoderFlagsIpc(isAppUrl)
 
   createWindow()
 

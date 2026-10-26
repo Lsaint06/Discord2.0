@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { PresenceStatus } from '../types'
 import type { VoiceStatus } from '../media/voiceLogic'
 import type { ConnectionQualityLabel } from '../media/MediaSession'
@@ -50,6 +51,8 @@ interface UserPanelProps {
   onDismissShareMessage: () => void
   onDismissDeviceNotice: () => void
   onStartAudio: () => void
+  /** Rendered while sharing (e.g. a "limited by CPU/bandwidth" note). */
+  shareStatus?: ReactNode
 }
 
 const STATUS_LABEL: Record<VoiceStatus, string> = {
@@ -89,7 +92,8 @@ function UserPanel({
   onChangeShareProfile,
   onDismissShareMessage,
   onDismissDeviceNotice,
-  onStartAudio
+  onStartAudio,
+  shareStatus
 }: UserPanelProps): React.JSX.Element {
   const micOff = muted || deafened
   const failed = voice?.status === 'error' || voice?.status === 'disconnected'
@@ -182,6 +186,7 @@ function UserPanel({
             </div>
           )}
 
+          {share?.status === 'live' && shareStatus}
           {share?.status === 'live' && share.audio === 'live' && !share.audioEchoProtected && (
             <div className="voice-panel-message warn">
               System audio may include other people&rsquo;s voices on this version of Windows. Use

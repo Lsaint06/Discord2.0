@@ -3,6 +3,7 @@ import type { ScreenCaptureCapabilities, ScreenSourceInfo } from '../../../prelo
 import type { ScreenShareOptions, ScreenSource } from '../media/ScreenShareController'
 import {
   SCREEN_CODEC_LABELS,
+  SCREEN_MODE_LABELS,
   SCREEN_PROFILES,
   sourceSupportsProfile,
   type ScreenCodec,
@@ -95,7 +96,7 @@ function ScreenSharePicker({
     if (!source) return
     onGoLive(
       { id: source.id, name: source.name },
-      { profileId, audio: audio && audioAvailable, hint, codec }
+      { ...initial, profileId, audio: audio && audioAvailable, hint, codec }
     )
   }
 
@@ -207,14 +208,17 @@ function ScreenSharePicker({
             </select>
           </label>
           <label className="setting-field">
-            <span className="setting-field-label">Optimize For</span>
+            <span className="setting-field-label">Mode</span>
             <select
               className="text-input"
               value={hint}
               onChange={(e) => setHint(e.target.value as ScreenContentHint)}
             >
-              <option value="motion">Motion (games, video)</option>
-              <option value="detail">Clarity (text, code)</option>
+              {(Object.keys(SCREEN_MODE_LABELS) as ScreenContentHint[]).map((h) => (
+                <option key={h} value={h}>
+                  {SCREEN_MODE_LABELS[h].label}
+                </option>
+              ))}
             </select>
           </label>
           <label className="setting-field">
@@ -233,7 +237,9 @@ function ScreenSharePicker({
           </label>
         </div>
 
-        <p className="picker-note">{profile.description}</p>
+        <p className="picker-note">
+          {profile.description} {SCREEN_MODE_LABELS[hint].description}
+        </p>
         {profileId === 'high' && supports === false && (
           <p className="picker-note warn" role="status">
             This screen is smaller than 2560×1440, so it will be sent at its native size (not
@@ -248,8 +254,10 @@ function ScreenSharePicker({
         )}
         {codec !== 'h264' && (
           <p className="picker-note">
-            {codec.toUpperCase()} may fall back to software encoding on some GPUs. Check Diagnostics
-            while streaming.
+            {codec === 'av1'
+              ? 'AV1 uses the GPU encoder on RTX 40, Radeon RX 7000 and Intel Arc GPUs (other GPUs encode in software). '
+              : 'VP9 is encoded in software on Windows. '}
+            Diagnostics shows which encoder is actually used.
           </p>
         )}
 

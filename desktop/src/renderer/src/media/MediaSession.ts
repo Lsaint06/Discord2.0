@@ -27,8 +27,8 @@ import {
 import {
   captureConstraints,
   degradationPreference,
-  lowLayerFor,
   scaledBitrate,
+  videoPublishPlan,
   type ScreenProfile,
   type ScreenProfileId
 } from './screenProfiles'
@@ -377,8 +377,12 @@ export class MediaSession {
       height: settings.height ?? profile.height,
       fps: settings.frameRate ?? profile.fps
     }
-    const low = lowLayerFor(actual)
-    const svc = options.codec !== 'h264'
+    const plan = videoPublishPlan(
+      options.codec,
+      options.layering ?? 'simulcast',
+      actual,
+      options.backupLayer ?? true
+    )
     const pub = await room.localParticipant.publishTrack(track, {
       source: Track.Source.ScreenShare,
       name: 'screen',
@@ -388,10 +392,14 @@ export class MediaSession {
         maxFramerate: profile.fps,
         priority: 'high'
       },
-      // H.264 uses one 720p backup simulcast layer; VP9/AV1 use SVC instead.
-      simulcast: !svc && low !== null,
-      screenShareSimulcastLayers:
-        !svc && low ? [new VideoPreset(low.width, low.height, low.maxBitrate, low.fps)] : [],
+      simulcast: plan.simulcast,
+      scalabilityMode: plan.scalabilityMode,
+      screenShareSimulcastLayers: plan.layers.map(
+        (l) => new VideoPreset(l.width, l.height, l.maxBitrate, l.fps)
+      ),
+      // Every Discord 2.0 client decodes H.264/VP9/AV1, so a VP8 backup stream would only
+      // cost the sharer encoder time.
+      backupCodec: false,
       degradationPreference: degradationPreference(options.hint)
     })
     this.bumpStreams()
