@@ -1,4 +1,5 @@
 import type { UserSettings } from '../types'
+import { DEFAULT_SOUND_EVENTS, DEFAULT_SOUND_VOLUME } from '../sound/soundPolicy'
 
 export const defaultSettings: UserSettings = {
   fontSize: 15,
@@ -27,7 +28,9 @@ export const defaultSettings: UserSettings = {
   notificationPreview: false,
   mutedChannels: {},
   recentEmoji: [],
-  notificationSounds: true
+  soundEffects: true,
+  soundVolume: DEFAULT_SOUND_VOLUME,
+  soundEvents: { ...DEFAULT_SOUND_EVENTS }
 }
 
 export const DEFAULT_ACCENT = '#6d72f6'

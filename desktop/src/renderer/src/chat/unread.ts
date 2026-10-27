@@ -114,8 +114,12 @@ export function notificationText(input: {
   content: string
   attachmentCount: number
   showPreview: boolean
+  /** The message mentions you (see chat/mentions.ts). */
+  mention?: boolean
 }): { title: string; body: string } {
-  const title = `${input.authorName} in #${input.channelName}`
+  const title = input.mention
+    ? `${input.authorName} mentioned you in #${input.channelName}`
+    : `${input.authorName} in #${input.channelName}`
   if (!input.showPreview) return { title, body: 'New message' }
   const text = input.content.trim()
   const body =

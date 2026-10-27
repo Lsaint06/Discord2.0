@@ -1,3 +1,4 @@
+import type { SoundEvent } from './sound/sounds'
 import type {
   ScreenCodec,
   ScreenContentHint,
@@ -144,5 +145,10 @@ export interface UserSettings {
   /** Channels whose desktop notifications are muted. */
   mutedChannels: Record<string, boolean>
   recentEmoji: string[]
-  notificationSounds: boolean
+  /** Global switch for sound effects (this device). */
+  soundEffects: boolean
+  /** Sound effects volume, 0–100. */
+  soundVolume: number
+  /** Per-event sound toggles. */
+  soundEvents: Record<SoundEvent, boolean>
 }

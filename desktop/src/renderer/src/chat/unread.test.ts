@@ -119,6 +119,19 @@ describe('notifications', () => {
       notificationText({ ...input, content: 'x'.repeat(300), showPreview: true }).body
     ).toHaveLength(120)
   })
+
+  it('says when the notification is a mention (content still hidden by default)', () => {
+    expect(
+      notificationText({
+        authorName: 'Bob',
+        channelName: 'general',
+        content: '@me secret',
+        attachmentCount: 0,
+        showPreview: false,
+        mention: true
+      })
+    ).toEqual({ title: 'Bob mentioned you in #general', body: 'New message' })
+  })
 })
 
 describe('scrolling', () => {

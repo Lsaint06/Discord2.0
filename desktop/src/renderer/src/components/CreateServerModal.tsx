@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useDialog } from '../hooks/useDialog'
 import { accentChoices } from '../data/defaults'
 import { initials } from '../lib/format'
 import type { ApiClient } from '../net/api'
@@ -26,13 +27,11 @@ function CreateServerModal({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  // One dialog behavior for both tabs (the element changes between them).
+  const dialogRef = useDialog<HTMLElement>({ onClose })
+  const setDialog = (el: HTMLElement | null): void => {
+    dialogRef.current = el
+  }
 
   const trimmed = name.trim()
 
@@ -63,6 +62,7 @@ function CreateServerModal({
     return (
       <div className="modal-backdrop" onMouseDown={onClose}>
         <div
+          ref={setDialog}
           className="modal"
           role="dialog"
           aria-modal="true"
@@ -82,6 +82,7 @@ function CreateServerModal({
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <form
+        ref={setDialog}
         className="modal"
         role="dialog"
         aria-modal="true"

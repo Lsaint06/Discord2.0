@@ -27,6 +27,7 @@ import { formatTimestamp } from '../../lib/format'
 import Avatar from '../Avatar'
 import { CloseIcon } from '../Icons'
 import { Field } from '../SettingsControls'
+import { useDialog } from '../../hooks/useDialog'
 import PasswordInput from '../auth/PasswordInput'
 
 type Tab =
@@ -93,16 +94,11 @@ function ServerSettingsModal(props: ServerSettingsModalProps): React.JSX.Element
   }, [perms, role])
   const [tab, setTab] = useState<Tab>(tabs[0]?.id ?? 'members')
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  const dialogRef = useDialog<HTMLDivElement>({ onClose })
 
   return (
     <div
+      ref={dialogRef}
       className="settings-overlay"
       role="dialog"
       aria-modal="true"
@@ -281,6 +277,10 @@ function MembersTab(props: {
   const { busy, error, run } = useAction()
   const [banFor, setBanFor] = useState<string | null>(null)
   const [reason, setReason] = useState('')
+  const banDialogRef = useDialog<HTMLFormElement>({
+    open: banFor !== null,
+    onClose: () => setBanFor(null)
+  })
   const [filter, setFilter] = useState('')
   const outranks = (target: ServerRole): boolean => ROLE_RANK[role] > ROLE_RANK[target]
   const members = [...(props.members ?? [])]
@@ -406,6 +406,7 @@ function MembersTab(props: {
       {banFor && (
         <div className="modal-backdrop" onMouseDown={() => setBanFor(null)}>
           <form
+            ref={banDialogRef}
             className="modal"
             role="dialog"
             aria-modal="true"

@@ -6,13 +6,13 @@ A self-hosted, Discord-inspired chat app for friends: an **Electron + React + Ty
 | --- | --- |
 | [`desktop/`](desktop/) | Electron desktop client |
 | [`server/`](server/) | Backend API + real-time gateway + Docker Compose (backend + LiveKit) ([server README](server/README.md)) |
-| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md), [profiles & presence](docs/milestone-8-identity.md) and [remote access options](docs/remote-access-options.md) |
+| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md), [profiles & presence](docs/milestone-8-identity.md), [sounds & interaction polish](docs/milestone-9-atmosphere.md) and [remote access options](docs/remote-access-options.md) |
 
-**Status — Milestone 8 (Project Identity: profiles, presence and personalization):**
-- **Profiles:** profile pictures and banners (cropped in the app, re-encoded and metadata-stripped on the server), display names, bios, pronouns, profile colors, member-since dates, profile popouts and a full profile view with mutual servers.
-- **Presence:** Online / Idle / Do Not Disturb / Invisible saved on your account, automatic idle detection, correct presence with several PCs signed in, and custom statuses with emoji and expiry — all live.
-- **Appearance:** dark, light or system theme, accent color, cozy/compact messages and reduced motion, synced between your PCs (font size stays per PC).
-- **Milestone 7 (unchanged):** invite-only accounts, Argon2id passwords, revocable sessions, roles and permissions, invitations and moderation. Messaging 2.0, screen sharing and voice are unchanged too.
+**Status — Milestone 9 (Project Atmosphere: sound and interaction polish):**
+- **Sounds:** an original, synthesized sound palette (messages, mentions, voice joins/leaves, connect/disconnect, mute/deafen) with a master switch, volume, per-sound toggles and previews in Settings → Sounds. Respects Do Not Disturb, muted channels and your own messages; never plays twice for the same message.
+- **Mentions:** `@username`, `@display name` (multi-word) and `@everyone` are detected by one shared rule for highlighting, notifications and sounds.
+- **Polish and accessibility:** keyboard-safe dialogs (focus stays inside, Escape closes, focus returns), consistent pressed/hover/focus states, smoother voice indicators, and a fixed "Allow all animations" / reduced-motion setting.
+- **Unchanged:** profiles, presence and appearance (Milestone 8), accounts and permissions (Milestone 7), Messaging 2.0, screen sharing and voice. Desktop-only milestone: no server or database changes.
 
 > ⚠️ Development sign-in (no password) stays available while the server runs with `DEV_AUTH=true`, so friends can migrate. Turn it off once everyone has an account, and keep the server on your trusted LAN. Details: [docs/milestone-7-security.md](docs/milestone-7-security.md); remote access is only proposed in [docs/remote-access-options.md](docs/remote-access-options.md).
 
@@ -85,7 +85,7 @@ With the two clients from the procedure above:
 - **Edit / delete:** hover a message for its toolbar or right-click it. ↑ in an empty composer edits your last message. Only the author can edit or delete.
 - **Reply / react / pin:** from the hover toolbar or the right-click menu. Pins are listed under the pin icon in the channel header. Since Milestone 7, pinning needs the Moderator role or higher.
 - **Search:** Ctrl+F → words, optional author and dates, *This channel* or *Whole server*. Click a result to jump to it.
-- **Notifications:** Settings → Notifications (message preview is off by default). Mute a channel with the bell in its header.
+- **Notifications:** Settings → Notifications (message preview is off by default). Mute a channel with the bell in its header. Sounds are in Settings → Sounds.
 
 Architecture, limits, storage, backup/restore, rollback and the full two-PC checklist: [docs/messaging-2-jetson.md](docs/messaging-2-jetson.md).
 
@@ -97,6 +97,15 @@ Architecture, limits, storage, backup/restore, rollback and the full two-PC chec
 - **Appearance:** Settings → Appearance (theme, accent, message display, timestamps, animations, idle timeout) follows your account to every PC; the chat font size is per PC.
 
 Details, security, migration, deployment and the two-PC checklist: [docs/milestone-8-identity.md](docs/milestone-8-identity.md).
+
+## Sounds and accessibility (Milestone 9)
+
+- **Sounds:** Settings → Sounds — master switch, volume (default 60 %), a toggle and **Preview** for each sound. Sounds follow your voice output device and stay on this PC. Do Not Disturb and muted channels silence message and mention sounds; your mute/deafen/voice feedback still plays.
+- **Upgrading:** if you had turned off the old "Notification Sounds" switch, message and mention sounds start off. Windows notifications are now silent whenever the app plays its own sound.
+- **Keyboard:** dialogs keep Tab inside, Escape closes the top one, and focus goes back to the button that opened it. Server icons show their name on keyboard focus.
+- **Motion:** Settings → Appearance → Animations. "Allow all animations" now really overrides Windows' reduce-motion setting; "Sync with computer" follows it.
+
+Architecture, sound rules, verification and limitations: [docs/milestone-9-atmosphere.md](docs/milestone-9-atmosphere.md).
 
 ## Accounts, roles and invitations (Milestone 7)
 

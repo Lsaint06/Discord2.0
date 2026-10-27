@@ -5,8 +5,10 @@
  *
  * Supported: ```code blocks```, `inline code`, **bold**, *italic* / _italic_, __underline__,
  * ~~strike~~, ||spoiler||, > quotes, auto-linked http(s) URLs, discord2:// message links,
- * @mentions. Not supported (by design): raw HTML, images from URLs, masked [text](url) links.
+ * @mentions (see chat/mentionMatch.ts). Not supported (by design): raw HTML, images from URLs, masked [text](url) links.
  */
+
+import { matchMentionAt } from './mentionMatch'
 
 export type Inline =
   | { type: 'text'; text: string }
@@ -24,7 +26,15 @@ export type Block =
 
 const URL_RE = /^https?:\/\/[^\s<>"'`]+[^\s<>"'`.,;:!?)\]}]/i
 const MESSAGE_LINK_RE = /^discord2:\/\/channels\/([A-Za-z0-9_-]{1,64})\/(\d{1,19})/
-const MENTION_RE = /^@[\p{L}\p{N}_.-]{1,32}/u
+
+/** Parser options. */
+export interface ParseOptions {
+  /**
+   * Known names (from mentionCandidates) so multi-word display names like "@Ann Lee" are one
+   * mention. Without them, single-word "@name" tokens are still mentions.
+   */
+  mentionNames?: readonly string[]
+}
 
 export function messageLink(channelId: string, messageId: string): string {
   return `discord2://channels/${channelId}/${messageId}`
@@ -42,7 +52,7 @@ const DELIMS: { marker: string; type: 'bold' | 'italic' | 'underline' | 'strike'
 const MAX_DEPTH = 8
 
 /** Parses inline formatting. Unclosed markers are kept as literal text. */
-export function parseInline(src: string, depth = 0): Inline[] {
+export function parseInline(src: string, options: ParseOptions = {}, depth = 0): Inline[] {
   const out: Inline[] = []
   let text = ''
   const flush = (): void => {
@@ -95,12 +105,12 @@ export function parseInline(src: string, depth = 0): Inline[] {
         continue
       }
     }
-    if (ch === '@' && (i === 0 || /\s/.test(src[i - 1]))) {
-      const mention = MENTION_RE.exec(rest)
+    if (ch === '@') {
+      const mention = matchMentionAt(src, i, options.mentionNames ?? [])
       if (mention) {
         flush()
-        out.push({ type: 'mention', text: mention[0] })
-        i += mention[0].length
+        out.push({ type: 'mention', text: mention })
+        i += mention.length
         continue
       }
     }
@@ -116,7 +126,10 @@ export function parseInline(src: string, depth = 0): Inline[] {
             (end + 1 >= src.length || !/[\p{L}\p{N}]/u.test(src[end + 1])))
         if (end > start && wordOk && src[start] !== ' ') {
           flush()
-          out.push({ type: delim.type, children: parseInline(src.slice(start, end), depth + 1) })
+          out.push({
+            type: delim.type,
+            children: parseInline(src.slice(start, end), options, depth + 1)
+          })
           i = end + delim.marker.length
           continue
         }
@@ -157,12 +170,13 @@ function findClose(src: string, from: number, marker: string): number {
 }
 
 /** Parses blocks: fenced code, quotes and paragraphs. */
-export function parseMarkdown(src: string, depth = 0): Block[] {
+export function parseMarkdown(src: string, options: ParseOptions = {}, depth = 0): Block[] {
   const blocks: Block[] = []
   const lines = src.split('\n')
   let para: string[] = []
   const flushPara = (): void => {
-    if (para.length) blocks.push({ type: 'paragraph', children: parseInline(para.join('\n')) })
+    if (para.length)
+      blocks.push({ type: 'paragraph', children: parseInline(para.join('\n'), options) })
     para = []
   }
   for (let i = 0; i < lines.length; i++) {
@@ -199,7 +213,7 @@ export function parseMarkdown(src: string, depth = 0): Block[] {
         i++
       }
       i--
-      blocks.push({ type: 'quote', children: parseMarkdown(quoted.join('\n'), depth + 1) })
+      blocks.push({ type: 'quote', children: parseMarkdown(quoted.join('\n'), options, depth + 1) })
       continue
     }
     para.push(line)

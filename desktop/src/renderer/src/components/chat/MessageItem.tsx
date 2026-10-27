@@ -39,7 +39,9 @@ interface MessageItemProps {
   mentioned: boolean
   flash: boolean
   editing: boolean
-  selfMention?: string
+  /** Known names for mention rendering (stable array from the mention detector). */
+  mentionNames?: readonly string[]
+  selfMentionNames?: ReadonlySet<string>
   highlight?: string[]
   cache: AttachmentCache
   actions: MessageActions
@@ -122,6 +124,24 @@ function EditBox({
   )
 }
 
+/**
+ * Reaction count that lifts briefly when it goes up while on screen. Mounting (history loads,
+ * channel switches) and unchanged counts after a reconnect never animate.
+ */
+function ReactionCount({ count }: { count: number }): React.JSX.Element {
+  const [shown, setShown] = useState(count)
+  const [bumps, setBumps] = useState(0)
+  if (count !== shown) {
+    setShown(count)
+    if (count > shown) setBumps((n) => n + 1)
+  }
+  return (
+    <span key={bumps} className={`reaction-count${bumps > 0 ? ' bump' : ''}`}>
+      {count}
+    </span>
+  )
+}
+
 function AuthorName({
   author,
   color,
@@ -191,7 +211,8 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
             content={message.content}
             onJump={actions.jump}
             highlight={props.highlight}
-            selfMention={props.selfMention}
+            mentionNames={props.mentionNames}
+            selfNames={props.selfMentionNames}
           />
           {message.editedAt ? (
             <span className="message-edited" title={`Edited ${formatTimestamp(message.editedAt)}`}>
@@ -223,7 +244,7 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
           disabled={local}
         >
           <span className="reaction-emoji">{r.emoji}</span>
-          <span className="reaction-count">{r.count}</span>
+          <ReactionCount count={r.count} />
         </button>
       ))}
       <button

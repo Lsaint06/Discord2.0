@@ -1,5 +1,6 @@
 import type { UserSettings } from '../types'
 import { defaultSettings } from '../data/defaults'
+import { migrateSoundSettings } from '../sound/soundPolicy'
 
 /**
  * Session storage. The bearer token is kept by the Electron main process, encrypted with the OS
@@ -84,7 +85,8 @@ export function loadSettings(): UserSettings {
     for (const key of Object.keys(defaultSettings) as (keyof UserSettings)[]) {
       if (key in parsed) (settings as Record<string, unknown>)[key] = parsed[key]
     }
-    return settings
+    // Sound effects (Milestone 9): validated, and carries over the old notificationSounds choice.
+    return { ...settings, ...migrateSoundSettings(parsed) }
   } catch {
     return { ...defaultSettings }
   }

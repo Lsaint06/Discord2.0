@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useDialog } from '../../hooks/useDialog'
 import type { User } from '../../types'
 import type { ApiCustomStatus, ApiProfile, ApiServer } from '../../net/protocol'
 import { CloseIcon } from '../Icons'
@@ -48,16 +49,7 @@ function ProfileModal({
     }
   }, [fetchProfile, user.id])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  const dialogRef = useDialog<HTMLDivElement>({ onClose })
 
   const mutualIds = mutual?.userId === user.id ? mutual.ids : null
   const loadError = error?.userId === user.id ? error.text : null
@@ -68,6 +60,7 @@ function ProfileModal({
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
         className="modal profile-modal"
         role="dialog"
         aria-modal="true"

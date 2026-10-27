@@ -29,6 +29,22 @@
   --chat-font-size: 15px;
   --radius: 8px;
 
+  /* Interaction tokens (Milestone 9). Durations are short: motion confirms a change, it never
+     makes you wait. All of it is removed by the reduced-motion rules below. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --motion-fast: 100ms;
+  --motion-base: 150ms;
+  --motion-slow: 220ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --shadow-low: 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --focus-ring: 0 0 0 2px var(--accent);
+  --press-shift: translateY(1px);
+
   color-scheme: dark;
 }
 
@@ -920,12 +936,12 @@ textarea {
   z-index: 100;
   display: flex;
   background: var(--bg-primary);
-  animation: settings-in 0.18s ease-out;
+  animation: settings-in var(--motion-slow) var(--ease-out);
 }
 @keyframes settings-in {
   from {
     opacity: 0;
-    transform: scale(1.04);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -2124,13 +2140,16 @@ select.text-input:disabled {
   overflow-wrap: anywhere;
 }
 
+/* Windows' reduced-motion setting applies unless the account preference is "Allow all
+   animations" (data-reduced-motion="off"); see also :root[data-reduced-motion='on'] below. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  :root:not([data-reduced-motion='off']) *,
+  :root:not([data-reduced-motion='off']) *::before,
+  :root:not([data-reduced-motion='off']) *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -3759,7 +3778,7 @@ mark {
 @keyframes pop-in {
   from {
     opacity: 0;
-    transform: translateY(4px) scale(0.98);
+    transform: translateY(4px);
   }
 }
 .status-menu-item {
@@ -4392,4 +4411,226 @@ mark {
   margin-bottom: 12px;
   color: var(--text-strong);
   font-size: 16px;
+}
+
+/* ---------- Interaction polish (Milestone 9) ---------- */
+
+/* Elevation in the light theme is softer. */
+:root[data-theme='light'] {
+  --shadow-low: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.14);
+  --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.18);
+}
+
+/* Dialogs: a short fade and a 6 px rise; never blocks input. */
+.modal {
+  box-shadow: var(--shadow-modal);
+  animation: modal-in var(--motion-base) var(--ease-out);
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.modal-backdrop {
+  animation-duration: var(--motion-base);
+}
+/* The dialog itself may hold focus (nothing focusable inside yet); no ring for that. */
+[role='dialog']:focus-visible,
+[role='alertdialog']:focus-visible,
+.settings-overlay:focus-visible {
+  outline: none;
+}
+.context-menu,
+.status-menu,
+.profile-popout,
+.emoji-picker-panel {
+  box-shadow: var(--shadow-menu);
+}
+
+/* Pressed feedback: a 1 px press, no scaling. */
+.icon-button:active:not(:disabled),
+.message-toolbar button:active,
+.reaction:active:not(:disabled),
+.server-icon:active,
+.channel-item:active,
+.settings-nav-item:active,
+.member:active,
+.status-menu-item:active,
+.context-menu button:active,
+.button:active:not(:disabled),
+.voice-user:active,
+.live-badge.clickable:active,
+.sound-preview:active:not(:disabled) {
+  transform: var(--press-shift);
+}
+.button {
+  transition:
+    filter var(--motion-fast),
+    background var(--motion-fast),
+    transform var(--motion-fast);
+}
+.button.primary:active:not(:disabled) {
+  filter: brightness(0.92);
+}
+.button:disabled,
+.button.secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+.icon-button {
+  transition:
+    background var(--motion-fast),
+    color var(--motion-fast),
+    transform var(--motion-fast);
+}
+.icon-button:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+/* Sidebars */
+.channel-item,
+.settings-nav-item,
+.member,
+.voice-user {
+  transition:
+    background var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast);
+}
+.channel-item:active,
+.settings-nav-item:active {
+  background: var(--bg-active);
+}
+.server-icon {
+  transition:
+    border-radius var(--motion-slow) var(--ease-out),
+    background var(--motion-slow) var(--ease-out),
+    color var(--motion-slow) var(--ease-out),
+    transform var(--motion-fast);
+}
+.server-pill {
+  transition: height var(--motion-slow) var(--ease-out);
+}
+.server-tooltip {
+  animation: tooltip-in var(--motion-fast) var(--ease-out);
+  pointer-events: none;
+}
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    transform: translate(-4px, -50%);
+  }
+}
+.unread-badge {
+  animation: fade-in var(--motion-base) ease-out;
+}
+
+/* Messages */
+.message-toolbar {
+  box-shadow: var(--shadow-low);
+}
+.message:hover .message-toolbar,
+.message-toolbar:focus-within {
+  animation: fade-in var(--motion-fast) ease-out;
+}
+.message-toolbar button {
+  transition:
+    background var(--motion-fast),
+    color var(--motion-fast),
+    transform var(--motion-fast);
+}
+.message-toolbar button:active {
+  background: var(--bg-active);
+}
+/* Jump target (reply, search, pin, link): a clear accent bar, then a gentle fade. */
+.message.flash {
+  box-shadow: inset 3px 0 0 var(--accent);
+  animation: message-flash 1.8s var(--ease-standard) forwards;
+}
+/* Reduced motion: keep the highlight static while it lasts (it isn't decoration). */
+:root[data-reduced-motion='on'] .message.flash {
+  animation: none !important;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-reduced-motion='off']) .message.flash {
+    animation: none !important;
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+}
+
+/* Reactions: a short lift when a count goes up (live changes only). */
+.reaction-count {
+  display: inline-block;
+}
+.reaction-count.bump {
+  animation: reaction-bump 320ms var(--ease-out);
+}
+@keyframes reaction-bump {
+  0% {
+    transform: translateY(-4px);
+    color: var(--accent);
+  }
+  100% {
+    transform: none;
+  }
+}
+.reaction {
+  transition:
+    background var(--motion-fast),
+    border-color var(--motion-fast),
+    color var(--motion-fast),
+    transform var(--motion-fast);
+}
+
+/* Voice: speaking ring comes on fast and fades out gently (no flicker between words). */
+.voice-avatar {
+  transition: box-shadow 220ms var(--ease-standard);
+}
+.voice-avatar.speaking {
+  transition-duration: 60ms;
+}
+.voice-panel-status.connecting svg,
+.voice-panel-status.reconnecting svg {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.voice-panel-status {
+  transition: color var(--motion-base);
+}
+.live-badge.starting {
+  background: var(--bg-input);
+  color: var(--text-muted);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* Settings → Sounds */
+.sound-group {
+  margin-top: 20px;
+}
+.sound-group > h3 {
+  display: block;
+  margin-bottom: 4px;
+}
+.sound-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sound-row > .setting-row {
+  flex: 1;
+  min-width: 0;
+}
+.sound-row.disabled > .setting-row {
+  opacity: 0.6;
+}
+.sound-preview {
+  flex-shrink: 0;
+}
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 24px;
 }

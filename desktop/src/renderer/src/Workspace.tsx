@@ -20,6 +20,11 @@ import { ProfileMediaContext } from './lib/profileMedia'
 import { DEFAULT_ACCENT } from './data/defaults'
 import { useAppearance } from './hooks/useAppearance'
 import { useIdleDetection } from './hooks/useIdleDetection'
+import { createMentionDetector } from './chat/mentions'
+import { SoundService } from './sound/SoundService'
+import { messageSound, SeenMessages, type SoundPreferences } from './sound/soundPolicy'
+import { useVoiceSounds } from './sound/useVoiceSounds'
+import SoundProvider from './sound/SoundProvider'
 import type { ApiMember, ApiServer, ApiUser, ServerRole } from './net/protocol'
 import { Permissions } from './net/protocol'
 import { ROLE_COLORS, ROLE_LABELS, hasPermission } from './lib/permissions'
@@ -160,6 +165,18 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     saveSettings(settings)
   }, [settings])
 
+  // ---- Sound effects (one service for the whole workspace; see sound/) ----
+  const [sound] = useState(() => new SoundService())
+  const [seenMessages] = useState(() => new SeenMessages())
+  const soundPrefs = useMemo<SoundPreferences>(
+    () => ({
+      enabled: settings.soundEffects,
+      volume: settings.soundVolume,
+      events: settings.soundEvents
+    }),
+    [settings.soundEffects, settings.soundVolume, settings.soundEvents]
+  )
+
   // ---- Appearance (synced preferences + this device's font size) and automatic idle ----
   useAppearance(backend.preferences, settings.fontSize)
   useIdleDetection(backend.preferences.idleTimeoutMinutes, backend.setIdle)
@@ -197,6 +214,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
 
   // ---- Voice ----
   const voice = useVoice({ fetchToken: backend.fetchVoiceToken, settings })
+  useVoiceSounds(sound, voice.state)
   const voiceStatus = voice.state.status
   const voiceActive =
     voiceStatus === 'connecting' || voiceStatus === 'connected' || voiceStatus === 'reconnecting'
@@ -480,9 +498,49 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     [servers]
   )
 
+  const userList = useMemo(
+    () =>
+      Object.keys(backend.users)
+        .map(resolveUser)
+        .filter((u) => !u.bot),
+    [backend.users, resolveUser]
+  )
+  const meUsername = backend.me?.username ?? session.username
+  // Keyed by names only, so presence updates don't rebuild it.
+  const mentionNameKey = userList
+    .flatMap((u) => [u.username, u.name])
+    .filter(Boolean)
+    .sort()
+    .join('\n')
+  const mentionDetector = useMemo(
+    () =>
+      createMentionDetector(
+        { username: meUsername, displayName },
+        mentionNameKey ? mentionNameKey.split('\n') : []
+      ),
+    [mentionNameKey, meUsername, displayName]
+  )
   // ---- Desktop notifications (content hidden unless the user opts in) ----
   useEffect(() => {
     notifyRef.current = (m: Message) => {
+      // Each message sounds/notifies at most once, however often it's delivered.
+      if (!seenMessages.firstTime(m.id)) return
+      const windowFocused = document.hasFocus()
+      const mentionsMe = mentionDetector.mentions(m.content)
+      const wantedSound = messageSound(
+        m,
+        {
+          meId: backend.me?.id,
+          doNotDisturb: statusPreference === 'dnd',
+          mutedChannels: settings.mutedChannels,
+          activeChannelId,
+          windowFocused,
+          mentionsMe
+        },
+        soundPrefs
+      )
+      const played = wantedSound ? sound.play(wantedSound) : 'skipped'
+
       const permission =
         typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
       if (
@@ -493,7 +551,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
           meId: backend.me?.id,
           mutedChannels: settings.mutedChannels,
           activeChannelId,
-          windowFocused: document.hasFocus()
+          windowFocused
         })
       ) {
         return
@@ -503,11 +561,13 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
         channelName: channelName(m.channelId),
         content: m.content,
         attachmentCount: m.attachments?.length ?? 0,
-        showPreview: settings.notificationPreview
+        showPreview: settings.notificationPreview,
+        mention: mentionsMe
       })
       const n = new Notification(title, {
         body,
-        silent: !settings.notificationSounds,
+        // The app plays its own sound; Windows' chime is only a fallback when that couldn't play.
+        silent: !(wantedSound && played === 'unavailable'),
         tag: m.channelId
       })
       n.onclick = () => {
@@ -530,30 +590,29 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     []
   )
 
-  const userList = useMemo(
-    () =>
-      Object.keys(backend.users)
-        .map(resolveUser)
-        .filter((u) => !u.bot),
-    [backend.users, resolveUser]
-  )
   const unreadCounts = useMemo(
     () =>
       Object.fromEntries(Object.entries(backend.readStates).map(([id, r]) => [id, r.unreadCount])),
     [backend.readStates]
   )
 
+  // Mute/deafen sounds come only from your own actions (buttons, settings), never from state sync.
   const toggleMute = (): void => {
     // Unmuting while deafened also undeafens, matching common voice-chat behavior.
     if (deafened) {
       setDeafened(false)
       setMuted(false)
+      sound.play('undeafen')
     } else {
-      setMuted((m) => !m)
+      sound.play(muted ? 'unmute' : 'mute')
+      setMuted(!muted)
     }
   }
 
-  const toggleDeafen = (): void => setDeafened((d) => !d)
+  const toggleDeafen = (): void => {
+    sound.play(deafened ? 'undeafen' : 'deafen')
+    setDeafened(!deafened)
+  }
 
   const createServer = async (name: string, color: string): Promise<string | null> => {
     const result = await backend.createServer(name, color)
@@ -655,8 +714,19 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     if (serverSettingsFor) loadServerMembers(serverSettingsFor)
   }, [serverSettingsFor, loadServerMembers])
 
+  // The same provider element wraps every view, so the sound service's lifecycle spans them.
+  const withSound = (node: React.ReactNode): React.JSX.Element => (
+    <SoundProvider
+      service={sound}
+      preferences={soundPrefs}
+      outputDeviceId={settings.outputDeviceId}
+    >
+      {node}
+    </SoundProvider>
+  )
+
   if (backend.phase !== 'ready' || !activeServer) {
-    return (
+    return withSound(
       <div className="app splash">
         <div className="splash-card">
           {backend.phase === 'error' ? (
@@ -711,7 +781,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
 
   const channelState = activeChannel ? backend.channels[activeChannel.id] : undefined
 
-  return (
+  return withSound(
     <ProfileMediaContext.Provider value={backend.profileMedia}>
       <div className="app">
         <ServerSidebar
@@ -843,6 +913,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
               />
             }
             selfName={displayName}
+            selfUsername={meUsername}
             showMembers={showMembers}
             compactMode={backend.preferences.density === 'compact'}
             showTimestamps={backend.preferences.showTimestamps}

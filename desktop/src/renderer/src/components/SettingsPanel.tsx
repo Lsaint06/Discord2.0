@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useDialog } from '../hooks/useDialog'
 import type { SelectableStatus, User, UserSettings } from '../types'
 import { defaultSettings } from '../data/defaults'
 import { formatMemberSince, presenceFromSetting, statusLabels } from '../lib/format'
@@ -25,6 +26,7 @@ import ProfileSettings from './profile/ProfileSettings'
 import AppearanceSettings from './profile/AppearanceSettings'
 import ProfileCard, { CustomStatusText } from './profile/ProfileCard'
 import EncoderSettings from './EncoderSettings'
+import SoundSettings from './SoundSettings'
 
 export type SectionId =
   | 'account'
@@ -36,6 +38,7 @@ export type SectionId =
   | 'voice'
   | 'streaming'
   | 'notifications'
+  | 'sounds'
   | 'diagnostics'
 
 const sections: { id: SectionId; label: string; adminOnly?: boolean }[] = [
@@ -48,6 +51,7 @@ const sections: { id: SectionId; label: string; adminOnly?: boolean }[] = [
   { id: 'voice', label: 'Voice & Audio' },
   { id: 'streaming', label: 'Screen Share' },
   { id: 'notifications', label: 'Notifications' },
+  { id: 'sounds', label: 'Sounds' },
   { id: 'diagnostics', label: 'Diagnostics' }
 ]
 
@@ -119,13 +123,7 @@ function SettingsPanel({
   const [section, setSection] = useState<SectionId>(initialSection)
   const [now] = useState(() => Date.now())
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  const dialogRef = useDialog<HTMLDivElement>({ onClose })
 
   const statusPreference = me?.statusPreference ?? 'online'
   const self: User | null = me
@@ -146,7 +144,13 @@ function SettingsPanel({
     : null
 
   return (
-    <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="User Settings">
+    <div
+      ref={dialogRef}
+      className="settings-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="User Settings"
+    >
       <nav className="settings-nav">
         <div className="settings-nav-inner">
           <h4>User Settings</h4>
@@ -458,14 +462,18 @@ function SettingsPanel({
                 checked={settings.notificationPreview}
                 onChange={(notificationPreview) => onChange({ notificationPreview })}
               />
-              <Toggle
-                label="Notification Sounds"
-                description="Play a sound for new messages."
-                checked={settings.notificationSounds}
-                onChange={(notificationSounds) => onChange({ notificationSounds })}
-              />
+              <p className="settings-note">
+                Message and mention sounds are under{' '}
+                <button type="button" className="link-button" onClick={() => setSection('sounds')}>
+                  Sounds
+                </button>
+                . Windows notifications themselves are silent unless the app can&rsquo;t play its
+                own sound.
+              </p>
             </>
           )}
+
+          {section === 'sounds' && <SoundSettings settings={settings} onChange={onChange} />}
         </div>
 
         <div className="settings-close">

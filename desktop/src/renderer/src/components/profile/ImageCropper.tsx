@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useDialog } from '../../hooks/useDialog'
 import { LIMITS, PROFILE_IMAGE_SIZES, type ProfileImageKind } from '../../net/protocol'
 import {
   clampCrop,
@@ -66,16 +67,7 @@ function ImageCropper({ file, kind, onCancel, onConfirm }: ImageCropperProps): R
     return () => URL.revokeObjectURL(url)
   }, [file, kind])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && !busy) {
-        e.stopPropagation()
-        onCancel()
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [onCancel, busy])
+  const dialogRef = useDialog<HTMLDivElement>({ onClose: busy ? undefined : onCancel })
 
   const size = loaded?.size
   const update = useCallback(
@@ -123,6 +115,7 @@ function ImageCropper({ file, kind, onCancel, onConfirm }: ImageCropperProps): R
   return (
     <div className="modal-backdrop" onMouseDown={() => !busy && onCancel()}>
       <div
+        ref={dialogRef}
         className={`modal cropper-modal ${kind}`}
         role="dialog"
         aria-modal="true"

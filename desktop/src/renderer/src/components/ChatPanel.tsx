@@ -25,6 +25,9 @@ import {
 } from '../chat/unread'
 import { filesFromTransfer } from '../chat/uploads'
 import { messageLink } from '../chat/markdown'
+import { createMentionDetector } from '../chat/mentions'
+import { anyDialogOpen } from '../lib/focusTrap'
+import { useDialog } from '../hooks/useDialog'
 import { BellIcon, HashIcon, MembersIcon, PinIcon, SearchIcon } from './Icons'
 import MessageItem, { type MessageActions } from './chat/MessageItem'
 import Composer, { type ComposerHandle } from './chat/Composer'
@@ -51,6 +54,8 @@ interface ChatPanelProps {
   readState: ReadState | undefined
   meId: string
   selfName: string
+  /** Your permanent username (mentions match it as well as your display name). */
+  selfUsername: string
   banner?: ReactNode
   showMembers: boolean
   compactMode: boolean
@@ -326,6 +331,25 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
   }, [pendingJump, messages])
 
   // ---- Actions (stable object so memoized messages don't re-render) ----
+  const { users, selfName, selfUsername } = props
+  // Keyed by the names only, so presence updates don't re-render every message.
+  const nameKey = users
+    .flatMap((u) => [u.username, u.name])
+    .filter(Boolean)
+    .sort()
+    .join('\n')
+  const mentionDetector = useMemo(
+    () =>
+      createMentionDetector(
+        { username: selfUsername, displayName: selfName },
+        nameKey ? nameKey.split('\n') : []
+      ),
+    [nameKey, selfName, selfUsername]
+  )
+  const deleteDialogRef = useDialog<HTMLDivElement>({
+    open: confirmDelete !== null,
+    onClose: () => setConfirmDelete(null)
+  })
   const actions: MessageActions = useMemo(
     () => ({
       reply: (m) => {
@@ -412,6 +436,8 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
   // ---- Keyboard shortcuts ----
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      // A modal is open: background shortcuts do nothing.
+      if (anyDialogOpen()) return
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
         e.preventDefault()
         setSearchOpen(true)
@@ -435,11 +461,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
   // ---- Render helpers ----
   const unreadStart =
     marker.channelId === channel.id ? firstUnreadId(messages, marker.lastReadId, meId) : undefined
-  const selfMention = props.selfName ? `@${props.selfName.toLowerCase()}` : undefined
-  const mentionsSelf = (m: Message): boolean => {
-    const text = m.content.toLowerCase()
-    return text.includes('@everyone') || (!!selfMention && text.includes(selfMention))
-  }
+  const mentionsSelf = (m: Message): boolean => mentionDetector.mentions(m.content)
   const lastOwn = [...messages]
     .reverse()
     .find((m) => m.authorId === meId && !m.pending && !m.failed)
@@ -673,7 +695,8 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
                       mentioned={mentionsSelf(message)}
                       flash={flashId === message.id}
                       editing={editingId === message.id}
-                      selfMention={selfMention}
+                      mentionNames={mentionDetector.candidates}
+                      selfMentionNames={mentionDetector.selfNames}
                       cache={backend.attachments}
                       actions={actions}
                     />
@@ -803,14 +826,12 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
       {confirmDelete && (
         <div className="modal-backdrop" onMouseDown={() => setConfirmDelete(null)}>
           <div
+            ref={deleteDialogRef}
             className="modal confirm-modal"
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="delete-title"
             onMouseDown={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setConfirmDelete(null)
-            }}
           >
             <h2 id="delete-title">Delete message</h2>
             <p>

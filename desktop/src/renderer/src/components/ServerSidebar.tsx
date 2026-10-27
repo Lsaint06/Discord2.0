@@ -80,6 +80,8 @@ function ServerSidebar({
             onClick={onAddServer}
             onMouseEnter={showTooltip('Add a Server')}
             onMouseLeave={hideTooltip}
+            onFocus={showTooltip('Add a Server')}
+            onBlur={hideTooltip}
             aria-label="Add a Server"
           >
             <PlusIcon size={22} />

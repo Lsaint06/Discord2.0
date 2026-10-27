@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useDialog } from '../../hooks/useDialog'
 import { ApiError, type ApiClient } from '../../net/api'
 import type { ApiInvitePreview, ApiServer } from '../../net/protocol'
 import { initials } from '../../lib/format'
@@ -11,16 +12,6 @@ const EXPIRY = [
   { hours: 24 * 30, label: '30 days' }
 ]
 const USES: (number | null)[] = [1, 5, 10, 25, null]
-
-function useEscape(onClose: () => void): void {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-}
 
 /** Creates a server invite and shows its code once (only a verifier is stored on the server). */
 export function InviteModal({
@@ -40,7 +31,7 @@ export function InviteModal({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
-  useEscape(onClose)
+  const dialogRef = useDialog<HTMLDivElement>({ onClose })
 
   const create = async (): Promise<void> => {
     setBusy(true)
@@ -58,6 +49,7 @@ export function InviteModal({
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
         className="modal"
         role="dialog"
         aria-modal="true"

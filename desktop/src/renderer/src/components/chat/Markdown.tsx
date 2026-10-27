@@ -6,6 +6,7 @@ import {
   type Block,
   type Inline
 } from '../../chat/markdown'
+import { normalizeName } from '../../chat/mentionMatch'
 
 interface MarkdownProps {
   content: string
@@ -13,8 +14,10 @@ interface MarkdownProps {
   onJump?: (channelId: string, messageId: string) => void
   /** Words to highlight (search results). */
   highlight?: string[]
-  /** Lower-cased "@name" of the current user, highlighted as a self-mention. */
-  selfMention?: string
+  /** Known names (mentionCandidates) so multi-word display names render as one mention. */
+  mentionNames?: readonly string[]
+  /** Names that mention the current user (selfMentionNames), highlighted as self-mentions. */
+  selfNames?: ReadonlySet<string>
 }
 
 function Spoiler({ children }: { children: ReactNode }): React.JSX.Element {
@@ -70,7 +73,7 @@ function renderInline(nodes: Inline[], props: MarkdownProps): ReactNode[] {
       case 'spoiler':
         return <Spoiler key={i}>{renderInline(node.children, props)}</Spoiler>
       case 'mention': {
-        const self = props.selfMention && node.text.toLowerCase() === props.selfMention
+        const self = props.selfNames?.has(normalizeName(node.text.slice(1)))
         return (
           <span key={i} className={`md-mention${self ? ' self' : ''}`}>
             {node.text}
@@ -157,7 +160,8 @@ function renderBlocks(blocks: Block[], props: MarkdownProps): ReactNode[] {
 
 /** Safe Markdown rendering (React elements only; see chat/markdown.ts). */
 function Markdown(props: MarkdownProps): React.JSX.Element {
-  const blocks = useMemo(() => parseMarkdown(props.content), [props.content])
+  const { content, mentionNames } = props
+  const blocks = useMemo(() => parseMarkdown(content, { mentionNames }), [content, mentionNames])
   return <>{renderBlocks(blocks, props)}</>
 }
 

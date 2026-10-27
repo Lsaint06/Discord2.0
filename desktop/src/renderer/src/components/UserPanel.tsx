@@ -162,7 +162,9 @@ function UserPanel({
               {sharing ? (
                 <>
                   <div className="share-live-row">
-                    <span className="live-badge">{share.status === 'starting' ? '…' : 'LIVE'}</span>
+                    <span className={`live-badge${share.status === 'starting' ? ' starting' : ''}`}>
+                      {share.status === 'starting' ? '…' : 'LIVE'}
+                    </span>
                     <span className="share-source" title={share.sourceName}>
                       {share.status === 'starting' ? 'Starting stream…' : share.sourceName}
                     </span>

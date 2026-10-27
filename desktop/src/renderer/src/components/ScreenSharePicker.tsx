@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useDialog } from '../hooks/useDialog'
 import type { ScreenCaptureCapabilities, ScreenSourceInfo } from '../../../preload/types'
 import type { ScreenShareOptions, ScreenSource } from '../media/ScreenShareController'
 import {
@@ -74,13 +75,7 @@ function ScreenSharePicker({
     }
   }, [bridge])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  const dialogRef = useDialog<HTMLDivElement>({ onClose })
 
   const visible = (sources ?? []).filter((s) => !bridge || s.kind === tab)
   const selected = sources?.find((s) => s.id === selectedId)
@@ -103,6 +98,7 @@ function ScreenSharePicker({
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
         className="modal screen-picker"
         role="dialog"
         aria-modal="true"

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useDialog } from '../../hooks/useDialog'
 import type { CustomStatusInput } from '../../net/api'
 import { LIMITS, type ApiCustomStatus } from '../../net/protocol'
 import {
@@ -34,13 +35,8 @@ function CustomStatusModal({
   const [error, setError] = useState<string | null>(null)
   const [now] = useState(() => Date.now())
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && !picking) onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, picking])
+  // The emoji picker handles (and stops) its own Escape first.
+  const dialogRef = useDialog<HTMLDivElement>({ onClose: saving ? undefined : onClose })
 
   const save = async (clear = false): Promise<void> => {
     setSaving(true)
@@ -69,6 +65,7 @@ function CustomStatusModal({
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div
+        ref={dialogRef}
         className="modal custom-status-modal"
         role="dialog"
         aria-modal="true"
