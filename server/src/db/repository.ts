@@ -1,4 +1,5 @@
-import type { ChannelType } from '../protocol.js'
+import type { ChannelType, ConfigurableRole, ServerRole } from '../protocol.js'
+import type { Override } from '../lib/permissions.js'
 
 export interface UserRecord {
   id: string
@@ -7,6 +8,149 @@ export interface UserRecord {
   avatarColor: string
   bot: boolean
   createdAt: number
+  /** Instance administrator (registration invites, account management). */
+  instanceAdmin?: boolean
+  /** Set when an administrator disabled the account (no sign-in, all sessions revoked). */
+  disabledAt?: number | null
+}
+
+export type SessionKind = 'dev' | 'password'
+
+export interface SessionRecord {
+  /** Public identifier (for "active devices"); not a secret. */
+  id: string
+  /** SHA-256 of the bearer token. The token itself is never stored. */
+  tokenHash: string
+  userId: string
+  kind: SessionKind
+  createdAt: number
+  lastUsedAt: number
+  expiresAt: number
+  revokedAt: number | null
+  device: string | null
+  createdIp: string | null
+  lastIp: string | null
+}
+
+export interface RegistrationInviteRecord {
+  id: string
+  codeHash: string
+  kind: 'register' | 'claim'
+  claimUserId: string | null
+  serverId: string | null
+  note: string | null
+  createdBy: string | null
+  createdAt: number
+  expiresAt: number
+  usedAt: number | null
+  usedBy: string | null
+  revokedAt: number | null
+}
+
+export interface PasswordResetRecord {
+  id: string
+  codeHash: string
+  userId: string
+  createdBy: string | null
+  createdAt: number
+  expiresAt: number
+  usedAt: number | null
+}
+
+export interface MemberRecord {
+  serverId: string
+  userId: string
+  role: ServerRole
+  joinedAt: number
+}
+
+export interface BanRecord {
+  serverId: string
+  userId: string
+  bannedBy: string | null
+  reason: string | null
+  createdAt: number
+}
+
+export interface ServerInviteRecord {
+  id: string
+  serverId: string
+  codeHash: string
+  createdBy: string | null
+  createdAt: number
+  expiresAt: number | null
+  maxUses: number | null
+  uses: number
+  revokedAt: number | null
+}
+
+export interface AuditRecord {
+  id?: string
+  at: number
+  action: string
+  actorId: string | null
+  targetUserId: string | null
+  serverId: string | null
+  ip: string | null
+  detail: Record<string, unknown> | null
+}
+
+export interface LegacyIdentityRecord {
+  user: UserRecord
+  messages: number
+  attachments: number
+  reactions: number
+  lastSeenAt: number | null
+  openClaimCode: boolean
+}
+
+/** Result of registering with (or claiming through) an invitation. */
+export type RegistrationResult =
+  | { ok: true; user: UserRecord; invite: RegistrationInviteRecord }
+  | { ok: false; reason: 'invalid_invite' | 'username_taken' | 'already_claimed' }
+
+export type InviteAcceptResult =
+  | { status: 'joined'; serverId: string }
+  | { status: 'already_member'; serverId: string }
+  | { status: 'invalid' }
+  | { status: 'banned' }
+
+export interface MergeReport {
+  from: { id: string; username: string }
+  into: { id: string; username: string }
+  messages: number
+  attachments: number
+  reactions: number
+  reactionDuplicates: number
+  pins: number
+  readStates: number
+  memberships: number
+  ownedServers: number
+  sessionsRevoked: number
+  dryRun: boolean
+}
+
+export interface IntegrityReport {
+  users: number
+  accounts: number
+  legacyIdentities: number
+  bots: number
+  messages: number
+  attachments: number
+  reactions: number
+  pins: number
+  readStates: number
+  memberships: number
+  serversWithoutOwner: string[]
+  orphans: {
+    messagesWithoutAuthor: number
+    attachmentsWithoutUploader: number
+    attachmentsWithoutMessageOrPending: number
+    reactionsWithoutUser: number
+    membersWithoutUser: number
+  }
+  foreignKeyViolations: number
+  integrityCheck: string
 }
 
 export interface ServerRecord {
@@ -131,13 +275,122 @@ export interface Repository {
     patch: Partial<Pick<UserRecord, 'displayName' | 'avatarColor'>>
   ): Promise<UserRecord | undefined>
 
-  createSession(tokenHash: string, userId: string, now: number): Promise<void>
-  findUserBySessionHash(tokenHash: string, now: number): Promise<UserRecord | undefined>
+  // ---- Accounts (Milestone 7) ----
+  setInstanceAdmin(userId: string, admin: boolean): Promise<void>
+  /** Disables (timestamp) or re-enables (null) an account. Disabling revokes all sessions. */
+  setUserDisabled(userId: string, at: number | null): Promise<void>
+  getPasswordHash(userId: string): Promise<string | undefined>
+  /** Creates or replaces the password verifier. */
+  setPasswordHash(userId: string, passwordHash: string, now: number): Promise<void>
+  hasPassword(userIds: string[]): Promise<Set<string>>
+  /** Users the viewer may see: people sharing a server, authors in their servers, bots, self. */
+  listVisibleUsers(viewerId: string): Promise<UserRecord[]>
+  /** Everyone who shares at least one server with `userId` (including themself). */
+  usersSharingServers(userId: string): Promise<Set<string>>
+  listLegacyIdentities(): Promise<LegacyIdentityRecord[]>
+
+  /**
+   * Atomically redeems a registration or claim invitation: verifies it is open, creates the
+   * account (or attaches a password to the claimed identity), stores recovery code verifiers,
+   * marks the invitation used and (for claims) revokes the identity's development sessions.
+   */
+  registerWithInvite(input: {
+    codeHash: string
+    now: number
+    newUser: UserRecord
+    passwordHash: string
+    recoveryHashes: string[]
+    displayName?: string
+  }): Promise<RegistrationResult>
+  /** Instance bootstrap (local CLI only): create an account, or set a password on an identity. */
+  provisionAccount(user: UserRecord, passwordHash: string, now: number): Promise<UserRecord>
+
+  // Sessions
+  insertSession(session: SessionRecord): Promise<void>
+  /** The session and its user for a token hash (no validity checks; see auth/sessions.ts). */
+  findSession(tokenHash: string): Promise<{ session: SessionRecord; user: UserRecord } | undefined>
+  touchSession(id: string, now: number, ip: string | null): Promise<void>
+  listSessions(userId: string, now: number): Promise<SessionRecord[]>
+  /** Revokes one of the user's sessions; returns whether it existed and was active. */
+  revokeSession(userId: string, sessionId: string, now: number): Promise<boolean>
+  /** Revokes all of a user's active sessions (optionally keeping one, or only 'dev' ones). */
+  revokeUserSessions(
+    userId: string,
+    now: number,
+    options?: { exceptId?: string; kind?: SessionKind }
+  ): Promise<string[]>
+
+  // Recovery codes and administrator resets
+  replaceRecoveryCodes(userId: string, hashes: string[], now: number): Promise<void>
+  /** Marks one unused code as used; false if it doesn't exist or was used. */
+  useRecoveryCode(userId: string, hash: string, now: number): Promise<boolean>
+  countRecoveryCodes(userId: string): Promise<number>
+  /** Creates a reset code (invalidating earlier open ones for that user). */
+  createPasswordReset(reset: PasswordResetRecord): Promise<void>
+  /** Consumes an open reset code issued for this user; false if invalid, used or expired. */
+  usePasswordReset(codeHash: string, userId: string, now: number): Promise<boolean>
+
+  // Registration invitations
+  /** For claims, revokes any earlier open claim code for the same identity. */
+  createRegistrationInvite(invite: RegistrationInviteRecord): Promise<void>
+  findOpenRegistrationInvite(codeHash: string, now: number): Promise<RegistrationInviteRecord | undefined>
+  listRegistrationInvites(): Promise<RegistrationInviteRecord[]>
+  revokeRegistrationInvite(id: string, now: number): Promise<boolean>
+
+  // Servers and membership
+  getServer(id: string): Promise<ServerRecord | undefined>
+  updateServer(id: string, patch: Partial<Pick<ServerRecord, 'name' | 'color'>>): Promise<ServerRecord | undefined>
+  getMember(serverId: string, userId: string): Promise<MemberRecord | undefined>
+  listMembers(serverId: string): Promise<MemberRecord[]>
+  membershipsForUser(userId: string): Promise<MemberRecord[]>
+  /** Adds a member unless banned or already present. */
+  addMember(member: MemberRecord): Promise<'added' | 'exists' | 'banned'>
+  removeMember(serverId: string, userId: string): Promise<boolean>
+  setMemberRole(serverId: string, userId: string, role: Exclude<ServerRole, 'owner'>): Promise<boolean>
+  /** Atomically makes `toUserId` the owner and demotes the previous owner to admin. */
+  transferOwnership(serverId: string, fromUserId: string, toUserId: string): Promise<boolean>
+  /** Local CLI only: makes a user the owner (joining if needed); the previous owner becomes admin. */
+  setOwner(serverId: string, userId: string, now: number): Promise<void>
+  /** Removes the membership and records a ban (one transaction). */
+  banMember(ban: BanRecord): Promise<void>
+  unbanMember(serverId: string, userId: string): Promise<boolean>
+  listBans(serverId: string): Promise<BanRecord[]>
+  getRolePermissions(serverIds: string[]): Promise<Map<string, Partial<Record<ConfigurableRole, number>>>>
+  /** `null` resets the role to its built-in default. */
+  setRolePermissions(serverId: string, role: ConfigurableRole, permissions: number | null): Promise<void>
+  overridesForChannels(channelIds: string[]): Promise<Map<string, Override[]>>
+  /** allow = deny = 0 removes the override. */
+  setChannelOverride(channelId: string, role: ConfigurableRole, allow: number, deny: number): Promise<void>
+  createChannel(channel: ChannelRecord): Promise<void>
+  updateChannel(id: string, patch: Partial<Pick<ChannelRecord, 'name' | 'topic'>>): Promise<ChannelRecord | undefined>
+  /** Deletes a channel and everything in it; returns the attachment ids to remove from disk. */
+  deleteChannel(id: string): Promise<string[]>
+
+  // Server invitations
+  createServerInvite(invite: ServerInviteRecord): Promise<void>
+  listServerInvites(serverId: string): Promise<ServerInviteRecord[]>
+  getServerInvite(id: string): Promise<ServerInviteRecord | undefined>
+  findUsableServerInvite(codeHash: string, now: number): Promise<ServerInviteRecord | undefined>
+  revokeServerInvite(id: string, now: number): Promise<boolean>
+  /** Atomic: checks it is usable, counts the use and adds the membership (one transaction). */
+  acceptServerInvite(codeHash: string, userId: string, now: number): Promise<InviteAcceptResult>
+
+  // Audit log
+  addAuditEvent(event: AuditRecord): Promise<void>
+  listAuditEvents(query: { serverId?: string; before?: string; limit: number }): Promise<AuditRecord[]>
+
+  // Maintenance and legacy identity migration
+  /** Deletes expired/revoked sessions, used/expired codes and old audit events. */
+  purgeExpired(now: number, retention: { sessionsMs: number; auditMs: number }): Promise<Record<string, number>>
+  /** Moves everything owned by one identity to another account (dry run = report only). */
+  mergeUsers(fromUserId: string, intoUserId: string, dryRun: boolean): Promise<MergeReport>
+  integrityReport(): Promise<IntegrityReport>
 
   countServers(): Promise<number>
   listServers(): Promise<ServerRecord[]>
   listChannels(): Promise<ChannelRecord[]>
   getChannel(id: string): Promise<ChannelRecord | undefined>
+  /** Creates the server, its channels and (if ownerId is set) the owner's membership. */
   createServer(server: ServerRecord, channels: ChannelRecord[]): Promise<void>
 
   listMessages(channelId: string, page: MessagePage): Promise<MessageRecord[]>

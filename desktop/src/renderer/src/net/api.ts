@@ -1,13 +1,32 @@
 import type {
+  ApiAccount,
   ApiAttachment,
+  ApiAuditEvent,
+  ApiAuthResult,
+  ApiBan,
+  ApiChannel,
+  ApiChannelOverride,
   ApiErrorBody,
+  ApiInvitePreview,
+  ApiLegacyIdentity,
+  ApiMe,
+  ApiMember,
   ApiMessage,
   ApiReadState,
+  ApiRegistrationInvite,
+  ApiRolePermissions,
   ApiSearchResult,
   ApiServer,
+  ApiServerInvite,
+  ApiSession,
   ApiUser,
-  ApiVoiceToken
+  ApiVoiceToken,
+  ConfigurableRole
 } from './protocol'
+
+export type InviteInfo =
+  | { kind: 'register'; serverName: string | null }
+  | { kind: 'claim'; username: string; displayName: string }
 
 const REQUEST_TIMEOUT_MS = 10_000
 const AUTH_SCHEME = 'Bearer'
@@ -44,6 +63,9 @@ export interface ServerMeta {
   apiVersion: number
   devAuth: boolean
   voice?: boolean
+  /** Milestone 7+: password accounts exist (registration by invitation). */
+  accounts?: boolean
+  registration?: 'invite'
 }
 
 export interface SendMessageBody {
@@ -120,11 +142,135 @@ export class ApiClient {
     return this.request('GET', '/api/meta')
   }
 
-  devLogin(username: string): Promise<{ token: string; user: ApiUser }> {
-    return this.request('POST', '/api/dev/login', { username })
+  devLogin(username: string, device?: string): Promise<ApiAuthResult & { devOnly: true }> {
+    return this.request('POST', '/api/dev/login', { username, ...(device ? { device } : {}) })
   }
 
-  me(): Promise<ApiUser> {
+  // ---- Accounts and sessions ----
+
+  login(username: string, password: string, device?: string): Promise<ApiAuthResult> {
+    return this.request('POST', '/api/auth/login', {
+      username,
+      password,
+      ...(device ? { device } : {})
+    })
+  }
+
+  inviteInfo(code: string): Promise<InviteInfo> {
+    return this.request('POST', '/api/auth/invite-info', { code })
+  }
+
+  register(body: {
+    code: string
+    username?: string
+    displayName?: string
+    password: string
+    device?: string
+  }): Promise<ApiAuthResult> {
+    return this.request('POST', '/api/auth/register', body)
+  }
+
+  recover(body: {
+    username: string
+    code: string
+    newPassword: string
+    device?: string
+  }): Promise<ApiAuthResult & { recoveryCodesRemaining: number }> {
+    return this.request('POST', '/api/auth/recover', body)
+  }
+
+  logout(): Promise<void> {
+    return this.request('POST', '/api/auth/logout')
+  }
+
+  logoutAll(keepCurrent: boolean): Promise<{ revoked: number }> {
+    return this.request('POST', '/api/auth/logout-all', { keepCurrent })
+  }
+
+  sessions(): Promise<ApiSession[]> {
+    return this.request('GET', '/api/auth/sessions')
+  }
+
+  revokeSession(sessionId: string): Promise<void> {
+    return this.request('DELETE', `/api/auth/sessions/${encodeURIComponent(sessionId)}`)
+  }
+
+  changePassword(
+    currentPassword: string,
+    newPassword: string
+  ): Promise<{ otherSessionsRevoked: number }> {
+    return this.request('POST', '/api/auth/password', { currentPassword, newPassword })
+  }
+
+  recoveryCodeCount(): Promise<{ remaining: number }> {
+    return this.request('GET', '/api/auth/recovery-codes')
+  }
+
+  regenerateRecoveryCodes(password: string): Promise<{ codes: string[] }> {
+    return this.request('POST', '/api/auth/recovery-codes', { password })
+  }
+
+  // ---- Instance administration ----
+
+  adminAccounts(): Promise<ApiAccount[]> {
+    return this.request('GET', '/api/admin/accounts')
+  }
+
+  adminRegistrationInvites(): Promise<ApiRegistrationInvite[]> {
+    return this.request('GET', '/api/admin/registration-invites')
+  }
+
+  adminCreateRegistrationInvite(body: {
+    password: string
+    expiresInHours?: number
+    note?: string
+    serverId?: string | null
+  }): Promise<ApiRegistrationInvite> {
+    return this.request('POST', '/api/admin/registration-invites', body)
+  }
+
+  adminRevokeRegistrationInvite(id: string): Promise<void> {
+    return this.request('DELETE', `/api/admin/registration-invites/${encodeURIComponent(id)}`)
+  }
+
+  adminLegacy(): Promise<ApiLegacyIdentity[]> {
+    return this.request('GET', '/api/admin/legacy')
+  }
+
+  adminClaimCode(userId: string, password: string): Promise<ApiRegistrationInvite> {
+    return this.request('POST', `/api/admin/legacy/${encodeURIComponent(userId)}/claim-code`, {
+      password
+    })
+  }
+
+  adminResetCode(
+    userId: string,
+    password: string
+  ): Promise<{ code: string; expiresInHours: number }> {
+    return this.request('POST', `/api/admin/accounts/${encodeURIComponent(userId)}/reset-code`, {
+      password
+    })
+  }
+
+  adminSetDisabled(
+    userId: string,
+    disabled: boolean,
+    password: string
+  ): Promise<{ disabled: boolean }> {
+    return this.request('POST', `/api/admin/accounts/${encodeURIComponent(userId)}/disabled`, {
+      disabled,
+      password
+    })
+  }
+
+  adminAudit(before?: string): Promise<(ApiAuditEvent & { ip: string | null })[]> {
+    return this.request(
+      'GET',
+      `/api/admin/audit${before ? `?before=${encodeURIComponent(before)}` : ''}`
+    )
+  }
+
+  me(): Promise<ApiMe> {
     return this.request('GET', '/api/users/me')
   }
 
@@ -132,7 +278,7 @@ export class ApiClient {
     return this.request('GET', '/api/users')
   }
 
-  updateMe(patch: { displayName?: string; avatarColor?: string }): Promise<ApiUser> {
+  updateMe(patch: { displayName?: string; avatarColor?: string }): Promise<ApiMe> {
     return this.request('PATCH', '/api/users/me', patch)
   }
 
@@ -142,6 +288,144 @@ export class ApiClient {
 
   createServer(name: string, color: string): Promise<ApiServer> {
     return this.request('POST', '/api/servers', { name, color })
+  }
+
+  // ---- Server management ----
+
+  updateServer(serverId: string, patch: { name?: string; color?: string }): Promise<ApiServer> {
+    return this.request('PATCH', `/api/servers/${encodeURIComponent(serverId)}`, patch)
+  }
+
+  members(serverId: string): Promise<ApiMember[]> {
+    return this.request('GET', `/api/servers/${encodeURIComponent(serverId)}/members`)
+  }
+
+  setMemberRole(serverId: string, userId: string, role: ConfigurableRole): Promise<ApiMember> {
+    return this.request(
+      'PATCH',
+      `/api/servers/${encodeURIComponent(serverId)}/members/${encodeURIComponent(userId)}`,
+      { role }
+    )
+  }
+
+  kickMember(serverId: string, userId: string): Promise<void> {
+    return this.request(
+      'DELETE',
+      `/api/servers/${encodeURIComponent(serverId)}/members/${encodeURIComponent(userId)}`
+    )
+  }
+
+  leaveServer(serverId: string): Promise<void> {
+    return this.request('POST', `/api/servers/${encodeURIComponent(serverId)}/leave`)
+  }
+
+  bans(serverId: string): Promise<ApiBan[]> {
+    return this.request('GET', `/api/servers/${encodeURIComponent(serverId)}/bans`)
+  }
+
+  banMember(serverId: string, userId: string, reason?: string): Promise<unknown> {
+    return this.request(
+      'PUT',
+      `/api/servers/${encodeURIComponent(serverId)}/bans/${encodeURIComponent(userId)}`,
+      reason ? { reason } : {}
+    )
+  }
+
+  unbanMember(serverId: string, userId: string): Promise<void> {
+    return this.request(
+      'DELETE',
+      `/api/servers/${encodeURIComponent(serverId)}/bans/${encodeURIComponent(userId)}`
+    )
+  }
+
+  roles(serverId: string): Promise<ApiRolePermissions[]> {
+    return this.request('GET', `/api/servers/${encodeURIComponent(serverId)}/roles`)
+  }
+
+  setRolePermissions(
+    serverId: string,
+    role: ConfigurableRole,
+    permissions: number | null
+  ): Promise<ApiRolePermissions> {
+    return this.request(
+      'PUT',
+      `/api/servers/${encodeURIComponent(serverId)}/roles/${encodeURIComponent(role)}`,
+      { permissions }
+    )
+  }
+
+  transferOwnership(serverId: string, userId: string, password: string): Promise<unknown> {
+    return this.request('POST', `/api/servers/${encodeURIComponent(serverId)}/transfer`, {
+      userId,
+      password
+    })
+  }
+
+  createChannel(
+    serverId: string,
+    body: { name: string; type: 'text' | 'voice'; topic?: string | null }
+  ): Promise<ApiChannel> {
+    return this.request('POST', `/api/servers/${encodeURIComponent(serverId)}/channels`, body)
+  }
+
+  updateChannel(
+    channelId: string,
+    patch: { name?: string; topic?: string | null }
+  ): Promise<ApiChannel> {
+    return this.request('PATCH', `/api/channels/${encodeURIComponent(channelId)}`, patch)
+  }
+
+  deleteChannel(channelId: string): Promise<void> {
+    return this.request('DELETE', `/api/channels/${encodeURIComponent(channelId)}`)
+  }
+
+  channelOverrides(channelId: string): Promise<ApiChannelOverride[]> {
+    return this.request('GET', `/api/channels/${encodeURIComponent(channelId)}/overrides`)
+  }
+
+  setChannelOverride(
+    channelId: string,
+    role: ConfigurableRole,
+    allow: number,
+    deny: number
+  ): Promise<ApiChannelOverride> {
+    return this.request(
+      'PUT',
+      `/api/channels/${encodeURIComponent(channelId)}/overrides/${encodeURIComponent(role)}`,
+      { allow, deny }
+    )
+  }
+
+  serverAudit(serverId: string): Promise<ApiAuditEvent[]> {
+    return this.request('GET', `/api/servers/${encodeURIComponent(serverId)}/audit`)
+  }
+
+  // ---- Server invitations (codes travel in request bodies, never URLs) ----
+
+  createInvite(
+    serverId: string,
+    body: { expiresInHours?: number; maxUses?: number | null }
+  ): Promise<ApiServerInvite> {
+    return this.request('POST', `/api/servers/${encodeURIComponent(serverId)}/invites`, body)
+  }
+
+  invites(serverId: string): Promise<ApiServerInvite[]> {
+    return this.request('GET', `/api/servers/${encodeURIComponent(serverId)}/invites`)
+  }
+
+  revokeInvite(serverId: string, inviteId: string): Promise<void> {
+    return this.request(
+      'DELETE',
+      `/api/servers/${encodeURIComponent(serverId)}/invites/${encodeURIComponent(inviteId)}`
+    )
+  }
+
+  previewInvite(code: string): Promise<ApiInvitePreview> {
+    return this.request('POST', '/api/invites/preview', { code })
+  }
+
+  acceptInvite(code: string): Promise<ApiServer> {
+    return this.request('POST', '/api/invites/accept', { code })
   }
 
   // ---- Messages ----

@@ -1,5 +1,6 @@
 import { isIP } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
+import { DEFAULT_ARGON2, validateArgon2Params, type Argon2Params } from './auth/password.js'
 
 export interface LiveKitConfig {
   apiKey: string
@@ -33,6 +34,16 @@ export interface AttachmentConfig {
   pendingTtlMs: number
 }
 
+export interface AuthConfig {
+  /** A session expires after this long without use. */
+  sessionIdleMs: number
+  /** A session expires this long after sign-in, however active (then sign in again). */
+  sessionMaxAgeMs: number
+  argon2: Argon2Params
+  /** Concurrent password hashes (each uses argon2.memoryKiB of RAM). */
+  hashConcurrency: number
+}
+
 export interface Config {
   env: 'development' | 'production' | 'test'
   host: string
@@ -51,6 +62,34 @@ export interface Config {
   /** Voice (LiveKit). null = voice disabled. */
   livekit: LiveKitConfig | null
   attachments: AttachmentConfig
+  auth: AuthConfig
+}
+
+const DAY = 24 * 60 * 60_000
+
+function integer(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const value = positiveNumber(env, name, fallback)
+  if (!Number.isInteger(value)) throw new Error(`${name} must be a whole number`)
+  return value
+}
+
+function parseAuth(env: NodeJS.ProcessEnv): AuthConfig {
+  const argon2: Argon2Params = {
+    memoryKiB: integer(env, 'ARGON2_MEMORY_KIB', DEFAULT_ARGON2.memoryKiB),
+    passes: integer(env, 'ARGON2_PASSES', DEFAULT_ARGON2.passes),
+    parallelism: integer(env, 'ARGON2_PARALLELISM', DEFAULT_ARGON2.parallelism)
+  }
+  validateArgon2Params(argon2)
+  const idleDays = positiveNumber(env, 'SESSION_IDLE_DAYS', 30)
+  const maxDays = positiveNumber(env, 'SESSION_MAX_DAYS', 90)
+  if (idleDays > maxDays) throw new Error('SESSION_IDLE_DAYS must not exceed SESSION_MAX_DAYS')
+  if (maxDays > 365) throw new Error('SESSION_MAX_DAYS must be at most 365')
+  return {
+    sessionIdleMs: idleDays * DAY,
+    sessionMaxAgeMs: maxDays * DAY,
+    argon2,
+    hashConcurrency: Math.min(8, integer(env, 'ARGON2_MAX_CONCURRENT', 2))
+  }
 }
 
 const MB = 1024 * 1024
@@ -150,7 +189,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: bool(env.TRUST_PROXY, false),
     logLevel: env.LOG_LEVEL ?? (isProd ? 'info' : 'debug'),
     livekit: parseLiveKit(env),
-    attachments: parseAttachments(env, databaseUrl)
+    attachments: parseAttachments(env, databaseUrl),
+    auth: parseAuth(env)
   }
 }
 

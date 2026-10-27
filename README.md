@@ -6,18 +6,19 @@ A self-hosted, Discord-inspired chat app for friends: an **Electron + React + Ty
 | --- | --- |
 | [`desktop/`](desktop/) | Electron desktop client |
 | [`server/`](server/) | Backend API + real-time gateway + Docker Compose (backend + LiveKit) ([server README](server/README.md)) |
-| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md) and [Messaging 2.0](docs/messaging-2-jetson.md) |
+| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md) and [remote access options](docs/remote-access-options.md) |
 
-**Status — Milestone 6 (Messaging 2.0):**
-- **Messages:** attachments (upload, paste, drag & drop, inline images with a lightbox, file downloads), edit and delete, replies, reactions with an emoji picker, pinned messages, and safe Markdown with code highlighting.
-- **Finding things:** full-text search with filters, unread counts synced across your PCs with a *NEW* divider, and desktop notifications (message text hidden by default).
-- **Unchanged:** screen sharing (Milestone 5), voice (Milestone 4), and presence (Milestone 2).
+**Status — Milestone 7 (Project Gateway: accounts and permissions):**
+- **Accounts:** invite-only registration, Argon2id passwords, recovery codes, revocable sessions with a device list, and an encrypted token store in the desktop app (Windows DPAPI via Electron `safeStorage`).
+- **Servers:** owner / administrator / moderator / member roles, per-channel permission overrides, invitations, kick and ban, and a security log. The backend enforces all of it — including LiveKit voice and streaming grants.
+- **Migration:** existing development identities keep their history; an administrator issues each friend a one-time claim code.
+- **Unchanged:** Messaging 2.0 (Milestone 6), screen sharing (Milestone 5), voice (Milestone 4).
 
-> ⚠️ Sign-in currently uses **development identities** (no password). Keep the server on your own PC or a trusted LAN. Details: [server/README.md → Development-only capabilities](server/README.md#development-only-capabilities).
+> ⚠️ Development sign-in (no password) stays available while the server runs with `DEV_AUTH=true`, so friends can migrate. Turn it off once everyone has an account, and keep the server on your trusted LAN. Details: [docs/milestone-7-security.md](docs/milestone-7-security.md); remote access is only proposed in [docs/remote-access-options.md](docs/remote-access-options.md).
 
 ## Run it (two terminals)
 
-Requires Node.js 22.13+ (24 recommended). First time only: `npm install` in both `server/` and `desktop/`.
+Requires Node.js 24.7+ (the server uses Node's built-in Argon2id). First time only: `npm install` in both `server/` and `desktop/`.
 
 > If PowerShell blocks `npm` ("running scripts is disabled"), use `npm.cmd` instead of `npm`.
 
@@ -37,7 +38,14 @@ cd desktop
 npm run dev
 ```
 
-Pick a username on the sign-in screen (e.g. `alice`) and you're in.
+**First account (once):** in a third terminal, create the administrator. It prompts for a password and prints your recovery codes once; `--own-unowned-servers` seeds a fresh database and makes you owner of the starter servers.
+
+```powershell
+cd server
+npm run admin -- create-admin --username alice --own-unowned-servers
+```
+
+Sign in with that username and password. To add people, open **Settings → Administration → Create Registration Code** (or `npm run admin -- registration-invite`) and give them the code; they choose **Create an account**. With `DEV_AUTH=true` (the default in development) you can still pick **Use a development identity** to sign in without a password.
 
 ### Pointing the app at another server
 
@@ -53,7 +61,7 @@ If the backend runs on a different PC, start it with `HOST=0.0.0.0` (or the LAN 
 
 ## Two-client text test procedure
 
-Use `D2_PROFILE` to give each desktop window its own isolated profile (separate storage and sign-in), so two clients can run on one PC.
+Use `D2_PROFILE` to give each desktop window its own isolated profile (separate storage and sign-in), so two clients can run on one PC. The quickest way is development identities (`DEV_AUTH=true`, the default for `npm run dev`): on the sign-in screen choose **Use a development identity** and type a name. With accounts, give **bob** a registration code first (see *First account* above).
 
 1. **Terminal 1:** `cd server; npm run dev`
 2. **Terminal 2 (Client A):** `cd desktop; $env:D2_PROFILE='alice'; npm run dev` → sign in as **alice**.
@@ -75,11 +83,19 @@ With the two clients from the procedure above:
 
 - **Attach:** click **+**, paste a screenshot (Ctrl+V) or drop files on the chat. Images show inline; click one for the lightbox. Files (PDF, TXT, ZIP, Office…) show a **Download** card. Limits: 5 files per message, images ≤ 15 MB, other files ≤ 25 MB; executables and other types are rejected.
 - **Edit / delete:** hover a message for its toolbar or right-click it. ↑ in an empty composer edits your last message. Only the author can edit or delete.
-- **Reply / react / pin:** from the hover toolbar or the right-click menu. Pins are listed under the pin icon in the channel header.
+- **Reply / react / pin:** from the hover toolbar or the right-click menu. Pins are listed under the pin icon in the channel header. Since Milestone 7, pinning needs the Moderator role or higher.
 - **Search:** Ctrl+F → words, optional author and dates, *This channel* or *Whole server*. Click a result to jump to it.
 - **Notifications:** Settings → Notifications (message preview is off by default). Mute a channel with the bell in its header.
 
 Architecture, limits, storage, backup/restore, rollback and the full two-PC checklist: [docs/messaging-2-jetson.md](docs/messaging-2-jetson.md).
+
+## Accounts, roles and invitations (Milestone 7)
+
+- **Sign in / Create an account / Forgot your password?** on the sign-in screen. Registration needs a code from an administrator. Recovery uses a recovery code (shown once at registration) or an administrator reset code.
+- **Settings → Security:** change password, regenerate recovery codes, see how the token is stored. **Settings → Devices:** sign out one device, all others, or everywhere. **Settings → Administration** (instance administrators): registration codes, claim codes for development identities, reset codes, disabling accounts, security log.
+- **Server menu** (click the server name): *Invite People* (moderators and up), *Server Settings* (members and roles, invites, bans, role permissions, channel permission overrides, audit log, ownership transfer), *Leave Server*. Join a server from the **+** button → *Join*.
+
+Migrating existing development identities, the security design, the Jetson deployment/backup/rollback procedure and the two-PC checklist: [docs/milestone-7-security.md](docs/milestone-7-security.md).
 
 ## Voice with the Jetson
 

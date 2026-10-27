@@ -261,6 +261,40 @@ export function EyeIcon(props: IconProps): React.JSX.Element {
   )
 }
 
+export function EyeOffIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M2.5 12S6 5.5 12 5.5c1.6 0 3 .45 4.2 1.1M21.5 12s-3.5 6.5-9.5 6.5c-1.6 0-3-.45-4.2-1.1" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18" />
+    </Svg>
+  )
+}
+
+export function UserPlusIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5M19 8v6M16 11h6" />
+    </Svg>
+  )
+}
+
+export function ShieldIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3z" />
+    </Svg>
+  )
+}
+
+export function LeaveIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14M10 16l-4-4 4-4M6 12h10" />
+    </Svg>
+  )
+}
+
 export function RefreshIcon(props: IconProps): React.JSX.Element {
   return (
     <Svg {...props}>

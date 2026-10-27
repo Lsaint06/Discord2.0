@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -6,6 +6,7 @@ import { setupMediaIntegration } from './media'
 import { setupScreenCapture } from './screenCapture'
 import { applyEncoderFlags, setupEncoderFlagsIpc } from './encoderFlags'
 import { isAppUrl, isWebUrl } from './appUrl'
+import { setupCredentialStorage } from './credentials'
 
 // Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
 // Lets two clients run side by side on one PC for testing.
@@ -33,7 +34,12 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      // OS-level sandbox for the renderer and preload; the preload only uses contextBridge and
+      // ipcRenderer. Context isolation is on (default) and Node integration is off (default).
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
       // Keep gateway heartbeats running while the window is minimized or hidden.
       backgroundThrottling: false
     }
@@ -86,12 +92,10 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // IPC test
-  ipcMain.on('ping', () => console.log('pong'))
-
   setupMediaIntegration()
   setupScreenCapture()
   setupEncoderFlagsIpc(isAppUrl)
+  setupCredentialStorage()
 
   createWindow()
 

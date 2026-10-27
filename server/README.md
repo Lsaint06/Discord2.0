@@ -2,11 +2,11 @@
 
 Self-hosted backend for Discord 2.0: **Node.js + TypeScript + Fastify + WebSockets**, storing data in **SQLite** (via Node's built-in `node:sqlite`, no native build step) with a planned path to **PostgreSQL**. Voice runs through a self-hosted **LiveKit** SFU; this server only issues LiveKit access tokens and tracks voice presence.
 
-> ⚠️ **Development-stage software.** Sign-in uses password-less *development identities*. Run it on your own PC or a trusted LAN only — never expose it directly to the internet. See [Development-only capabilities](#development-only-capabilities).
+> ⚠️ **Self-hosted, LAN-only for now.** Milestone 7 adds real accounts (Argon2id passwords, invite-only registration, revocable sessions, roles and permissions). Password-less *development identities* remain available while `DEV_AUTH=true` — turn it off once everyone has an account and **before** any remote access. Never expose the server directly to the internet. See [docs/milestone-7-security.md](../docs/milestone-7-security.md) and [Development-only capabilities](#development-only-capabilities).
 
 ## Requirements
 
-- Node.js **22.13+** (24 recommended)
+- Node.js **24.7+** (Argon2id comes from Node's built-in `crypto.argon2`; the server refuses to start on older versions)
 
 ## Quick start
 
@@ -24,7 +24,9 @@ On first start the database is created at `server/data/discord2.db`, migrated, a
 | `npm run build` | Compile TypeScript to `dist/` |
 | `npm start` | Run the compiled build |
 | `npm run typecheck` | Type-check without emitting |
-| `npm test` | Integration tests (messaging, persistence, validation, rate limits, voice authorization/tokens/webhooks) |
+| `npm test` | Integration tests (messaging, persistence, validation, rate limits, voice, accounts, sessions, permissions, invitations, migration) |
+| `npm run admin -- <command>` | Local administration CLI (create the first admin, registration/claim/reset codes, legacy migration, integrity check) — see below |
+| `npm run bench:argon2` | Time Argon2id parameter sets on this machine |
 
 ### Voice locally on Windows (optional)
 
@@ -50,7 +52,10 @@ All settings are environment variables. Copy `.env.example` to `.env` (git-ignor
 | `HOST` | `127.0.0.1` | Loopback = only this PC can connect. Use a LAN IP / `0.0.0.0` **only on a trusted network**. |
 | `PORT` | `3001` | |
 | `DATABASE_URL` | `sqlite:./data/discord2.db` | `sqlite:<path>`. `postgres://…` is reserved for the future Postgres repository. |
-| `DEV_AUTH` | `true` (dev), `false` (production) | Enables password-less development identities. |
+| `DEV_AUTH` | `true` (dev), `false` (production) | Enables password-less development identities (never for usernames that have a password). Turning it off invalidates every development session. |
+| `SESSION_IDLE_DAYS` / `SESSION_MAX_DAYS` | `30` / `90` | Session idle timeout and absolute lifetime. |
+| `ARGON2_MEMORY_KIB` / `ARGON2_PASSES` / `ARGON2_PARALLELISM` | `65536` / `3` / `4` | Password hashing cost. Values below the OWASP minimum (19456 / 2 / 1) are refused. |
+| `ARGON2_MAX_CONCURRENT` | `2` | Hashes computed at once (each uses `ARGON2_MEMORY_KIB`); extra sign-ins queue, then get `503`. |
 | `CORS_ORIGINS` | *(empty)* | Extra allowed browser origins, comma-separated. |
 | `ALLOW_LOCALHOST_ORIGINS` | `true` (dev), `false` (production) | Allows `http://localhost:*` (Electron dev server). |
 | `ALLOW_NULL_ORIGIN` | `true` | Allows the `null` origin sent by the packaged Electron app (`file://`). |
@@ -70,13 +75,13 @@ All `/api/*` routes except `/api/meta` and `/api/dev/login` require `Authorizati
 | Method & path | Description |
 | --- | --- |
 | `GET /health` | Liveness probe |
-| `GET /api/meta` | Server name, API version, whether dev sign-in is enabled |
-| `POST /api/dev/login` `{ username }` | **Dev only.** Get-or-create a user and return `{ token, user }` |
-| `GET /api/users/me` | Current user |
-| `PATCH /api/users/me` `{ displayName?, avatarColor? }` | Update profile (broadcasts `user_update`) |
-| `GET /api/users` | All users with presence |
-| `GET /api/servers` | Servers with their channels |
-| `POST /api/servers` `{ name, color }` | Create a server with `#general` + `Lounge` (broadcasts `server_create`) |
+| `GET /api/meta` | Server name, API version (`2`), whether dev sign-in is enabled, `accounts: true`, `registration: "invite"` |
+| `POST /api/dev/login` `{ username }` | **Dev only** (`DEV_AUTH`). Get-or-create a user without a password; refused for accounts that have one |
+| `GET /api/users/me` | Current user (including `instanceAdmin`, `hasPassword`) |
+| `PATCH /api/users/me` `{ displayName?, avatarColor? }` | Update profile (sent to people who share a server) |
+| `GET /api/users` | Users who share a server with you, with presence |
+| `GET /api/servers` | Servers you are a member of, with the channels you can view, your role and effective permissions |
+| `POST /api/servers` `{ name, color }` | Create a server with `#general` + `Lounge`; you become its owner |
 | `GET /api/servers/:serverId/channels` | Channels of one server |
 | `GET /api/channels/:channelId/messages?before=&after=&around=&limit=` | Message history, oldest→newest. Cursor = message id; `around` returns a window centred on a message (jump to message); `limit` ≤ 100 (default 50) |
 | `POST /api/channels/:channelId/messages` `{ content, nonce?, replyToId?, attachmentIds? }` | Send a message (broadcasts `message_create`). `content` may be empty when attachments are included; `replyToId` must be in the same channel |
@@ -93,12 +98,78 @@ All `/api/*` routes except `/api/meta` and `/api/dev/login` require `Authorizati
 | `GET /api/voice/states` | Voice: who is in which voice channel `[{ userId, channelId }]` |
 | `POST /api/livekit/webhook` | LiveKit → backend only. Verified with LiveKit's signed `Authorization` header |
 
+Every channel and message route requires membership of the channel's server (otherwise **404**) and the matching permission (otherwise **403**): View Channel to read, Send Messages / Attach Files / Add Reactions to write, Pin Messages to pin, Manage Messages to delete other people's messages. Request bodies with unknown fields are rejected (`400`).
+
+### Accounts and sessions (Milestone 7)
+
+Codes and passwords are always sent in request bodies, never in URLs. Full design: [docs/milestone-7-security.md](../docs/milestone-7-security.md).
+
+| Method & path | Description |
+| --- | --- |
+| `POST /api/auth/invite-info` `{ code }` | What a registration or claim code does (e.g. "claims @name") |
+| `POST /api/auth/register` `{ code, username, displayName?, password, device? }` | Create an account with a registration code, or claim a development identity with a claim code. Returns a session and 10 recovery codes (shown once) |
+| `POST /api/auth/login` `{ username, password, device? }` | Sign in. Generic `401` for unknown users and wrong passwords |
+| `POST /api/auth/logout` | Revoke the current session |
+| `POST /api/auth/logout-all` `{ keepCurrent? }` | Revoke all (or all other) sessions |
+| `GET /api/auth/sessions` · `DELETE /api/auth/sessions/:sessionId` | List your devices · revoke one |
+| `POST /api/auth/password` `{ currentPassword, newPassword }` | Change password; revokes other sessions |
+| `GET`/`POST /api/auth/recovery-codes` | Remaining count · regenerate (`{ password }`) |
+| `POST /api/auth/recover` `{ username, code, newPassword }` | Reset the password with a recovery code or an administrator reset code; revokes every session |
+
+### Servers, members and invitations (Milestone 7)
+
+| Method & path | Permission |
+| --- | --- |
+| `GET /api/servers/:serverId` · `GET …/channels` | Member |
+| `PATCH /api/servers/:serverId` `{ name?, color? }` | Manage Server |
+| `POST /api/servers/:serverId/channels` · `PATCH`/`DELETE /api/channels/:channelId` | Manage Channels |
+| `GET /api/channels/:channelId/overrides` · `PUT …/overrides/:role` `{ allow, deny }` | Manage Channels |
+| `GET /api/servers/:serverId/members` | Member |
+| `PATCH /api/servers/:serverId/members/:userId` `{ role }` | Manage Roles (only below your own role) |
+| `DELETE /api/servers/:serverId/members/:userId` | Kick Members (only below your own role) |
+| `POST /api/servers/:serverId/leave` | Member (not the owner) |
+| `GET …/bans` · `PUT`/`DELETE …/bans/:userId` | Ban Members |
+| `GET …/roles` · `PUT …/roles/:role` `{ permissions \| null }` | Manage Roles (roles below yours; only bits you hold; `null` resets) |
+| `POST …/transfer` `{ userId, password }` | Owner |
+| `GET …/audit` | Manage Server (no IP addresses) |
+| `POST`/`GET …/invites` · `DELETE …/invites/:inviteId` | Create Invites · Manage Invites (or the creator) |
+| `POST /api/invites/preview` · `POST /api/invites/accept` `{ code }` | Signed in; banned users are refused |
+
+### Instance administration (Milestone 7)
+
+Password sessions of an instance administrator only. Actions that issue codes or disable accounts require `password` in the body.
+
+| Method & path | Description |
+| --- | --- |
+| `GET /api/admin/accounts` | All accounts |
+| `GET`/`POST /api/admin/registration-invites` · `DELETE …/:inviteId` | Registration codes (optionally joining a server) |
+| `GET /api/admin/legacy` · `POST /api/admin/legacy/:userId/claim-code` | Development identities without a password · issue a claim code |
+| `POST /api/admin/accounts/:userId/reset-code` | One-time 24 h password reset code |
+| `POST /api/admin/accounts/:userId/disabled` `{ disabled, password }` | Disable/enable (revokes sessions, disconnects voice) |
+| `GET /api/admin/audit` | Security event log, including IP addresses |
+
+### Administration CLI
+
+Run on the server host (it is the root of trust). Passwords are prompted without echo, or read as one line from stdin.
+
+```powershell
+npm run admin -- create-admin --username <name> [--display-name <n>] [--own-unowned-servers]
+npm run admin -- registration-invite [--server <serverId>] [--hours 72]
+npm run admin -- legacy list
+npm run admin -- legacy claim-code <username>
+npm run admin -- legacy merge <legacyUsername> <accountUsername> [--apply]   # dry run without --apply
+npm run admin -- promote <username> · reset-code <username> · revoke-sessions <username>
+npm run admin -- set-owner <serverId> <username> · verify · status
+```
+
+In Docker: `docker compose exec server node dist/cli/admin.js <command>`.
+
 ### Voice tokens
 
 `POST /api/voice/channels/:channelId/token` requires a session and:
 
-- validates the channel exists, is a **voice** channel, and that the user is a member of its server (bots are refused);
-- signs a LiveKit JWT with the server-held secret: identity = the session's user id (any client-supplied identity is ignored), room = `voice_<channelId>`, `roomJoin` only (no admin), publish restricted to `microphone`, `screen_share` and `screen_share_audio` (never camera; no data channel), **5-minute TTL** (LiveKit refreshes it for live sessions; reconnects request a new one);
+- validates the channel exists, is a **voice** channel, and that the user is a member of its server with **Connect** in that channel (non-members and bots get `404`, missing Connect `403`);
+- signs a LiveKit JWT with the server-held secret: identity = the session's user id (any client-supplied identity is ignored), room = `voice_<channelId>`, `roomJoin` only (no admin), publish restricted to `microphone` (needs **Speak**) and `screen_share` + `screen_share_audio` (needs **Stream**) (never camera; no data channel), **5-minute TTL** (LiveKit refreshes it for live sessions; reconnects request a new one);
 - is rate limited (10 burst, ~1 per 3 s per user); returns `503 voice_unavailable` when LiveKit isn't configured.
 
 Allowed sources live in `VOICE_PUBLISH_SOURCES` in [`src/voice/access.ts`](src/voice/access.ts). Screen-share presence (`streaming`) comes from LiveKit `track_published` / `track_unpublished` webhooks plus the 30 s reconciliation. See [docs/screen-sharing-jetson.md](../docs/screen-sharing-jetson.md).
@@ -111,10 +182,10 @@ JSON frames `{ op, d }`. Types live in [`src/protocol.ts`](src/protocol.ts) (mir
 2. Client → `identify { token }` (token sent in a frame, never in the URL, so it can't leak into logs)
 3. Server → `ready { user, users, voiceStates }`
 4. Client → `heartbeat` every interval; server → `heartbeat_ack`. No traffic for 60 s ⇒ server closes the socket.
-5. Server pushes `message_create`, `message_update`, `message_delete`, `reaction_update`, `pin_update`, `read_state_update` (only to that user's own sessions), `user_update` (profile + presence), `server_create`, `voice_state_update { userId, channelId | null, streaming? }` (from LiveKit webhooks, reconciled with LiveKit every 30 s; `streaming: true` while the user is screen sharing).
+5. Server pushes, only to users who can view the channel or server, `message_create`, `message_update`, `message_delete`, `reaction_update`, `pin_update`, `read_state_update` (only to that user's own sessions), `user_update` (profile + presence, to people who share a server), `server_create` (to the creator), `server_update` (membership, role or permission change — refetch), `server_remove` (kicked, banned, left or deleted), `voice_state_update { userId, channelId | null, streaming? }` (from LiveKit webhooks, reconciled with LiveKit every 30 s; `streaming: true` while the user is screen sharing).
 6. Client may send `set_status { status: online|idle|dnd|invisible }`.
 
-Close codes: `4001` auth failed (don't reconnect), `4002` identify timeout, `4003` invalid frame, `4004` heartbeat timeout, `4008` rate limited, `4010` server shutdown.
+Close codes: `4001` auth failed or session revoked/expired (don't reconnect), `4002` identify timeout, `4003` invalid frame, `4004` heartbeat timeout, `4008` rate limited, `4010` server shutdown.
 
 Messages are **sent over REST** (clear status codes, validation, rate limiting) and **delivered over the gateway**. The sender's `nonce` is echoed so its optimistic copy can be reconciled.
 
@@ -129,7 +200,14 @@ Messages are **sent over REST** (clear status codes, validation, rate limiting) 
 | Scope | Burst | Sustained |
 | --- | --- | --- |
 | Any `/api` request, per IP | 120 | 20/s |
-| Dev sign-in, per IP | 10 | 1 per 10 s |
+| Sign-in (password or dev), per IP | 10 | 1 per 10 s |
+| Sign-in, per attempted username | 5 | 1/min |
+| Registration, per IP | 5 | 1/min |
+| Recovery, per IP · per account | 5 · 5 | 1/min · 1 per 5 min |
+| Account actions (password, sessions, recovery codes), per user | 10 | 1 per 30 s |
+| Instance administration, per user | 30 | 1 per 2 s |
+| Invite creation · invite preview/accept, per user | 10 · 10 | 1 per 30 s · 1 per 30 s |
+| Moderation (roles, kicks, bans, channels, overrides), per user | 30 | 1/s |
 | Messages, per user | 5 | 1/s |
 | Edits and deletes, per user | 10 | 1/s |
 | Reactions, per user | 20 | 4/s |
@@ -148,21 +226,16 @@ Messages are **sent over REST** (clear status codes, validation, rate limiting) 
 
 ## Development-only capabilities
 
-| Capability | Why it is dev-only | Before production |
+| Capability | Status after Milestone 7 | Before remote access / production |
 | --- | --- | --- |
-| `POST /api/dev/login` (`DEV_AUTH`) | No password: anyone who can reach the server can act as any user | Replace with real accounts (passwords/passkeys + invites) and set `DEV_AUTH=false` |
-| Desktop stores the session token in `localStorage` | Readable by any script running in the renderer | Keep tokens in the main process with Electron `safeStorage` |
-| Plain `http://` / `ws://` | Traffic is unencrypted | Terminate TLS (`https://` / `wss://`) at a reverse proxy |
-| Sessions never expire | Stolen tokens stay valid | Add expiry, rotation, and a sign-out-everywhere endpoint |
-| Every user is a member of every server | No permissions model yet | Membership, roles, and per-channel permissions |
+| `POST /api/dev/login` (`DEV_AUTH`) | Still on by default so existing identities keep working during migration. Refused for any username with a password; dev sessions are marked and all stop working when `DEV_AUTH=false` | Migrate everyone ([procedure](../docs/milestone-7-security.md#lan-migration-procedure)), then set `DEV_AUTH=false` |
+| New dev identities join every server | Development convenience only | Disappears with `DEV_AUTH=false`; real accounts join via invitations |
+| Plain `http://` / `ws://` (API and LiveKit signaling) | Unencrypted on the LAN (LiveKit media is still DTLS-SRTP) | Use WireGuard/Tailscale or terminate TLS — see [docs/remote-access-options.md](../docs/remote-access-options.md) |
 | In-memory rate limits & presence | Reset on restart; single process only | Fine for one Jetson; use Redis if ever scaled out |
-| Voice access via dev identities | Anyone who can sign in (i.e. anyone on the LAN) can get a voice token for any voice channel | Real authentication + per-server membership; voice tokens are only as trustworthy as the session that requested them |
-| Plain `ws://` LiveKit signaling | Signaling unencrypted on the LAN (media is still DTLS-SRTP) | `wss://` via a TLS reverse proxy |
-| Message permissions (Milestone 6) | Anyone signed in can read every text channel, react and pin; only authors can edit/delete; there are no moderators | Roles: moderators who can delete/pin, per-channel read permissions |
-| Attachments readable by any signed-in user | Access is checked against the session, but every user can read every channel | Same channel permissions as messages once they exist |
+
+**Fixed in Milestone 7** (previously listed here): tokens in `localStorage` (now encrypted with `safeStorage` in the main process), sessions that never expired (idle + absolute expiry, revocation closes live sockets), every user in every server (membership, roles, channel permissions), voice and attachments open to anyone signed in (permission-checked grants and downloads), and realtime events broadcast to everyone (now scoped to people who can see them).
 
 Even in development the server never trusts a client-supplied user id: the user is always derived from the session token, whose SHA-256 hash is what's stored.
-
 ## Docker (Linux ARM64 / Jetson)
 
 `docker-compose.yml` runs the backend **and** the LiveKit SFU (`livekit/livekit-server`, multi-arch). Both images run natively on ARM64 (`node:sqlite` is built into Node; no native addons). Full Jetson walkthrough — credentials, firewall, monitoring, troubleshooting: [docs/voice-deployment-jetson.md](../docs/voice-deployment-jetson.md).

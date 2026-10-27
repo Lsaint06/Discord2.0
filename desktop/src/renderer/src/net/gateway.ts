@@ -1,5 +1,6 @@
 import {
   CloseCodes,
+  type ApiMe,
   type ApiMessage,
   type ApiServer,
   type ApiUser,
@@ -18,7 +19,7 @@ export type GatewayEvent<Op extends GatewayServerFrame['op']> =
 export interface GatewayHandlers {
   onStatus: (status: GatewayStatus, retryInMs?: number) => void
   onReady: (
-    data: { user: ApiUser; users: ApiUser[]; voiceStates: ApiVoiceState[] },
+    data: { user: ApiMe; users: ApiUser[]; voiceStates: ApiVoiceState[] },
     isReconnect: boolean
   ) => void
   onMessage: (message: ApiMessage) => void
@@ -29,6 +30,8 @@ export interface GatewayHandlers {
   onReadStateUpdate: (update: GatewayEvent<'read_state_update'>) => void
   onUserUpdate: (user: ApiUser) => void
   onServerCreate: (server: ApiServer) => void
+  onServerUpdate: (update: GatewayEvent<'server_update'>) => void
+  onServerRemove: (removed: GatewayEvent<'server_remove'>) => void
   onVoiceStateUpdate: (state: {
     userId: string
     channelId: string | null
@@ -176,6 +179,12 @@ export class GatewayClient {
         break
       case 'server_create':
         this.handlers.onServerCreate(frame.d)
+        break
+      case 'server_update':
+        this.handlers.onServerUpdate(frame.d)
+        break
+      case 'server_remove':
+        this.handlers.onServerRemove(frame.d)
         break
       case 'voice_state_update':
         this.handlers.onVoiceStateUpdate(frame.d)

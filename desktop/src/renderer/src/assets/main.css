@@ -1379,6 +1379,10 @@ textarea {
 .field-hint.error {
   color: var(--danger);
 }
+.field-hint.muted {
+  color: var(--text-muted);
+  text-align: left;
+}
 .settings-nav-item.danger {
   color: var(--danger);
 }
@@ -3169,4 +3173,421 @@ mark {
 }
 .md-message-link:hover {
   text-decoration: underline;
+}
+
+/* ---------- Accounts, security and server management (Milestone 7) ---------- */
+
+.login-screen {
+  overflow-y: auto;
+  padding: 24px 0;
+}
+.login-card {
+  margin: auto;
+}
+.auth-links {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.auth-links.dev {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--bg-input);
+}
+.link-button.muted {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+.password-field {
+  position: relative;
+  display: flex;
+}
+.password-field .text-input {
+  flex: 1;
+  padding-right: 44px;
+}
+.password-field.invalid .text-input {
+  border-color: var(--danger);
+}
+.password-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.code-input {
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.claim-username {
+  font-weight: 600;
+  color: var(--text-strong);
+  padding: 8px 0;
+}
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+.auth-form h1 {
+  text-align: center;
+}
+.recovery-codes {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 16px;
+  padding: 14px 16px 14px 36px;
+  border-radius: var(--radius);
+  background: var(--bg-rail);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.recovery-codes code {
+  color: var(--text-strong);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-normal);
+  font-size: 14px;
+  cursor: pointer;
+}
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+/* Server menu (channel sidebar header) */
+.channel-sidebar-header {
+  position: relative;
+  padding: 0;
+}
+.server-menu-button {
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 16px;
+  color: var(--text-strong);
+  text-align: left;
+}
+.server-menu-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.server-menu-button h1 {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.server-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 8px;
+  right: 8px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--bg-floating);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  animation: fade-in 0.08s ease-out;
+}
+.server-menu button {
+  padding: 8px 10px;
+  border-radius: 4px;
+  color: var(--text-normal);
+  font-size: 14px;
+  text-align: left;
+}
+.server-menu button:hover,
+.server-menu button:focus-visible {
+  outline: none;
+  background: var(--accent);
+  color: #fff;
+}
+.server-menu button.danger {
+  color: var(--danger);
+}
+.server-menu button.danger:hover,
+.server-menu button.danger:focus-visible {
+  background: var(--danger);
+  color: #fff;
+}
+
+.app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 10px 10px 10px 16px;
+  border-radius: var(--radius);
+  background: var(--bg-floating);
+  color: var(--text-strong);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font-size: 14px;
+  animation: fade-in 0.15s ease-out;
+}
+
+/* Join / invite */
+.modal-tabs {
+  display: flex;
+  gap: 4px;
+  margin: -4px 32px 16px 0;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--bg-rail);
+}
+.modal-tabs button {
+  flex: 1;
+  padding: 8px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.modal-tabs button.active {
+  background: var(--bg-input);
+  color: var(--text-strong);
+}
+.code-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 10px 10px 10px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-rail);
+}
+.code-box code {
+  flex: 1;
+  font-size: 17px;
+  letter-spacing: 0.08em;
+  color: var(--text-strong);
+  user-select: all;
+}
+.invite-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--bg-rail);
+}
+.invite-preview div:last-child {
+  display: flex;
+  flex-direction: column;
+}
+.invite-preview strong {
+  color: var(--text-strong);
+}
+.invite-preview span {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.server-preview.small {
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  font-size: 16px;
+}
+
+/* Management lists (server settings, devices, administration) */
+.settings-content-inner h3 {
+  margin: 28px 0 8px;
+  color: var(--text-strong);
+  font-size: 16px;
+}
+.settings-nav-note {
+  display: block;
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.manage-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+.manage-toolbar .text-input {
+  flex: 1 1 180px;
+}
+.text-input.compact {
+  height: 32px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+.manage-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+.manage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.manage-row.inactive {
+  opacity: 0.55;
+}
+.manage-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.manage-row-title {
+  color: var(--text-strong);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.manage-row-sub {
+  color: var(--text-faint);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.manage-tag {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.manage-tag.warn {
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+  color: var(--warning);
+}
+.role-pill {
+  padding: 3px 10px;
+  border: 1px solid var(--bg-input);
+  border-radius: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.audit-list .manage-row {
+  padding: 6px 10px;
+}
+.stacked-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 420px;
+}
+.stacked-form .setting-field {
+  width: 100%;
+}
+.issued-code {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--success) 50%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+}
+.issued-code strong {
+  color: var(--text-strong);
+}
+
+/* Permission tables */
+.perm-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0 12px;
+  font-size: 13px;
+}
+.perm-table th,
+.perm-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--bg-input);
+  text-align: center;
+}
+.perm-table thead th {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.perm-table tbody th {
+  text-align: left;
+  font-weight: 400;
+}
+.perm-label {
+  display: block;
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.perm-desc {
+  display: block;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.perm-table input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.tri.allow {
+  color: var(--success);
+}
+.tri.deny {
+  color: var(--danger);
+}
+.channel-manage {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.channel-pick {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.channel-pick-item {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.channel-pick-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-normal);
+}
+.channel-pick-item.active {
+  background: var(--bg-active);
+  color: var(--text-strong);
+}
+.channel-detail {
+  min-width: 0;
 }

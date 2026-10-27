@@ -4,7 +4,7 @@ import type {
   ScreenLayering,
   ScreenProfileId
 } from './media/screenProfiles'
-import type { ApiAttachment, ApiMessageReference, ApiReaction } from './net/protocol'
+import type { ApiAttachment, ApiMessageReference, ApiReaction, ServerRole } from './net/protocol'
 
 export type PresenceStatus = 'online' | 'idle' | 'dnd' | 'offline'
 
@@ -28,6 +28,8 @@ export interface Channel {
   topic?: string
   /** User ids of mock participants already sitting in a voice channel. */
   voiceUsers?: string[]
+  /** Your effective permissions in this channel (from the server). */
+  permissions?: number
 }
 
 export interface ChannelCategory {
@@ -54,6 +56,10 @@ export interface Server {
   categories: ChannelCategory[]
   roles: Role[]
   members: ServerMember[]
+  /** Your role and server-level permissions. */
+  role?: ServerRole
+  permissions?: number
+  ownerId?: string | null
 }
 
 export interface Message {

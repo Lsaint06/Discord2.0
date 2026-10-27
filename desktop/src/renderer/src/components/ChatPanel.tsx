@@ -9,7 +9,8 @@ import {
   type ReactNode
 } from 'react'
 import type { Channel, Message, User } from '../types'
-import type { ApiAttachment } from '../net/protocol'
+import { ALL_PERMISSIONS, Permissions, type ApiAttachment } from '../net/protocol'
+import { hasPermission } from '../lib/permissions'
 import type { Backend, ChannelState } from '../hooks/useBackend'
 import { describeError } from '../hooks/useBackend'
 import { formatDayDivider, formatTimestamp, isSameDay } from '../lib/format'
@@ -89,6 +90,19 @@ const EMPTY: Message[] = []
 
 function ChatPanel(props: ChatPanelProps): React.JSX.Element {
   const { channel, backend, meId } = props
+  // What this user may do here (the server enforces it; this only hides controls).
+  const perms = channel.permissions ?? ALL_PERMISSIONS
+  const can = {
+    send: hasPermission(perms, Permissions.sendMessages),
+    attach:
+      hasPermission(perms, Permissions.sendMessages) &&
+      hasPermission(perms, Permissions.attachFiles),
+    react: hasPermission(perms, Permissions.addReactions),
+    pin:
+      hasPermission(perms, Permissions.pinMessages) ||
+      hasPermission(perms, Permissions.manageMessages),
+    manageMessages: hasPermission(perms, Permissions.manageMessages)
+  }
   const messages = props.state?.messages ?? EMPTY
   const loaded = props.state?.loaded ?? false
   const hasMore = props.state?.hasMore ?? false
@@ -351,21 +365,24 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
 
   const menuItems = (m: Message, x: number, y: number): MenuItem[] => {
     const own = m.authorId === meId
-    const items: MenuItem[] = [
-      {
+    const items: MenuItem[] = []
+    if (can.react) {
+      items.push({
         label: 'Add Reaction',
         onSelect: () => setPicker({ message: m, rect: new DOMRect(x, y, 0, 0) })
-      },
-      { label: 'Reply', onSelect: () => actions.reply(m) }
-    ]
+      })
+    }
+    if (can.send) items.push({ label: 'Reply', onSelect: () => actions.reply(m) })
     if (own) items.push({ label: 'Edit Message', onSelect: () => actions.startEdit(m) })
-    items.push({
-      label: m.pinned ? 'Unpin Message' : 'Pin Message',
-      onSelect: () =>
-        void backend
-          .setPinned(m, !m.pinned)
-          .then((f) => f && showToast(`Couldn’t update pin: ${f}`))
-    })
+    if (can.pin) {
+      items.push({
+        label: m.pinned ? 'Unpin Message' : 'Pin Message',
+        onSelect: () =>
+          void backend
+            .setPinned(m, !m.pinned)
+            .then((f) => f && showToast(`Couldn’t update pin: ${f}`))
+      })
+    }
     if (m.content)
       items.push({
         label: 'Copy Text',
@@ -375,8 +392,12 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
       label: 'Copy Message Link',
       onSelect: () => void navigator.clipboard.writeText(messageLink(m.channelId, m.id))
     })
-    if (own)
-      items.push({ label: 'Delete Message', danger: true, onSelect: () => setConfirmDelete(m) })
+    if (own || can.manageMessages)
+      items.push({
+        label: own ? 'Delete Message' : 'Delete Message (moderator)',
+        danger: true,
+        onSelect: () => setConfirmDelete(m)
+      })
     return items
   }
   // Menu items are built when the menu opens (event time), not during render.
@@ -420,7 +441,8 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
     .reverse()
     .find((m) => m.authorId === meId && !m.pending && !m.failed)
 
-  const isFile = (e: React.DragEvent): boolean => Array.from(e.dataTransfer.types).includes('Files')
+  const isFile = (e: React.DragEvent): boolean =>
+    can.attach && Array.from(e.dataTransfer.types).includes('Files')
 
   return (
     <main
@@ -711,6 +733,8 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
             recentEmoji={props.recentEmoji}
             onEmojiUsed={props.onEmojiUsed}
             onEditLast={() => lastOwn && setEditingId(lastOwn.id)}
+            disabled={!can.send}
+            canAttach={can.attach}
             ref={composerRef}
           />
 

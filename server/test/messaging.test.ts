@@ -413,6 +413,10 @@ describe('Messaging 2.0', () => {
     const gwBob = gateway(bob.token)
     await gwBob.ready
     const msg = await send(alice.token, 'hangout-announcements', { content: 'pin me' })
+    // Milestone 7: pinning needs Pin Messages (moderators by default), not just membership.
+    assert.equal((await api(alice.token, `/api/channels/hangout-announcements/pins/${msg.id}`, { method: 'PUT' })).status, 403)
+    await server.repo.setMemberRole('hangout', alice.userId, 'moderator')
+    await server.repo.setMemberRole('hangout', bob.userId, 'moderator')
     assert.equal((await api(alice.token, `/api/channels/hangout-announcements/pins/${msg.id}`, { method: 'PUT' })).status, 200)
     await gwBob.waitFor((f) => f.op === 'pin_update' && f.d.messageId === msg.id && f.d.pinned)
     const pins = (await (await api(bob.token, '/api/channels/hangout-announcements/pins')).json()) as ApiMessage[]
@@ -525,7 +529,8 @@ describe('Messaging 2.0', () => {
   // ---------- Persistence ----------
 
   test('messages, reactions, pins and files survive a backend restart', async () => {
-    const { token } = await login('persist-ivy')
+    const { token, userId } = await login('persist-ivy')
+    await server.repo.setMemberRole('hangout', userId, 'moderator')
     const [file] = (await (await upload(token, 'hangout-general', [{ name: 'keep.png', data: png(3, 3, 200) }])).json()) as ApiAttachment[]
     const msg = await send(token, 'hangout-general', { content: 'still here', attachmentIds: [file!.id] })
     await api(token, `/api/channels/hangout-general/messages/${msg.id}/reactions/${encodeURIComponent('✅')}`, { method: 'PUT' })
@@ -598,7 +603,7 @@ describe('migration from the Milestone 5 schema', () => {
       const found = await repo.searchMessages({ match: '"milestone"*', channelIds: ['c1'], limit: 5 })
       assert.equal(found.length, 1, 'existing history was indexed')
       const versions = (await (repo as unknown as { all: (sql: string) => { version: number }[] }).all('SELECT version FROM schema_migrations ORDER BY version')).map((r) => r.version)
-      assert.deepEqual(versions, [1, 2])
+      assert.deepEqual(versions, sqliteMigrations.map((m) => m.version))
       await repo.close()
 
       // The old (Milestone 5) server's queries still work on the migrated file.

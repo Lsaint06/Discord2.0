@@ -1,17 +1,24 @@
 import type { FastifyBaseLogger } from 'fastify'
 import { RoomServiceClient, TrackSource, WebhookReceiver } from 'livekit-server-sdk'
 import type { LiveKitConfig } from '../config.js'
-import type { Repository } from '../db/repository.js'
-import { channelIdFromRoom } from './access.js'
+import { channelIdFromRoom, publishSourcesFor, roomNameForChannel } from './access.js'
 import type { VoiceMembership, VoiceStateChange, VoiceStateStore } from './voiceStates.js'
 
 /** ParticipantInfo.State.DISCONNECTED in LiveKit's protocol. */
 const PARTICIPANT_DISCONNECTED = 3
 
 /**
+ * Returns the participant's channel permissions if they may be in this voice channel right now
+ * (member, can view, Connect, active account), or null if they must be removed.
+ */
+export type VoiceAuthorizer = (identity: string, channelId: string) => Promise<number | null>
+
+/**
  * Keeps the backend's voice presence in sync with LiveKit:
  * signed webhooks for low-latency updates, plus periodic reconciliation through the
  * RoomService API so state self-heals after missed webhooks or a LiveKit restart.
+ * Participants who are no longer authorized (kicked, banned, disabled, permission removed)
+ * are removed from the room, even if they still hold an unexpired token.
  */
 export class LiveKitBridge {
   private readonly receiver: WebhookReceiver
@@ -21,12 +28,13 @@ export class LiveKitBridge {
   constructor(
     config: LiveKitConfig,
     private readonly store: VoiceStateStore,
-    private readonly repo: Repository,
+    private readonly authorize: VoiceAuthorizer,
     private readonly onChanges: (changes: VoiceStateChange[]) => void,
-    private readonly log: FastifyBaseLogger
+    private readonly log: FastifyBaseLogger,
+    rooms?: RoomServiceClient
   ) {
     this.receiver = new WebhookReceiver(config.apiKey, config.apiSecret)
-    this.rooms = new RoomServiceClient(config.apiUrl, config.apiKey, config.apiSecret)
+    this.rooms = rooms ?? new RoomServiceClient(config.apiUrl, config.apiKey, config.apiSecret)
   }
 
   /** Verifies the webhook signature (throws if invalid) and applies the event. */
@@ -39,8 +47,12 @@ export class LiveKitBridge {
     let changes: VoiceStateChange[] = []
     switch (event.event) {
       case 'participant_joined':
-        if (identity && (await this.repo.getUser(identity))) {
-          changes = this.store.join(identity, channelId)
+        if (identity) {
+          if ((await this.authorize(identity, channelId)) === null) {
+            await this.kick(channelId, identity, 'not authorized on join')
+          } else {
+            changes = this.store.join(identity, channelId)
+          }
         }
         break
       case 'participant_left':
@@ -69,16 +81,55 @@ export class LiveKitBridge {
       if (!channelId) continue
       const participants = await this.rooms.listParticipants(room.name)
       for (const p of participants) {
-        if (p.state !== PARTICIPANT_DISCONNECTED && (await this.repo.getUser(p.identity))) {
-          const streaming = p.tracks.some((t) => t.source === TrackSource.SCREEN_SHARE)
-          next.set(p.identity, { channelId, streaming })
+        if (p.state === PARTICIPANT_DISCONNECTED) continue
+        if ((await this.authorize(p.identity, channelId)) === null) {
+          await this.kick(channelId, p.identity, 'not authorized (reconcile)')
+          continue
         }
+        const streaming = p.tracks.some((t) => t.source === TrackSource.SCREEN_SHARE)
+        next.set(p.identity, { channelId, streaming })
       }
     }
     const changes = this.store.replaceAll(next)
     if (changes.length > 0) {
       this.log.info({ changes: changes.length }, 'voice state reconciled with LiveKit')
       this.onChanges(changes)
+    }
+  }
+
+  /**
+   * Removes a participant from a room and asks LiveKit to reject tokens issued before now
+   * (`revokeTokenTs`; servers without support ignore it — the join check above still applies).
+   */
+  async kick(channelId: string, identity: string, reason: string): Promise<void> {
+    try {
+      await this.rooms.removeParticipant(roomNameForChannel(channelId), identity, {
+        revokeTokenTs: BigInt(Math.floor(Date.now() / 1000))
+      })
+      this.log.info({ channel: channelId, identity, reason }, 'removed voice participant')
+    } catch (err) {
+      // Already gone (404) is fine; anything else is logged and retried by reconciliation.
+      this.log.warn({ err: (err as Error).message, channel: channelId, identity }, 'remove participant failed')
+    }
+    const changes = this.store.leave(identity, channelId)
+    if (changes.length > 0) this.onChanges(changes)
+  }
+
+  /** Applies new publish permissions to a live participant (e.g. Speak/Stream revoked). */
+  async updatePermissions(channelId: string, identity: string, permissions: number): Promise<void> {
+    const sources = publishSourcesFor(permissions)
+    try {
+      await this.rooms.updateParticipant(roomNameForChannel(channelId), identity, {
+        permission: {
+          canSubscribe: true,
+          canPublish: sources.length > 0,
+          canPublishSources: sources,
+          canPublishData: false,
+          canUpdateMetadata: true
+        }
+      })
+    } catch (err) {
+      this.log.warn({ err: (err as Error).message, channel: channelId, identity }, 'update participant failed')
     }
   }
 

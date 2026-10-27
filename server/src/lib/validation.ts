@@ -113,6 +113,34 @@ export function normalizeServerName(input: unknown): string {
 
 const COLOR = /^#[0-9a-fA-F]{6}$/
 
+/** Text channels: lowercase words joined by "-" (like #general). Voice channels: free text. */
+export function normalizeChannelName(input: unknown, type: 'text' | 'voice'): string {
+  if (typeof input !== 'string') throw badRequest('name must be a string', 'invalid_name')
+  let name = input.replace(CONTROL_CHARS, '').replace(BIDI_OVERRIDES, '').replace(/\s+/g, ' ').trim()
+  if (type === 'text') {
+    name = name
+      .toLowerCase()
+      .replace(/[\s_]+/g, '-')
+      .replace(/[^\p{L}\p{N}-]/gu, '')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+  }
+  if (name.length < 1 || name.length > LIMITS.channelNameMaxLength) {
+    throw badRequest(`Channel name must be 1-${LIMITS.channelNameMaxLength} characters`, 'invalid_name')
+  }
+  return name
+}
+
+export function normalizeTopic(input: unknown): string | null {
+  if (input === null || input === undefined) return null
+  if (typeof input !== 'string') throw badRequest('topic must be a string', 'invalid_topic')
+  const topic = input.replace(CONTROL_CHARS, '').replace(BIDI_OVERRIDES, '').replace(/\s+/g, ' ').trim()
+  if (topic.length > LIMITS.channelTopicMaxLength) {
+    throw badRequest(`Topic must be at most ${LIMITS.channelTopicMaxLength} characters`, 'invalid_topic')
+  }
+  return topic || null
+}
+
 export function normalizeColor(input: unknown): string {
   if (typeof input !== 'string' || !COLOR.test(input)) {
     throw badRequest('Color must be a hex value like #6d72f6', 'invalid_color')

@@ -3,16 +3,18 @@ import type { AppContext } from '../context.js'
 import { requireUser } from '../lib/auth.js'
 import { badRequest, tooManyRequests } from '../lib/errors.js'
 import { normalizeColor, normalizeDisplayName } from '../lib/validation.js'
+import { toApiMe } from '../realtime.js'
 
 export function registerUserRoutes(app: FastifyInstance, ctx: AppContext): void {
   app.get('/api/users/me', async (request) => {
-    const user = await requireUser(ctx.repo, request)
-    return ctx.hub.toApiUser(user)
+    const user = await requireUser(ctx, request)
+    return toApiMe(ctx, user)
   })
 
+  /** People you can see: those sharing a server with you, authors in your servers, bots. */
   app.get('/api/users', async (request) => {
-    await requireUser(ctx.repo, request)
-    const users = await ctx.repo.listUsers()
+    const user = await requireUser(ctx, request)
+    const users = await ctx.repo.listVisibleUsers(user.id)
     return users.map((u) => ctx.hub.toApiUser(u))
   })
 
@@ -31,7 +33,7 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext): void 
       }
     },
     async (request) => {
-      const user = await requireUser(ctx.repo, request)
+      const user = await requireUser(ctx, request)
       const limit = ctx.limiters.profilePerUser.take(user.id)
       if (!limit.ok) throw tooManyRequests(limit.retryAfterMs)
 
@@ -44,9 +46,8 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext): void 
         avatarColor: avatarColor === undefined ? undefined : normalizeColor(avatarColor)
       })
       if (!updated) throw badRequest('User no longer exists')
-      const dto = ctx.hub.toApiUser(updated)
-      ctx.hub.broadcast({ op: 'user_update', d: dto })
-      return dto
+      await ctx.hub.publishUser(updated)
+      return toApiMe(ctx, updated)
     }
   )
 }

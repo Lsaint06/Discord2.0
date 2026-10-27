@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Channel, ChannelCategory, Message, Server, User, UserSettings } from './types'
 import { presenceFromSetting, statusLabels } from './lib/format'
 import { loadSettings, saveSettings } from './net/session'
-import type { ApiServer, ApiUser } from './net/protocol'
+import type { ApiMember, ApiServer, ApiUser, ServerRole } from './net/protocol'
+import { Permissions } from './net/protocol'
+import { ROLE_COLORS, ROLE_LABELS, hasPermission } from './lib/permissions'
 import { useBackend, type BackendSession } from './hooks/useBackend'
 import { useVoice } from './hooks/useVoice'
 import { usePushToTalk } from './hooks/usePushToTalk'
@@ -16,13 +18,21 @@ import MemberList from './components/MemberList'
 import UserPanel, { type VoiceConnection } from './components/UserPanel'
 import SettingsPanel from './components/SettingsPanel'
 import CreateServerModal from './components/CreateServerModal'
+import ServerSettingsModal from './components/manage/ServerSettingsModal'
+import { InviteModal } from './components/manage/InviteModal'
 import ConnectionBanner from './components/ConnectionBanner'
 import ScreenSharePicker from './components/ScreenSharePicker'
 import StreamViewer, { type ViewerMode } from './components/StreamViewer'
 import ShareHealthNote from './components/ShareHealthNote'
 import type { ScreenShareOptions, ScreenSource } from './media/ScreenShareController'
 
-function toUiServer(server: ApiServer, memberIds: string[]): Server {
+const STAFF_ROLES: ServerRole[] = ['owner', 'admin', 'moderator']
+
+function toUiServer(
+  server: ApiServer,
+  members: ApiMember[] | undefined,
+  allUserIds: string[]
+): Server {
   const categories: ChannelCategory[] = []
   for (const ch of [...server.channels].sort((a, b) => a.position - b.position)) {
     let category = categories.find((c) => c.name === ch.category)
@@ -34,7 +44,8 @@ function toUiServer(server: ApiServer, memberIds: string[]): Server {
       id: ch.id,
       name: ch.name,
       type: ch.type,
-      topic: ch.topic ?? undefined
+      topic: ch.topic ?? undefined,
+      permissions: ch.permissions
     })
   }
   return {
@@ -42,8 +53,18 @@ function toUiServer(server: ApiServer, memberIds: string[]): Server {
     name: server.name,
     color: server.color,
     categories,
-    roles: [],
-    members: memberIds.map((userId) => ({ userId }))
+    // Staff roles are shown as groups in the member list (and color names).
+    roles: STAFF_ROLES.map((role) => ({
+      id: role,
+      name: ROLE_LABELS[role],
+      color: ROLE_COLORS[role] ?? ''
+    })),
+    members: members
+      ? members.map((m) => ({ userId: m.userId, roleId: m.role === 'member' ? undefined : m.role }))
+      : allUserIds.map((userId) => ({ userId })),
+    role: server.role,
+    permissions: server.permissions,
+    ownerId: server.ownerId
   }
 }
 
@@ -80,19 +101,34 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   const [showMembers, setShowMembers] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [createServerOpen, setCreateServerOpen] = useState(false)
+  const [serverSettingsFor, setServerSettingsFor] = useState<string | null>(null)
+  const [inviteFor, setInviteFor] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [viewerMode, setViewerMode] = useState<ViewerMode>('focus')
 
   const handleSessionInvalid = useCallback(
-    () => onSignOut('Your session is no longer valid. Please sign in again.'),
+    () =>
+      onSignOut(
+        'Your session ended (expired, signed out elsewhere, or revoked). Please sign in again.'
+      ),
     [onSignOut]
   )
   const notifyRef = useRef<(m: Message) => void>(() => undefined)
   const onIncomingMessage = useCallback((m: Message) => notifyRef.current(m), [])
+  const serverRemovedRef = useRef<(serverId: string, reason: 'left' | 'kicked' | 'banned') => void>(
+    () => undefined
+  )
+  const onServerRemoved = useCallback(
+    (serverId: string, reason: 'left' | 'kicked' | 'banned') =>
+      serverRemovedRef.current(serverId, reason),
+    []
+  )
   const backend = useBackend(session, {
     initialStatus: settings.status,
     onSessionInvalid: handleSessionInvalid,
-    onIncomingMessage
+    onIncomingMessage,
+    onServerRemoved
   })
 
   useEffect(() => {
@@ -111,14 +147,26 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     code: settings.pushToTalkKey,
     global: settings.pushToTalkGlobal
   })
+  // Permissions in the voice channel we're in (from the server's channel list).
+  const voicePerms = useMemo(() => {
+    if (!voiceChannelId) return undefined
+    for (const s of backend.servers) {
+      const ch = s.channels.find((c) => c.id === voiceChannelId)
+      if (ch) return ch.permissions
+    }
+    return undefined
+  }, [backend.servers, voiceChannelId])
+  const canSpeak = hasPermission(voicePerms, Permissions.speak)
+  const canStream = hasPermission(voicePerms, Permissions.stream)
   useEffect(() => {
     voice.session.setMicState({
-      muted,
+      // No Speak permission in this voice channel: the mic stays off (LiveKit would refuse it too).
+      muted: muted || !canSpeak,
       deafened,
       pushToTalk: pushToTalkMode,
       pushToTalkActive: ptt.active
     })
-  }, [voice.session, muted, deafened, pushToTalkMode, ptt.active])
+  }, [voice.session, muted, deafened, pushToTalkMode, ptt.active, canSpeak])
 
   const selfId = backend.me?.id ?? ''
   const displayName = backend.me?.displayName ?? session.username
@@ -143,11 +191,18 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   )
 
   const servers = useMemo(() => {
-    const memberIds = Object.keys(backend.users)
-    return backend.servers.map((s) => toUiServer(s, memberIds))
-  }, [backend.servers, backend.users])
+    const userIds = Object.keys(backend.users)
+    return backend.servers.map((s) => toUiServer(s, backend.members[s.id], userIds))
+  }, [backend.servers, backend.users, backend.members])
 
   const activeServer = servers.find((s) => s.id === activeServerId) ?? servers[0]
+
+  // Real membership (with roles) for the member list of the server on screen.
+  const { loadMembers } = backend
+  const activeServerKey = activeServer?.id
+  useEffect(() => {
+    if (backend.phase === 'ready' && activeServerKey) loadMembers(activeServerKey)
+  }, [backend.phase, activeServerKey, loadMembers])
   const activeChannel = activeServer
     ? (activeServer.categories
         .flatMap((c) => c.channels)
@@ -292,6 +347,10 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   const selectChannel = (channel: Channel): void => {
     if (!activeServer) return
     if (channel.type === 'voice') {
+      if (!hasPermission(channel.permissions, Permissions.connect)) {
+        setNotice(`You don’t have permission to join ${channel.name}.`)
+        return
+      }
       void voice.session.join(channel.id)
       return
     }
@@ -414,6 +473,66 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     return null
   }
 
+  const joinedServer = (server: ApiServer): void => {
+    void backend.refreshServers()
+    setActiveServerId(server.id)
+    setCreateServerOpen(false)
+  }
+
+  // Removed from a server (left, kicked, banned): leave its voice channel and say why.
+  useEffect(() => {
+    serverRemovedRef.current = (serverId, reason) => {
+      const server = serversRef.current.find((s) => s.id === serverId)
+      const inVoice = server?.categories.some((c) =>
+        c.channels.some((ch) => ch.id === voiceChannelId)
+      )
+      if (inVoice) void voice.session.leave()
+      if (serverSettingsFor === serverId) setServerSettingsFor(null)
+      if (reason !== 'left') {
+        setNotice(
+          `You were ${reason === 'banned' ? 'banned' : 'removed'} from ${server?.name ?? 'a server'}.`
+        )
+      }
+    }
+  })
+
+  /** Explicit sign-out: leave voice, revoke this session on the server, then forget it locally. */
+  const signOut = (): void => {
+    void voice.session.leave()
+    void backend.api
+      .logout()
+      .catch(() => undefined)
+      .finally(() => onSignOut())
+  }
+
+  const leaveServer = (server: Server): void => {
+    if (!window.confirm(`Leave ${server.name}? You'll need a new invite to come back.`)) return
+    void backend.api.leaveServer(server.id).catch((err: unknown) => {
+      setNotice(err instanceof Error ? err.message : 'Could not leave the server.')
+    })
+  }
+
+  const serverActions = (
+    server: Server
+  ): { label: string; onSelect: () => void; danger?: boolean }[] => {
+    const perms = server.permissions ?? 0
+    const actions: { label: string; onSelect: () => void; danger?: boolean }[] = []
+    if (hasPermission(perms, Permissions.createInvites)) {
+      actions.push({ label: 'Invite People', onSelect: () => setInviteFor(server.id) })
+    }
+    actions.push({ label: 'Server Settings', onSelect: () => setServerSettingsFor(server.id) })
+    if (server.role !== 'owner') {
+      actions.push({ label: 'Leave Server', danger: true, onSelect: () => leaveServer(server) })
+    }
+    return actions
+  }
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), 6000)
+    return () => clearTimeout(timer)
+  }, [notice])
+
   const { setPresence } = backend
   const updateSettings = useCallback(
     (patch: Partial<UserSettings>) => {
@@ -424,6 +543,15 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   )
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
   const closeCreateServer = useCallback(() => setCreateServerOpen(false), [])
+  const closeServerSettings = useCallback(() => setServerSettingsFor(null), [])
+  const closeInvite = useCallback(() => setInviteFor(null), [])
+  const serverForSettings = serverSettingsFor
+    ? backend.servers.find((s) => s.id === serverSettingsFor)
+    : undefined
+  const { loadMembers: loadServerMembers } = backend
+  useEffect(() => {
+    if (serverSettingsFor) loadServerMembers(serverSettingsFor)
+  }, [serverSettingsFor, loadServerMembers])
 
   const appStyle = {
     '--accent': settings.accentColor,
@@ -442,13 +570,29 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
                 <button type="button" className="button primary" onClick={backend.retryInitialLoad}>
                   Try again
                 </button>
-                <button type="button" className="button secondary" onClick={() => onSignOut()}>
+                <button type="button" className="button secondary" onClick={signOut}>
                   Sign out
                 </button>
               </div>
             </>
           ) : backend.phase === 'ready' ? (
-            <p>This server has no communities yet.</p>
+            <>
+              <h2>You&rsquo;re not in any servers yet</h2>
+              <p>Ask a friend for an invite code, or create your own server.</p>
+              {notice && <p className="form-notice">{notice}</p>}
+              <div className="splash-actions">
+                <button
+                  type="button"
+                  className="button primary"
+                  onClick={() => setCreateServerOpen(true)}
+                >
+                  Join or create a server
+                </button>
+                <button type="button" className="button secondary" onClick={signOut}>
+                  Sign out
+                </button>
+              </div>
+            </>
           ) : (
             <>
               <div className="spinner" aria-hidden="true" />
@@ -456,6 +600,14 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             </>
           )}
         </div>
+        {createServerOpen && (
+          <CreateServerModal
+            onCreate={createServer}
+            api={backend.api}
+            onJoined={joinedServer}
+            onClose={closeCreateServer}
+          />
+        )}
       </div>
     )
   }
@@ -494,6 +646,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
           updateSettings({ streamVolumes: { ...settings.streamVolumes, [userId]: volume } })
         }
         onSelectChannel={selectChannel}
+        serverActions={serverActions(activeServer)}
         footer={
           <UserPanel
             displayName={displayName}
@@ -513,6 +666,10 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             }
             onShareScreen={() => {
               voice.session.dismissScreenShareMessage()
+              if (!canStream) {
+                setNotice('You don’t have permission to stream in this channel.')
+                return
+              }
               setPickerOpen(true)
             }}
             onStopShare={() => void voice.session.stopScreenShare()}
@@ -624,7 +781,14 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
           deafened={deafened}
           onChange={updateSettings}
           onSaveDisplayName={backend.updateDisplayName}
-          onLogout={() => onSignOut()}
+          onLogout={signOut}
+          api={backend.api}
+          me={backend.me}
+          servers={backend.servers}
+          onSignedOutEverywhere={() => {
+            void voice.session.leave()
+            onSignOut('You signed out on all devices.')
+          }}
           onToggleMute={toggleMute}
           onToggleDeafen={toggleDeafen}
           onClose={closeSettings}
@@ -632,7 +796,48 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
       )}
 
       {createServerOpen && (
-        <CreateServerModal onCreate={createServer} onClose={closeCreateServer} />
+        <CreateServerModal
+          onCreate={createServer}
+          api={backend.api}
+          onJoined={joinedServer}
+          onClose={closeCreateServer}
+        />
+      )}
+
+      {serverSettingsFor && serverForSettings && (
+        <ServerSettingsModal
+          api={backend.api}
+          server={serverForSettings}
+          meId={selfId}
+          members={backend.members[serverForSettings.id]}
+          revision={backend.serversRevision}
+          resolveUser={resolveUser}
+          onInvite={() => setInviteFor(serverForSettings.id)}
+          onClose={closeServerSettings}
+        />
+      )}
+
+      {inviteFor && (
+        <InviteModal
+          api={backend.api}
+          serverId={inviteFor}
+          serverName={backend.servers.find((s) => s.id === inviteFor)?.name ?? 'this server'}
+          onClose={closeInvite}
+        />
+      )}
+
+      {notice && (
+        <div className="app-toast" role="status">
+          {notice}
+          <button
+            type="button"
+            className="icon-button small"
+            aria-label="Dismiss"
+            onClick={() => setNotice(null)}
+          >
+            ×
+          </button>
+        </div>
       )}
     </div>
   )

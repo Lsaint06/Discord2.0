@@ -26,6 +26,13 @@ services:
       UPLOAD_USER_QUOTA_MB: ${UPLOAD_USER_QUOTA_MB:-}
       UPLOAD_TOTAL_QUOTA_MB: ${UPLOAD_TOTAL_QUOTA_MB:-}
       UPLOAD_MIN_FREE_DISK_MB: ${UPLOAD_MIN_FREE_DISK_MB:-}
+      # Accounts and sessions (Milestone 7). Empty = built-in default (see .env.example).
+      SESSION_IDLE_DAYS: ${SESSION_IDLE_DAYS:-}
+      SESSION_MAX_DAYS: ${SESSION_MAX_DAYS:-}
+      ARGON2_MEMORY_KIB: ${ARGON2_MEMORY_KIB:-}
+      ARGON2_PASSES: ${ARGON2_PASSES:-}
+      ARGON2_PARALLELISM: ${ARGON2_PARALLELISM:-}
+      ARGON2_MAX_CONCURRENT: ${ARGON2_MAX_CONCURRENT:-}
     ports:
       # Loopback by default. On the Jetson set BIND_ADDRESS to its LAN IP (192.168.68.65).
       - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3001}:3001"

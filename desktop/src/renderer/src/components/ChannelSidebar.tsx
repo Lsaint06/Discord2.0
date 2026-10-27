@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { Channel, Server, User } from '../types'
 import Avatar from './Avatar'
 import { ChevronDownIcon, HashIcon, HeadphonesIcon, MicIcon, SpeakerIcon } from './Icons'
@@ -33,6 +33,8 @@ interface ChannelSidebarProps {
   getStreamVolume: (userId: string) => number
   onStreamVolumeChange: (userId: string, volume: number) => void
   onSelectChannel: (channel: Channel) => void
+  /** Server menu (header): invite, settings, leave — only what the user may do. */
+  serverActions: { label: string; onSelect: () => void; danger?: boolean }[]
   footer: ReactNode
 }
 
@@ -54,10 +56,22 @@ function ChannelSidebar({
   getStreamVolume,
   onStreamVolumeChange,
   onSelectChannel,
+  serverActions,
   footer
 }: ChannelSidebarProps): React.JSX.Element {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [volumeFor, setVolumeFor] = useState<string | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  // Close the server menu on any outside click.
+  useEffect(() => {
+    if (!menuOpen) return
+    const close = (e: MouseEvent): void => {
+      if (!(e.target as HTMLElement).closest('.channel-sidebar-header')) setMenuOpen(false)
+    }
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [menuOpen])
 
   const toggleCategory = (id: string): void => {
     setCollapsed((prev) => {
@@ -71,8 +85,41 @@ function ChannelSidebar({
   return (
     <aside className="channel-sidebar">
       <header className="channel-sidebar-header">
-        <h1 title={server.name}>{server.name}</h1>
-        <ChevronDownIcon size={18} />
+        <button
+          type="button"
+          className="server-menu-button"
+          onClick={() => setMenuOpen((open) => !open)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          disabled={serverActions.length === 0}
+        >
+          <h1 title={server.name}>{server.name}</h1>
+          <ChevronDownIcon size={18} />
+        </button>
+        {menuOpen && serverActions.length > 0 && (
+          <div
+            className="server-menu"
+            role="menu"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setMenuOpen(false)
+            }}
+          >
+            {serverActions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                role="menuitem"
+                className={action.danger ? 'danger' : undefined}
+                onClick={() => {
+                  setMenuOpen(false)
+                  action.onSelect()
+                }}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
       <div className="channel-scroller">

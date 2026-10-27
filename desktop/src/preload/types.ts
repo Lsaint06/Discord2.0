@@ -46,8 +46,24 @@ export interface EncoderFlagsState {
   active: EncoderFlags
 }
 
+export type CredentialStorage = 'encrypted' | 'memory'
+
+export interface StoredCredentials {
+  token: string
+  serverUrl: string
+  username: string
+}
+
 export interface D2DesktopApi {
   platform: string
+  credentials: {
+    /** The saved session for this profile, if any (decrypted in the main process). */
+    load: () => Promise<StoredCredentials | null>
+    save: (value: StoredCredentials) => Promise<boolean>
+    clear: () => Promise<void>
+    /** 'encrypted' = OS-protected file (DPAPI on Windows); 'memory' = not persisted. */
+    info: () => Promise<{ storage: CredentialStorage; device: string } | null>
+  }
   media: {
     /** OS-level microphone privacy status (Windows/macOS); 'unknown' elsewhere. */
     getMicrophoneAccess: () => Promise<MicrophoneAccess>

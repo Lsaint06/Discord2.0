@@ -2,7 +2,6 @@ import type { FastifyInstance } from 'fastify'
 import type { AppContext } from '../context.js'
 import { requireUser } from '../lib/auth.js'
 import { badRequest, notFound, tooManyRequests } from '../lib/errors.js'
-import { permissions } from '../lib/permissions.js'
 import { buildSearchMatch, parseCursor, parseDay } from '../lib/validation.js'
 import { LIMITS, type ApiReadState, type ApiSearchResult } from '../protocol.js'
 import { readableChannel } from './messages.js'
@@ -11,16 +10,9 @@ import { buildApiMessages } from './messageViews.js'
 export function registerReadStateRoutes(app: FastifyInstance, ctx: AppContext): void {
   /** Read position + unread count for every readable text channel (missing ones start caught up). */
   app.get('/api/read-states', async (request): Promise<ApiReadState[]> => {
-    const user = await requireUser(ctx.repo, request)
-    const channels = (await ctx.repo.listChannels()).filter((c) =>
-      permissions.canReadChannel(user, c)
-    )
-    return ctx.repo.readStates(
-      user.id,
-      channels.map((c) => c.id),
-      Date.now(),
-      LIMITS.unreadCountCap
-    )
+    const user = await requireUser(ctx, request)
+    const channelIds = await ctx.access.viewableChannelIds(user, undefined, 'text')
+    return ctx.repo.readStates(user.id, channelIds, Date.now(), LIMITS.unreadCountCap)
   })
 
   /** Moves the read position forward (never backwards) and syncs the user's other sessions. */
@@ -38,10 +30,10 @@ export function registerReadStateRoutes(app: FastifyInstance, ctx: AppContext): 
       }
     },
     async (request) => {
-      const user = await requireUser(ctx.repo, request)
+      const user = await requireUser(ctx, request)
       const limit = ctx.limiters.readAcksPerUser.take(user.id)
       if (!limit.ok) throw tooManyRequests(limit.retryAfterMs)
-      const channel = await readableChannel(ctx, user, request.params.channelId)
+      const { channel } = await readableChannel(ctx, user, request.params.channelId)
       const message = await ctx.repo.getMessage(request.body.messageId)
       if (!message || message.channelId !== channel.id) throw notFound('Message not found')
       const lastReadId = await ctx.repo.markRead(user.id, channel.id, message.id, Date.now())
@@ -84,7 +76,7 @@ export function registerSearchRoutes(app: FastifyInstance, ctx: AppContext): voi
       }
     },
     async (request): Promise<ApiSearchResult> => {
-      const user = await requireUser(ctx.repo, request)
+      const user = await requireUser(ctx, request)
       const rate = ctx.limiters.searchPerUser.take(user.id)
       if (!rate.ok) throw tooManyRequests(rate.retryAfterMs)
       const q = request.query
@@ -102,11 +94,10 @@ export function registerSearchRoutes(app: FastifyInstance, ctx: AppContext): voi
 
       let channelIds: string[]
       if (q.channelId) {
-        channelIds = [(await readableChannel(ctx, user, q.channelId)).id]
+        channelIds = [(await readableChannel(ctx, user, q.channelId)).channel.id]
       } else {
-        channelIds = (await ctx.repo.listChannels())
-          .filter((c) => (!q.serverId || c.serverId === q.serverId) && permissions.canReadChannel(user, c))
-          .map((c) => c.id)
+        if (q.serverId) await ctx.access.requireServer(user, q.serverId)
+        channelIds = await ctx.access.viewableChannelIds(user, q.serverId, 'text')
       }
 
       // Fetch one extra to know whether there is another page.

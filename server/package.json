@@ -6,14 +6,16 @@
   "type": "module",
   "main": "dist/index.js",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24.7"
   },
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node --env-file-if-exists=.env dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "admin": "tsx --env-file-if-exists=.env src/cli/admin.ts",
+    "bench:argon2": "tsx --env-file-if-exists=.env src/cli/bench-argon2.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.1",

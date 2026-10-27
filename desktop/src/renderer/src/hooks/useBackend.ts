@@ -5,6 +5,8 @@ import { GatewayClient, type GatewayStatus } from '../net/gateway'
 import {
   LIMITS,
   type ApiAttachment,
+  type ApiMe,
+  type ApiMember,
   type ApiServer,
   type ApiUser,
   type ApiVoiceToken
@@ -48,6 +50,8 @@ interface Options {
   onSessionInvalid: () => void
   /** Called for every new message from the gateway (notifications). */
   onIncomingMessage?: (message: Message) => void
+  /** You were removed from a server (left, kicked or banned). */
+  onServerRemoved?: (serverId: string, reason: 'left' | 'kicked' | 'banned') => void
 }
 
 export interface SendInput {
@@ -84,9 +88,17 @@ export function describeError(err: unknown): string {
 export interface Backend {
   phase: 'loading' | 'ready' | 'error'
   loadError?: string
-  me: ApiUser | null
+  /** The API client of this session (management screens use it directly). */
+  api: ApiClient
+  me: ApiMe | null
   users: Record<string, ApiUser>
   servers: ApiServer[]
+  /** Members (with roles) of servers whose member list has been loaded. */
+  members: Record<string, ApiMember[]>
+  /** Bumped whenever the server reports access changes (members, roles, channels). */
+  serversRevision: number
+  loadMembers: (serverId: string) => void
+  refreshServers: () => Promise<void>
   channels: Record<string, ChannelState>
   readStates: Record<string, ReadState>
   /** Channels with unread messages from others. */
@@ -133,19 +145,21 @@ export interface Backend {
 }
 
 export function useBackend(session: BackendSession, options: Options): Backend {
-  const { initialStatus, onSessionInvalid, onIncomingMessage } = options
+  const { initialStatus, onSessionInvalid, onIncomingMessage, onServerRemoved } = options
 
   const [api] = useState(() => new ApiClient(session.httpUrl, session.token))
   const [attachments] = useState(() => new AttachmentCache((id) => api.fetchAttachment(id)))
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
   const [loadError, setLoadError] = useState<string>()
   const [loadAttempt, setLoadAttempt] = useState(0)
-  const [me, setMe] = useState<ApiUser | null>(null)
+  const [me, setMe] = useState<ApiMe | null>(null)
   const [users, setUsers] = useState<Record<string, ApiUser>>({})
   const [servers, setServers] = useState<ApiServer[]>([])
   const [channels, setChannels] = useState<Record<string, ChannelState>>({})
   const [readStates, setReadStates] = useState<Record<string, ReadState>>({})
   const [pinsRevision, setPinsRevision] = useState<Record<string, number>>({})
+  const [members, setMembers] = useState<Record<string, ApiMember[]>>({})
+  const [serversRevision, setServersRevision] = useState(0)
   const [voiceStates, setVoiceStates] = useState<Record<string, string>>({})
   const [voiceStreaming, setVoiceStreaming] = useState<Record<string, true>>({})
   const [gateway, setGateway] = useState<{ status: GatewayStatus; retryInMs?: number }>({
@@ -162,6 +176,8 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   const loadBufferRef = useRef(new Map<string, { messages: Message[]; stale: boolean }>())
   const onSessionInvalidRef = useRef(onSessionInvalid)
   const onIncomingRef = useRef(onIncomingMessage)
+  const onServerRemovedRef = useRef(onServerRemoved)
+  const membersRef = useRef(members)
   const ackTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
 
   useEffect(() => {
@@ -176,7 +192,11 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   useEffect(() => {
     onSessionInvalidRef.current = onSessionInvalid
     onIncomingRef.current = onIncomingMessage
-  }, [onSessionInvalid, onIncomingMessage])
+    onServerRemovedRef.current = onServerRemoved
+  }, [onSessionInvalid, onIncomingMessage, onServerRemoved])
+  useEffect(() => {
+    membersRef.current = members
+  }, [members])
   useEffect(() => () => attachments.clear(), [attachments])
 
   const handleAuthError = useCallback((err: unknown): boolean => {
@@ -294,7 +314,9 @@ export function useBackend(session: BackendSession, options: Options): Backend {
             data.voiceStates.filter((v) => v.streaming).map((v) => [v.userId, true as const])
           )
         )
-        if (isReconnect) void resync()
+        // Reconnect, or a channel was loaded over REST before the gateway was ready: fetch
+        // anything sent in between so no message falls into the gap.
+        if (isReconnect || Object.values(channelsRef.current).some((c) => c.loaded)) void resync()
       },
       onVoiceStateUpdate: ({ userId, channelId, streaming }) => {
         setVoiceStates((prev) => {
@@ -354,10 +376,41 @@ export function useBackend(session: BackendSession, options: Options): Backend {
       },
       onUserUpdate: (u) => {
         setUsers((prev) => ({ ...prev, [u.id]: u }))
-        if (u.id === meIdRef.current) setMe(u)
+        if (u.id === meIdRef.current) setMe((prev) => (prev ? { ...prev, ...u } : prev))
       },
       onServerCreate: (s) => {
         setServers((prev) => (prev.some((x) => x.id === s.id) ? prev : [...prev, s]))
+      },
+      // Access changed (roles, permissions, channels, members): refetch what we can see.
+      onServerUpdate: ({ serverId }) => {
+        void Promise.all([api.servers(), api.users()])
+          .then(([serverList, userList]) => {
+            if (cancelled) return
+            setServers(serverList)
+            setUsers((prev) => ({
+              ...prev,
+              ...Object.fromEntries(userList.map((u) => [u.id, u]))
+            }))
+            setServersRevision((n) => n + 1)
+            void loadReadStates()
+          })
+          .catch(handleAuthError)
+        if (membersRef.current[serverId]) {
+          void api
+            .members(serverId)
+            .then((list) => !cancelled && setMembers((prev) => ({ ...prev, [serverId]: list })))
+            .catch(() => undefined)
+        }
+      },
+      onServerRemove: ({ serverId, reason }) => {
+        setServers((prev) => prev.filter((s) => s.id !== serverId))
+        setMembers((prev) => {
+          const next = { ...prev }
+          delete next[serverId]
+          return next
+        })
+        setServersRevision((n) => n + 1)
+        onServerRemovedRef.current?.(serverId, reason)
       }
     })
     client.setStatus(initialStatus)
@@ -878,6 +931,27 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     setLoadAttempt((n) => n + 1)
   }, [])
 
+  const loadMembers = useCallback(
+    (serverId: string) => {
+      api
+        .members(serverId)
+        .then((list) => setMembers((prev) => ({ ...prev, [serverId]: list })))
+        .catch(handleAuthError)
+    },
+    [api, handleAuthError]
+  )
+
+  const refreshServers = useCallback(async () => {
+    try {
+      const [serverList, userList] = await Promise.all([api.servers(), api.users()])
+      setServers(serverList)
+      setUsers((prev) => ({ ...prev, ...Object.fromEntries(userList.map((u) => [u.id, u])) }))
+      setServersRevision((n) => n + 1)
+    } catch (err) {
+      handleAuthError(err)
+    }
+  }, [api, handleAuthError])
+
   const unread = useMemo(
     () =>
       new Set(
@@ -891,9 +965,14 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   return {
     phase,
     loadError,
+    api,
     me,
     users,
     servers,
+    members,
+    serversRevision,
+    loadMembers,
+    refreshServers,
     channels,
     readStates,
     unread,

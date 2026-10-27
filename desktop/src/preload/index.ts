@@ -1,21 +1,37 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 import type {
   AppMetrics,
+  CredentialStorage,
   D2DesktopApi,
   EncoderFlagsState,
   MicrophoneAccess,
   ScreenCaptureCapabilities,
   ScreenSelectResult,
-  ScreenSourceInfo
+  ScreenSourceInfo,
+  StoredCredentials
 } from './types'
 
-// Custom APIs for renderer
-const api = {}
-
-/** Narrow, typed bridge for Discord 2.0 features (no raw IPC exposed through this object). */
+/**
+ * Narrow, typed bridge for Discord 2.0 features. No raw IPC (send/invoke/on) is exposed to the
+ * renderer; every channel below is validated again in the main process.
+ */
 const d2: D2DesktopApi = {
   platform: process.platform,
+  credentials: {
+    load: () => ipcRenderer.invoke('d2:credentials-load') as Promise<StoredCredentials | null>,
+    save: (value) =>
+      ipcRenderer.invoke('d2:credentials-save', {
+        token: String(value.token),
+        serverUrl: String(value.serverUrl),
+        username: String(value.username)
+      }) as Promise<boolean>,
+    clear: () => ipcRenderer.invoke('d2:credentials-clear') as Promise<void>,
+    info: () =>
+      ipcRenderer.invoke('d2:credentials-info') as Promise<{
+        storage: CredentialStorage
+        device: string
+      } | null>
+  },
   media: {
     getMicrophoneAccess: () => ipcRenderer.invoke('d2:mic-access') as Promise<MicrophoneAccess>,
     openMicrophoneSettings: () => ipcRenderer.invoke('d2:open-mic-settings') as Promise<boolean>
@@ -52,22 +68,5 @@ const d2: D2DesktopApi = {
   }
 }
 
-// Use `contextBridge` APIs to expose Electron APIs to
-// renderer only if context isolation is enabled, otherwise
-// just add to the DOM global.
-if (process.contextIsolated) {
-  try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api)
-    contextBridge.exposeInMainWorld('d2', d2)
-  } catch (error) {
-    console.error(error)
-  }
-} else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.api = api
-  // @ts-ignore (define in dts)
-  window.d2 = d2
-}
+// Context isolation is always on (Electron default); the bridge is the only thing exposed.
+contextBridge.exposeInMainWorld('d2', d2)

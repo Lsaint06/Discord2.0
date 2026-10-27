@@ -39,6 +39,8 @@ interface ComposerProps {
   /** Lets ChatPanel push dropped files into the tray. */
   ref?: Ref<ComposerHandle>
   disabled?: boolean
+  /** Attach Files permission (false hides uploads; the server enforces it too). */
+  canAttach?: boolean
 }
 
 export interface ComposerHandle {
@@ -127,6 +129,10 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
 
   const addFiles = (files: File[]): void => {
     if (files.length === 0) return
+    if (props.canAttach === false || props.disabled) {
+      setNotice('You can’t attach files in this channel.')
+      return
+    }
     const { accepted, rejected } = planUploads(
       uploads,
       files.map((source) => ({
@@ -309,8 +315,8 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
           className="icon-button composer-attach"
           onClick={() => fileRef.current?.click()}
           aria-label="Upload a file"
-          title="Upload a file"
-          disabled={props.disabled}
+          title={props.canAttach === false ? 'You can’t attach files here' : 'Upload a file'}
+          disabled={props.disabled || props.canAttach === false}
         >
           <PlusIcon size={20} />
         </button>

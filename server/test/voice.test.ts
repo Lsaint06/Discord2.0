@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { after, before, describe, test } from 'node:test'
 import type { FastifyInstance } from 'fastify'
 import { AccessToken, TokenVerifier } from 'livekit-server-sdk'
+import { AccessService } from '../src/access.js'
 import { buildApp } from '../src/app.js'
 import { loadConfig } from '../src/config.js'
 import { seedIfEmpty, SYSTEM_BOT_ID } from '../src/db/seed.js'
@@ -154,7 +155,8 @@ describe('voice: rooms and state store', () => {
     await repo.migrate()
     await seedIfEmpty(repo)
     const bot = (await repo.getUser(SYSTEM_BOT_ID))!
-    await assert.rejects(authorizeVoiceJoin(repo, bot, 'hangout-lounge'), { statusCode: 403 })
+    // Bots are never server members; non-members get "not found" (no probing of channel ids).
+    await assert.rejects(authorizeVoiceJoin(new AccessService(repo), bot, 'hangout-lounge'), { statusCode: 404 })
     await repo.close()
   })
 

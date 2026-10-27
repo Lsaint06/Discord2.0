@@ -1,12 +1,14 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { ChannelAccess } from '../access.js'
 import type { AppContext } from '../context.js'
-import { RepositoryConflict, type ChannelRecord, type MessageRecord, type UserRecord } from '../db/repository.js'
+import { RepositoryConflict, type MessageRecord, type UserRecord } from '../db/repository.js'
 import { isAttachmentId } from '../attachments/store.js'
 import { requireUser } from '../lib/auth.js'
 import { badRequest, conflict, forbidden, notFound, tooManyRequests } from '../lib/errors.js'
-import { permissions } from '../lib/permissions.js'
+import { has } from '../lib/permissions.js'
 import { normalizeEmoji, normalizeMessageContent, parseCursor } from '../lib/validation.js'
-import { LIMITS } from '../protocol.js'
+import { LIMITS, Permissions } from '../protocol.js'
+import { publishToChannel } from '../realtime.js'
 import { buildApiMessages, buildBroadcastMessage } from './messageViews.js'
 
 const channelParams = {
@@ -33,16 +35,23 @@ const reactionParams = {
 type ChannelParams = { channelId: string }
 type MessageParams = ChannelParams & { messageId: string }
 
+/**
+ * A text channel the user can view (membership + View Channel), optionally requiring more
+ * permission bits. Non-members and hidden channels are "not found"; missing bits are 403.
+ */
 export async function readableChannel(
   ctx: AppContext,
   user: UserRecord,
-  channelId: string
-): Promise<ChannelRecord> {
-  const channel = await ctx.repo.getChannel(channelId)
-  if (!channel) throw notFound('Channel not found')
-  if (channel.type !== 'text') throw badRequest('Not a text channel', 'not_text_channel')
-  if (!permissions.canReadChannel(user, channel)) throw forbidden()
-  return channel
+  channelId: string,
+  bits = 0,
+  message?: string
+): Promise<ChannelAccess> {
+  const access = await ctx.access.requireChannel(user, channelId)
+  if (access.channel.type !== 'text') throw badRequest('Not a text channel', 'not_text_channel')
+  if (bits && !has(access.channelPermissions, bits)) {
+    throw forbidden(message ?? 'You don’t have permission to do that here.', 'missing_permission')
+  }
+  return access
 }
 
 async function messageInChannel(ctx: AppContext, channelId: string, messageId: string): Promise<MessageRecord> {
@@ -58,9 +67,9 @@ function take(limit: { take: (key: string) => { ok: boolean; retryAfterMs: numbe
 }
 
 async function userAndChannel(ctx: AppContext, request: FastifyRequest<{ Params: ChannelParams }>) {
-  const user = await requireUser(ctx.repo, request)
-  const channel = await readableChannel(ctx, user, request.params.channelId)
-  return { user, channel }
+  const user = await requireUser(ctx, request)
+  const access = await readableChannel(ctx, user, request.params.channelId)
+  return { user, channel: access.channel, perms: access.channelPermissions }
 }
 
 export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -131,12 +140,20 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
       }
     },
     async (request, reply) => {
-      const user = await requireUser(ctx.repo, request)
+      const user = await requireUser(ctx, request)
       take(ctx.limiters.messagesPerUser, user.id)
-      const channel = await readableChannel(ctx, user, request.params.channelId)
-      if (!permissions.canPost(user, channel)) throw forbidden('You can’t post here')
+      const { channel, channelPermissions: perms } = await readableChannel(
+        ctx,
+        user,
+        request.params.channelId,
+        Permissions.sendMessages,
+        'You can’t send messages in this channel.'
+      )
 
       const attachmentIds = request.body.attachmentIds ?? []
+      if (attachmentIds.length > 0 && !has(perms, Permissions.attachFiles)) {
+        throw forbidden('You can’t attach files in this channel.', 'missing_permission')
+      }
       if (attachmentIds.length > ctx.config.attachments.maxFilesPerMessage) {
         throw badRequest(
           `At most ${ctx.config.attachments.maxFilesPerMessage} attachments per message`,
@@ -178,7 +195,7 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
       }
 
       const dto = await buildBroadcastMessage(ctx.repo, record, request.body.nonce)
-      ctx.hub.broadcast({ op: 'message_create', d: dto })
+      await publishToChannel(ctx, channel, { op: 'message_create', d: dto })
       // Sending a message means you've read the channel up to it.
       const lastReadId = await ctx.repo.markRead(user.id, channel.id, record.id, Date.now())
       ctx.hub.sendToUser(user.id, { op: 'read_state_update', d: { channelId: channel.id, lastReadId } })
@@ -215,7 +232,8 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
       const { user, channel } = await userAndChannel(ctx, request)
       take(ctx.limiters.editsPerUser, user.id)
       const message = await messageInChannel(ctx, channel.id, request.params.messageId)
-      if (!permissions.canEditMessage(user, message)) {
+      // Only authors edit their own messages (moderators can delete, never rewrite).
+      if (message.authorId !== user.id) {
         throw forbidden('You can only edit your own messages', 'not_author')
       }
       const hasAttachments = (await ctx.repo.attachmentsForMessages([message.id])).length > 0
@@ -238,7 +256,7 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
         throw err
       }
       if (!updated) throw notFound('Message not found')
-      ctx.hub.broadcast({
+      await publishToChannel(ctx, channel, {
         op: 'message_update',
         d: {
           id: updated.id,
@@ -257,17 +275,28 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
     '/api/channels/:channelId/messages/:messageId',
     { schema: { params: messageParams } },
     async (request, reply) => {
-      const { user, channel } = await userAndChannel(ctx, request)
+      const { user, channel, perms } = await userAndChannel(ctx, request)
       take(ctx.limiters.editsPerUser, user.id)
       const message = await messageInChannel(ctx, channel.id, request.params.messageId)
-      if (!permissions.canDeleteMessage(user, message)) {
+      const own = message.authorId === user.id
+      if (!own && !has(perms, Permissions.manageMessages)) {
         throw forbidden('You can only delete your own messages', 'not_author')
       }
       // Policy: deleting a message deletes its attachments (rows cascade; files removed after
       // commit — if we crash in between, the orphan sweep removes them later).
       const removed = await ctx.repo.deleteMessage(message.id)
       await Promise.all(removed.map((a) => ctx.attachments.remove(a.id)))
-      ctx.hub.broadcast({ op: 'message_delete', d: { id: message.id, channelId: channel.id } })
+      await publishToChannel(ctx, channel, { op: 'message_delete', d: { id: message.id, channelId: channel.id } })
+      if (!own) {
+        await ctx.audit.record({
+          action: 'message.moderator_delete',
+          actorId: user.id,
+          targetUserId: message.authorId,
+          serverId: channel.serverId,
+          request,
+          detail: { channelId: channel.id, messageId: message.id }
+        })
+      }
       request.log.info(
         { op: 'message_delete', message: message.id, attachments: removed.length },
         'message deleted'
@@ -281,9 +310,12 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
     request: FastifyRequest<{ Params: MessageParams & { emoji: string } }>,
     add: boolean
   ) => {
-    const { user, channel } = await userAndChannel(ctx, request)
+    const { user, channel, perms } = await userAndChannel(ctx, request)
     take(ctx.limiters.reactionsPerUser, user.id)
-    if (!permissions.canReact(user, channel)) throw forbidden()
+    // Removing your own reaction is always allowed; adding one needs Add Reactions.
+    if (add && !has(perms, Permissions.addReactions)) {
+      throw forbidden('You can’t add reactions in this channel.', 'missing_permission')
+    }
     const emoji = normalizeEmoji(request.params.emoji)
     const message = await messageInChannel(ctx, channel.id, request.params.messageId)
     if (add) {
@@ -305,7 +337,7 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
     }
     const count = await ctx.repo.reactionCount(message.id, emoji)
     const d = { channelId: channel.id, messageId: message.id, emoji, count, userId: user.id, added: add }
-    ctx.hub.broadcast({ op: 'reaction_update', d })
+    await publishToChannel(ctx, channel, { op: 'reaction_update', d })
     return d
   }
 
@@ -335,9 +367,11 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
   )
 
   const pin = async (request: FastifyRequest<{ Params: MessageParams }>, pinned: boolean) => {
-    const { user, channel } = await userAndChannel(ctx, request)
+    const { user, channel, perms } = await userAndChannel(ctx, request)
     take(ctx.limiters.pinsPerUser, user.id)
-    if (!permissions.canPin(user, channel)) throw forbidden('You can’t pin messages here')
+    if (!has(perms, Permissions.pinMessages) && !has(perms, Permissions.manageMessages)) {
+      throw forbidden('You can’t pin messages here', 'missing_permission')
+    }
     const message = await messageInChannel(ctx, channel.id, request.params.messageId)
     const at = Date.now()
     if (pinned) {
@@ -355,7 +389,7 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
       await ctx.repo.unpinMessage(message.id)
     }
     const d = { channelId: channel.id, messageId: message.id, pinned, userId: user.id, at }
-    ctx.hub.broadcast({ op: 'pin_update', d })
+    await publishToChannel(ctx, channel, { op: 'pin_update', d })
     return d
   }
 

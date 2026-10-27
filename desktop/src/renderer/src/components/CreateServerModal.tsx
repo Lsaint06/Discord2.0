@@ -1,15 +1,26 @@
 import { useEffect, useState } from 'react'
 import { accentChoices } from '../data/defaults'
 import { initials } from '../lib/format'
+import type { ApiClient } from '../net/api'
+import type { ApiServer } from '../net/protocol'
 import { CloseIcon } from './Icons'
+import { JoinServerForm } from './manage/InviteModal'
 
 interface CreateServerModalProps {
   /** Resolves to an error message, or null on success. */
   onCreate: (name: string, color: string) => Promise<string | null>
+  api: ApiClient
+  onJoined: (server: ApiServer) => void
   onClose: () => void
 }
 
-function CreateServerModal({ onCreate, onClose }: CreateServerModalProps): React.JSX.Element {
+function CreateServerModal({
+  onCreate,
+  api,
+  onJoined,
+  onClose
+}: CreateServerModalProps): React.JSX.Element {
+  const [mode, setMode] = useState<'create' | 'join'>('join')
   const [name, setName] = useState('')
   const [color, setColor] = useState(accentChoices[0])
   const [submitting, setSubmitting] = useState(false)
@@ -24,6 +35,49 @@ function CreateServerModal({ onCreate, onClose }: CreateServerModalProps): React
   }, [onClose])
 
   const trimmed = name.trim()
+
+  const tabs = (
+    <div className="modal-tabs" role="tablist">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === 'join'}
+        className={mode === 'join' ? 'active' : ''}
+        onClick={() => setMode('join')}
+      >
+        Join a server
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === 'create'}
+        className={mode === 'create' ? 'active' : ''}
+        onClick={() => setMode('create')}
+      >
+        Create a server
+      </button>
+    </div>
+  )
+
+  if (mode === 'join') {
+    return (
+      <div className="modal-backdrop" onMouseDown={onClose}>
+        <div
+          className="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Join a server"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
+            <CloseIcon size={18} />
+          </button>
+          {tabs}
+          <JoinServerForm api={api} onJoined={onJoined} onCancel={onClose} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
@@ -49,8 +103,9 @@ function CreateServerModal({ onCreate, onClose }: CreateServerModalProps): React
         <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
           <CloseIcon size={18} />
         </button>
+        {tabs}
         <h2 id="create-server-title">Create a server</h2>
-        <p>Give your new server a name and a color. You can always change these later.</p>
+        <p>Give your new server a name and a color. You become its owner.</p>
 
         <div className="server-preview" style={{ background: color }}>
           {trimmed ? initials(trimmed) : '?'}

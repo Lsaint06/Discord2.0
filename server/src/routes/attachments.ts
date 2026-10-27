@@ -7,15 +7,13 @@ import { FileTooLargeError, isAttachmentId, newAttachmentId } from '../attachmen
 import { requireUser } from '../lib/auth.js'
 import {
   badRequest,
-  forbidden,
   insufficientStorage,
   notFound,
   payloadTooLarge,
   tooManyRequests,
   unsupportedType
 } from '../lib/errors.js'
-import { permissions } from '../lib/permissions.js'
-import { LIMITS, type ApiAttachment } from '../protocol.js'
+import { LIMITS, Permissions, type ApiAttachment } from '../protocol.js'
 import { readableChannel } from './messages.js'
 import { toApiAttachment } from './messageViews.js'
 
@@ -41,11 +39,16 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: AppContext):
       }
     },
     async (request, reply) => {
-      const user = await requireUser(ctx.repo, request)
+      const user = await requireUser(ctx, request)
       const limit = ctx.limiters.uploadsPerUser.take(user.id)
       if (!limit.ok) throw tooManyRequests(limit.retryAfterMs)
-      const channel = await readableChannel(ctx, user, request.params.channelId)
-      if (!permissions.canPost(user, channel)) throw forbidden('You can’t upload here')
+      const { channel } = await readableChannel(
+        ctx,
+        user,
+        request.params.channelId,
+        Permissions.sendMessages | Permissions.attachFiles,
+        'You can’t upload files in this channel.'
+      )
       if (!request.isMultipart()) throw badRequest('Expected multipart/form-data', 'not_multipart')
 
       // Cheap checks before reading any bytes.
@@ -234,7 +237,7 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: AppContext):
       }
     },
     async (request, reply) => {
-      const user = await requireUser(ctx.repo, request)
+      const user = await requireUser(ctx, request)
       const id = request.params.attachmentId
       if (!isAttachmentId(id)) throw notFound('Attachment not found')
       const attachment = await ctx.repo.getAttachment(id)
@@ -243,10 +246,9 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: AppContext):
         // Unsent uploads are visible to their uploader only.
         if (attachment.uploaderId !== user.id) throw notFound('Attachment not found')
       } else {
-        const channel = await ctx.repo.getChannel(attachment.channelId)
-        if (!channel || !permissions.canReadChannel(user, channel)) {
-          throw notFound('Attachment not found')
-        }
+        // Sent attachments follow the channel: member of the server and View Channel.
+        const access = await ctx.access.channel(user, attachment.channelId)
+        if (!access || access.channelPermissions === 0) throw notFound('Attachment not found')
       }
 
       const inline = attachment.kind === 'image' && request.query.download !== '1'
@@ -289,7 +291,7 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: AppContext):
       }
     },
     async (request, reply) => {
-      const user = await requireUser(ctx.repo, request)
+      const user = await requireUser(ctx, request)
       const id = request.params.attachmentId
       if (!isAttachmentId(id)) throw notFound('Attachment not found')
       const removed = await ctx.repo.deletePendingAttachment(id, user.id)

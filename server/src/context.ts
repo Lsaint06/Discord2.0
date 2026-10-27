@@ -1,4 +1,7 @@
+import type { AccessService } from './access.js'
 import type { AttachmentStore } from './attachments/store.js'
+import type { AuditLog } from './audit.js'
+import type { PasswordHasher } from './auth/password.js'
 import type { Config } from './config.js'
 import type { Repository } from './db/repository.js'
 import type { GatewayHub } from './gateway.js'
@@ -11,6 +14,9 @@ export interface AppContext {
   repo: Repository
   hub: GatewayHub
   attachments: AttachmentStore
+  access: AccessService
+  audit: AuditLog
+  hasher: PasswordHasher
   voice: {
     store: VoiceStateStore
     /** null when voice (LiveKit) is not configured. */
@@ -20,6 +26,16 @@ export interface AppContext {
     apiPerIp: TokenBucketLimiter
     gatewayPerIp: TokenBucketLimiter
     loginPerIp: TokenBucketLimiter
+    /** Keyed by the attempted username (also for usernames that don't exist). */
+    loginPerAccount: TokenBucketLimiter
+    registerPerIp: TokenBucketLimiter
+    recoverPerIp: TokenBucketLimiter
+    recoverPerAccount: TokenBucketLimiter
+    accountPerUser: TokenBucketLimiter
+    adminPerUser: TokenBucketLimiter
+    invitesPerUser: TokenBucketLimiter
+    joinPerUser: TokenBucketLimiter
+    moderationPerUser: TokenBucketLimiter
     messagesPerUser: TokenBucketLimiter
     editsPerUser: TokenBucketLimiter
     reactionsPerUser: TokenBucketLimiter
@@ -38,6 +54,17 @@ export function createLimiters(): AppContext['limiters'] {
     apiPerIp: new TokenBucketLimiter(120, 20),
     gatewayPerIp: new TokenBucketLimiter(10, 0.5),
     loginPerIp: new TokenBucketLimiter(10, 0.1),
+    // Credential stuffing / guessing against one account: 5 tries, then one per minute.
+    loginPerAccount: new TokenBucketLimiter(5, 1 / 60),
+    registerPerIp: new TokenBucketLimiter(5, 1 / 60),
+    recoverPerIp: new TokenBucketLimiter(5, 1 / 60),
+    recoverPerAccount: new TokenBucketLimiter(5, 1 / 300),
+    // Password change, recovery code regeneration, session management.
+    accountPerUser: new TokenBucketLimiter(10, 1 / 30),
+    adminPerUser: new TokenBucketLimiter(30, 0.5),
+    invitesPerUser: new TokenBucketLimiter(10, 1 / 30),
+    joinPerUser: new TokenBucketLimiter(10, 1 / 30),
+    moderationPerUser: new TokenBucketLimiter(30, 1),
     messagesPerUser: new TokenBucketLimiter(5, 1),
     editsPerUser: new TokenBucketLimiter(10, 1),
     reactionsPerUser: new TokenBucketLimiter(20, 4),

@@ -2,20 +2,30 @@ import cors from '@fastify/cors'
 import multipart from '@fastify/multipart'
 import websocket from '@fastify/websocket'
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
+import { AccessService } from './access.js'
 import { AttachmentStore } from './attachments/store.js'
+import { AuditLog } from './audit.js'
+import { HashGate, PasswordHasher } from './auth/password.js'
+import { authenticateToken, sessionUsable } from './auth/sessions.js'
 import { isOriginAllowed, type Config } from './config.js'
 import { createLimiters, type AppContext } from './context.js'
 import type { Repository } from './db/repository.js'
 import { GatewayHub, type GatewayOptions } from './gateway.js'
 import { ApiError, tooManyRequests } from './lib/errors.js'
 import type { ApiErrorBody } from './protocol.js'
+import { publishVoiceChanges, toApiMe, visibleVoiceStates } from './realtime.js'
+import { registerAdminRoutes } from './routes/admin.js'
 import { cleanupAttachments, registerAttachmentRoutes } from './routes/attachments.js'
+import { registerAuthRoutes } from './routes/auth.js'
 import { registerDevAuthRoutes } from './routes/devAuth.js'
+import { registerInviteRoutes } from './routes/invites.js'
+import { registerMemberRoutes } from './routes/members.js'
 import { registerMessageRoutes } from './routes/messages.js'
 import { registerReadStateRoutes, registerSearchRoutes } from './routes/readStates.js'
 import { registerServerRoutes } from './routes/servers.js'
 import { registerUserRoutes } from './routes/users.js'
 import { registerVoiceRoutes } from './routes/voice.js'
+import { voiceAuthorizer } from './voice/enforce.js'
 import { LiveKitBridge } from './voice/livekitBridge.js'
 import { VoiceStateStore } from './voice/voiceStates.js'
 
@@ -24,13 +34,17 @@ export interface BuildOptions {
   logger?: boolean
   /** How often to reconcile voice presence with LiveKit; 0 disables (tests). */
   voiceReconcileIntervalMs?: number
-  /** How often to clean up abandoned uploads and orphan files; 0 disables (tests). */
+  /** How often to clean up abandoned uploads, orphan files and old sessions; 0 disables (tests). */
   attachmentCleanupIntervalMs?: number
+  /** Override the password hasher (tests use cheaper, still OWASP-compliant parameters). */
+  hasher?: PasswordHasher
 }
 
 function errorBody(code: string, message: string, retryAfterMs?: number): ApiErrorBody {
   return { error: { code, message, ...(retryAfterMs ? { retryAfterMs } : {}) } }
 }
+
+const DAY = 24 * 60 * 60_000
 
 export async function buildApp(
   config: Config,
@@ -38,36 +52,85 @@ export async function buildApp(
   options: BuildOptions = {}
 ): Promise<{ app: FastifyInstance; ctx: AppContext }> {
   const app = Fastify({
-    logger: options.logger === false ? false : { level: config.logLevel },
+    logger:
+      options.logger === false
+        ? false
+        : {
+            level: config.logLevel,
+            // Defence in depth: request logs never include headers or bodies, but if a secret
+            // ever ends up in a logged object it is masked.
+            redact: {
+              paths: [
+                'req.headers.authorization',
+                'req.headers.cookie',
+                '*.password',
+                '*.currentPassword',
+                '*.newPassword',
+                '*.token',
+                '*.code'
+              ],
+              censor: '[redacted]'
+            }
+          },
     bodyLimit: 16 * 1024,
     trustProxy: config.trustProxy,
     // Don't let an in-progress download or upload hold up shutdown/restart.
     forceCloseConnections: true,
-    // Strict JSON types: never silently coerce e.g. a number into a message string.
-    ajv: { customOptions: { coerceTypes: false } }
+    // Strict JSON types: never silently coerce e.g. a number into a message string, and reject
+    // (rather than silently strip) unknown fields such as a forged user id.
+    ajv: { customOptions: { coerceTypes: false, removeAdditional: false } }
   })
 
   const voiceStore = new VoiceStateStore()
-  const hub = new GatewayHub(repo, app.log, options.gateway, () => voiceStore.snapshot())
-  const bridge = config.livekit
+  const access = new AccessService(repo)
+  // ctx is filled in below; the gateway and LiveKit bridge call into it lazily.
+  const ctx = {
+    config,
+    repo,
+    access,
+    attachments: new AttachmentStore(config.attachments.dir),
+    audit: new AuditLog(repo, app.log),
+    hasher:
+      options.hasher ??
+      new PasswordHasher(config.auth.argon2, new HashGate(config.auth.hashConcurrency, 32)),
+    voice: { store: voiceStore, bridge: null },
+    limiters: createLimiters()
+  } as unknown as AppContext
+
+  ctx.hub = new GatewayHub(
+    {
+      authenticate: (token) => authenticateToken(ctx, token),
+      sessionStillValid: async (sessionId, userId) => {
+        const sessions = await repo.listSessions(userId, Date.now())
+        const session = sessions.find((s) => s.id === sessionId)
+        const user = await repo.getUser(userId)
+        return Boolean(session && user && sessionUsable(ctx, { session, user }, Date.now()))
+      },
+      touchSession: (sessionId) => repo.touchSession(sessionId, Date.now(), null),
+      me: (user) => toApiMe(ctx, user),
+      visibleUsers: (user) => repo.listVisibleUsers(user.id),
+      presenceAudience: (userId) => access.presenceAudienceOf(userId),
+      voiceStates: (user) => visibleVoiceStates(ctx, user),
+      getUser: (id) => repo.getUser(id)
+    },
+    app.log,
+    options.gateway
+  )
+  ctx.voice.bridge = config.livekit
     ? new LiveKitBridge(
         config.livekit,
         voiceStore,
-        repo,
+        voiceAuthorizer(ctx),
         (changes) => {
-          for (const change of changes) hub.broadcast({ op: 'voice_state_update', d: change })
+          publishVoiceChanges(ctx, changes).catch((err: unknown) =>
+            app.log.error({ err }, 'publishing voice changes failed')
+          )
         },
         app.log
       )
     : null
-  const ctx: AppContext = {
-    config,
-    repo,
-    hub,
-    attachments: new AttachmentStore(config.attachments.dir),
-    voice: { store: voiceStore, bridge },
-    limiters: createLimiters()
-  }
+  const hub = ctx.hub
+  const bridge = ctx.voice.bridge
 
   // LiveKit posts webhooks as application/webhook+json; keep the raw body for signature checks.
   app.addContentTypeParser(
@@ -79,6 +142,7 @@ export async function buildApp(
   app.addHook('onRequest', async (request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff')
     reply.header('Cache-Control', 'no-store')
+    reply.header('Referrer-Policy', 'no-referrer')
 
     // Reject browser requests from unknown origins outright (CORS alone only hides responses).
     const origin = request.headers.origin
@@ -95,6 +159,8 @@ export async function buildApp(
     origin: (origin, cb) => cb(null, isOriginAllowed(config, origin)),
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
     allowedHeaders: ['Authorization', 'Content-Type'],
+    // Bearer tokens only; no cookies are ever used, so there is no CSRF surface.
+    credentials: false,
     maxAge: 600
   })
   await app.register(websocket, { options: { maxPayload: 4096 } })
@@ -134,9 +200,12 @@ export async function buildApp(
 
   app.get('/api/meta', async () => ({
     name: 'Discord 2.0',
-    apiVersion: 1,
+    apiVersion: 2,
     devAuth: config.devAuth,
-    voice: config.livekit !== null
+    voice: config.livekit !== null,
+    // Real accounts; new ones only with an invitation from an administrator.
+    accounts: true,
+    registration: 'invite'
   }))
 
   app.get(
@@ -153,9 +222,13 @@ export async function buildApp(
     (socket) => hub.handleConnection(socket)
   )
 
+  registerAuthRoutes(app, ctx)
   registerDevAuthRoutes(app, ctx)
+  registerAdminRoutes(app, ctx)
   registerUserRoutes(app, ctx)
   registerServerRoutes(app, ctx)
+  registerMemberRoutes(app, ctx)
+  registerInviteRoutes(app, ctx)
   registerMessageRoutes(app, ctx)
   registerAttachmentRoutes(app, ctx)
   registerReadStateRoutes(app, ctx)
@@ -170,6 +243,12 @@ export async function buildApp(
         cleanupAttachments(ctx, app.log).catch((err: unknown) =>
           app.log.error({ err }, 'attachment cleanup failed')
         )
+        repo
+          .purgeExpired(Date.now(), { sessionsMs: 30 * DAY, auditMs: 365 * DAY })
+          .then((removed) => {
+            if (Object.values(removed).some((n) => n > 0)) app.log.info({ removed }, 'expired auth data purged')
+          })
+          .catch((err: unknown) => app.log.error({ err }, 'session cleanup failed'))
       }
       run()
       cleanupTimer = setInterval(run, cleanupMs)

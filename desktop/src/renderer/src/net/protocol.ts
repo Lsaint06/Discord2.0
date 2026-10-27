@@ -17,6 +17,50 @@ export interface ApiUser {
   status: PresenceStatus
 }
 
+/** The signed-in user, with account details only they can see. */
+export interface ApiMe extends ApiUser {
+  /** Instance administrator (can issue registration invites and manage accounts). */
+  instanceAdmin: boolean
+  /** Has a password (a real account). False for development identities. */
+  hasPassword: boolean
+}
+
+// ---- Roles and permissions (Milestone 7) ----
+
+export type ServerRole = 'owner' | 'admin' | 'moderator' | 'member'
+/** Roles whose permissions can be configured (the owner always has every permission). */
+export type ConfigurableRole = Exclude<ServerRole, 'owner'>
+
+/** Permission bits. The backend enforces these; the UI only uses them to hide controls. */
+export const Permissions = {
+  viewChannel: 1 << 0,
+  sendMessages: 1 << 1,
+  attachFiles: 1 << 2,
+  addReactions: 1 << 3,
+  /** Delete other people's messages (and pin/unpin). */
+  manageMessages: 1 << 4,
+  pinMessages: 1 << 5,
+  /** Join voice channels. */
+  connect: 1 << 6,
+  speak: 1 << 7,
+  /** Share a screen (Go Live) in voice. */
+  stream: 1 << 8,
+  manageChannels: 1 << 9,
+  createInvites: 1 << 10,
+  /** See and revoke everyone's invites. */
+  manageInvites: 1 << 11,
+  kickMembers: 1 << 12,
+  banMembers: 1 << 13,
+  /** Change members' roles and role permissions (only below your own role). */
+  manageRoles: 1 << 14,
+  /** Rename the server, change its color, see its audit log. */
+  manageServer: 1 << 15
+} as const
+export type PermissionName = keyof typeof Permissions
+export const ALL_PERMISSIONS = Object.values(Permissions).reduce((a, b) => a | b, 0)
+
+export const ROLE_RANK: Record<ServerRole, number> = { owner: 4, admin: 3, moderator: 2, member: 1 }
+
 export interface ApiChannel {
   id: string
   serverId: string
@@ -25,13 +69,135 @@ export interface ApiChannel {
   topic: string | null
   category: string
   position: number
+  /** Your effective permissions in this channel. */
+  permissions?: number
 }
 
 export interface ApiServer {
   id: string
   name: string
   color: string
+  /** Only channels you can view. */
   channels: ApiChannel[]
+  ownerId?: string | null
+  /** Your role in this server. */
+  role?: ServerRole
+  /** Your server-level permissions. */
+  permissions?: number
+}
+
+export interface ApiMember {
+  userId: string
+  role: ServerRole
+  joinedAt: number
+}
+
+export interface ApiBan {
+  userId: string
+  reason: string | null
+  bannedBy: string | null
+  createdAt: number
+}
+
+export interface ApiRolePermissions {
+  role: ConfigurableRole
+  permissions: number
+}
+
+export interface ApiChannelOverride {
+  role: ConfigurableRole
+  allow: number
+  deny: number
+}
+
+export interface ApiServerInvite {
+  id: string
+  serverId: string
+  createdBy: string | null
+  createdAt: number
+  expiresAt: number | null
+  maxUses: number | null
+  uses: number
+  revoked: boolean
+  /** Only present in the response that created the invite (never stored in plaintext). */
+  code?: string
+}
+
+export interface ApiInvitePreview {
+  serverId: string
+  serverName: string
+  serverColor: string
+  memberCount: number
+  expiresAt: number | null
+  /** You are already a member. */
+  member: boolean
+}
+
+export interface ApiSession {
+  id: string
+  kind: 'password' | 'dev'
+  device: string | null
+  createdAt: number
+  lastUsedAt: number
+  expiresAt: number
+  ip: string | null
+  current: boolean
+}
+
+export interface ApiAuthResult {
+  token: string
+  user: ApiMe
+  session: ApiSession
+  /** Shown once after registration / regeneration. */
+  recoveryCodes?: string[]
+}
+
+export interface ApiRegistrationInvite {
+  id: string
+  kind: 'register' | 'claim'
+  /** For claim codes: the existing (legacy) account it binds to. */
+  claimUserId: string | null
+  claimUsername: string | null
+  note: string | null
+  createdBy: string | null
+  createdAt: number
+  expiresAt: number
+  usedAt: number | null
+  usedBy: string | null
+  revoked: boolean
+  code?: string
+}
+
+/** Development identity that has not been claimed by a real account yet. */
+export interface ApiLegacyIdentity {
+  id: string
+  username: string
+  displayName: string
+  messages: number
+  attachments: number
+  lastSeenAt: number | null
+  openClaimCode: boolean
+}
+
+export interface ApiAccount {
+  id: string
+  username: string
+  displayName: string
+  instanceAdmin: boolean
+  hasPassword: boolean
+  disabled: boolean
+  bot: boolean
+  createdAt: number
+}
+
+export interface ApiAuditEvent {
+  id: string
+  at: number
+  action: string
+  actorId: string | null
+  targetUserId: string | null
+  serverId: string | null
+  detail: Record<string, unknown> | null
 }
 
 export interface ApiAttachment {
@@ -138,7 +304,17 @@ export const LIMITS = {
   searchQueryMaxLength: 100,
   replyPreviewLength: 120,
   unreadCountCap: 99,
-  filenameMaxLength: 120
+  filenameMaxLength: 120,
+  passwordMinLength: 12,
+  passwordMaxLength: 256,
+  usernameMinLength: 2,
+  usernameMaxLength: 32,
+  recoveryCodeCount: 10,
+  inviteMaxUses: 100,
+  inviteMaxAgeDays: 30,
+  banReasonMaxLength: 200,
+  channelNameMaxLength: 40,
+  channelTopicMaxLength: 200
 } as const
 
 /** Client → server gateway frames. */
@@ -150,7 +326,7 @@ export type GatewayClientFrame =
 /** Server → client gateway frames. */
 export type GatewayServerFrame =
   | { op: 'hello'; d: { heartbeatIntervalMs: number } }
-  | { op: 'ready'; d: { user: ApiUser; users: ApiUser[]; voiceStates: ApiVoiceState[] } }
+  | { op: 'ready'; d: { user: ApiMe; users: ApiUser[]; voiceStates: ApiVoiceState[] } }
   | { op: 'heartbeat_ack' }
   | { op: 'message_create'; d: ApiMessage }
   /** Content edit. Apply only if editedAt is newer than what the client has. */
@@ -179,6 +355,10 @@ export type GatewayServerFrame =
   | { op: 'read_state_update'; d: { channelId: string; lastReadId: string } }
   | { op: 'user_update'; d: ApiUser }
   | { op: 'server_create'; d: ApiServer }
+  /** Your access to a server changed (channels, roles, members, permissions): refetch it. */
+  | { op: 'server_update'; d: { serverId: string } }
+  /** You are no longer a member (left, kicked or banned). */
+  | { op: 'server_remove'; d: { serverId: string; reason: 'left' | 'kicked' | 'banned' } }
   /** channelId null = the user left voice. `streaming` is included when share state changed. */
   | {
       op: 'voice_state_update'

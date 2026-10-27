@@ -1,8 +1,10 @@
 import { buildApp } from './app.js'
+import { assertArgon2Available } from './auth/password.js'
 import { isLoopbackHost, loadConfig } from './config.js'
 import { seedIfEmpty } from './db/seed.js'
 import { createRepository } from './db/sqlite.js'
 
+assertArgon2Available()
 const config = loadConfig()
 const repo = createRepository(config.databaseUrl)
 await repo.migrate()
@@ -18,8 +20,19 @@ if (config.livekit) {
 }
 if (config.devAuth) {
   app.log.warn(
-    'DEV_AUTH is enabled: anyone who can reach this server can sign in as any username. Development only.'
+    'DEV_AUTH is enabled: anyone who can reach this server can sign in as any username that has no password (development identities). Password accounts are unaffected. Turn it off (DEV_AUTH=false) once everyone has claimed or created an account.'
   )
+}
+{
+  const report = await repo.integrityReport()
+  if (report.accounts === 0) {
+    app.log.warn(
+      'No password accounts yet. Create the first administrator locally: npm run admin -- create-admin --username <name> (Docker: docker compose exec server node dist/cli/admin.js create-admin --username <name>)'
+    )
+  }
+  if (report.legacyIdentities > 0) {
+    app.log.info({ legacyIdentities: report.legacyIdentities }, 'development identities waiting to be claimed (admin: legacy list)')
+  }
 }
 if (!isLoopbackHost(config.host)) {
   app.log.warn(

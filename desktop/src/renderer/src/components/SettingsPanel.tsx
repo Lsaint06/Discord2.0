@@ -19,12 +19,27 @@ import { CloseIcon } from './Icons'
 import { Field, Toggle } from './SettingsControls'
 import VoiceSettings from './VoiceSettings'
 import DiagnosticsPanel from './DiagnosticsPanel'
+import { AdminSection, DevicesSection, SecuritySection } from './manage/AccountSections'
+import type { ApiClient } from '../net/api'
+import type { ApiMe, ApiServer } from '../net/protocol'
 import EncoderSettings from './EncoderSettings'
 
-type SectionId = 'account' | 'appearance' | 'voice' | 'streaming' | 'notifications' | 'diagnostics'
+type SectionId =
+  | 'account'
+  | 'security'
+  | 'devices'
+  | 'admin'
+  | 'appearance'
+  | 'voice'
+  | 'streaming'
+  | 'notifications'
+  | 'diagnostics'
 
-const sections: { id: SectionId; label: string }[] = [
+const sections: { id: SectionId; label: string; adminOnly?: boolean }[] = [
   { id: 'account', label: 'My Account' },
+  { id: 'security', label: 'Security' },
+  { id: 'devices', label: 'Devices' },
+  { id: 'admin', label: 'Administration', adminOnly: true },
   { id: 'appearance', label: 'Appearance' },
   { id: 'voice', label: 'Voice & Audio' },
   { id: 'streaming', label: 'Screen Share' },
@@ -48,6 +63,11 @@ interface SettingsPanelProps {
   onChange: (patch: Partial<UserSettings>) => void
   onSaveDisplayName: (name: string) => Promise<string | null>
   onLogout: () => void
+  api: ApiClient
+  me: ApiMe | null
+  servers: ApiServer[]
+  /** Session already revoked on the server (sign out everywhere): just leave. */
+  onSignedOutEverywhere: () => void
   onToggleMute: () => void
   onToggleDeafen: () => void
   onClose: () => void
@@ -67,6 +87,10 @@ function SettingsPanel({
   onChange,
   onSaveDisplayName,
   onLogout,
+  api,
+  me,
+  servers,
+  onSignedOutEverywhere,
   onToggleMute,
   onToggleDeafen,
   onClose
@@ -101,16 +125,18 @@ function SettingsPanel({
       <nav className="settings-nav">
         <div className="settings-nav-inner">
           <h4>User Settings</h4>
-          {sections.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              className={`settings-nav-item${section === s.id ? ' active' : ''}`}
-              onClick={() => setSection(s.id)}
-            >
-              {s.label}
-            </button>
-          ))}
+          {sections
+            .filter((s) => !s.adminOnly || me?.instanceAdmin)
+            .map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`settings-nav-item${section === s.id ? ' active' : ''}`}
+                onClick={() => setSection(s.id)}
+              >
+                {s.label}
+              </button>
+            ))}
           <div className="settings-nav-separator" />
           <button
             type="button"
@@ -183,10 +209,12 @@ function SettingsPanel({
               </Field>
 
               <div className="dev-notice">
-                <strong>Development identity</strong>
+                <strong>{me?.hasPassword ? 'Account' : 'Development identity'}</strong>
                 <span>
-                  Signed in as <code>@{username}</code> on <code>{serverUrl}</code>. Dev identities
-                  have no password and are not secure authentication.
+                  Signed in as <code>@{username}</code> on <code>{serverUrl}</code>.{' '}
+                  {me?.hasPassword
+                    ? 'Password, recovery codes and devices are under Security and Devices.'
+                    : 'This identity has no password. See Security to claim it as a real account.'}
                 </span>
               </div>
 
@@ -385,6 +413,14 @@ function SettingsPanel({
 
           {section === 'diagnostics' && (
             <DiagnosticsPanel session={voiceSession} state={voiceState} userName={userName} />
+          )}
+
+          {section === 'security' && (
+            <SecuritySection api={api} me={me} onSignedOutEverywhere={onSignedOutEverywhere} />
+          )}
+          {section === 'devices' && <DevicesSection api={api} />}
+          {section === 'admin' && me?.instanceAdmin && (
+            <AdminSection api={api} servers={servers} meId={me?.id} />
           )}
 
           {section === 'notifications' && (
