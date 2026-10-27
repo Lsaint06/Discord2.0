@@ -12,6 +12,8 @@ import type {
   ApiMe,
   ApiMember,
   ApiMessage,
+  ApiPreferences,
+  ApiProfile,
   ApiReadState,
   ApiRegistrationInvite,
   ApiRolePermissions,
@@ -21,8 +23,27 @@ import type {
   ApiSession,
   ApiUser,
   ApiVoiceToken,
-  ConfigurableRole
+  ConfigurableRole,
+  ProfileImageKind,
+  SelectableStatus
 } from './protocol'
+
+export interface ProfilePatch {
+  displayName?: string
+  avatarColor?: string
+  bio?: string | null
+  pronouns?: string | null
+  accentColor?: string | null
+}
+
+export interface CustomStatusInput {
+  text: string | null
+  emoji: string | null
+  /** Relative, so client clock skew doesn't matter; null = until cleared. */
+  expiresInMs: number | null
+}
+
+export type PreferencesPatch = Partial<Omit<ApiPreferences, 'updatedAt'>>
 
 export type InviteInfo =
   | { kind: 'register'; serverName: string | null }
@@ -66,6 +87,8 @@ export interface ServerMeta {
   /** Milestone 7+: password accounts exist (registration by invitation). */
   accounts?: boolean
   registration?: 'invite'
+  /** Milestone 8+: profiles, presence preferences, profile images. */
+  profiles?: boolean
 }
 
 export interface SendMessageBody {
@@ -278,8 +301,84 @@ export class ApiClient {
     return this.request('GET', '/api/users')
   }
 
-  updateMe(patch: { displayName?: string; avatarColor?: string }): Promise<ApiMe> {
+  updateMe(patch: ProfilePatch): Promise<ApiMe> {
     return this.request('PATCH', '/api/users/me', patch)
+  }
+
+  // ---- Profiles, status and preferences (Milestone 8) ----
+
+  setStatus(body: {
+    status?: SelectableStatus
+    customStatus?: CustomStatusInput | null
+  }): Promise<ApiMe> {
+    return this.request('PUT', '/api/users/me/status', body)
+  }
+
+  profile(userId: string): Promise<ApiProfile> {
+    return this.request('GET', `/api/users/${encodeURIComponent(userId)}/profile`)
+  }
+
+  preferences(): Promise<ApiPreferences> {
+    return this.request('GET', '/api/users/me/preferences')
+  }
+
+  updatePreferences(patch: PreferencesPatch): Promise<ApiPreferences> {
+    return this.request('PATCH', '/api/users/me/preferences', patch)
+  }
+
+  /** Uploads a (cropped) profile picture or banner; the server re-encodes it. */
+  uploadProfileImage(
+    kind: ProfileImageKind,
+    image: Blob,
+    options: { onProgress?: (fraction: number) => void } = {}
+  ): Promise<ApiMe> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `${this.baseUrl}/api/users/me/${kind}`)
+      for (const [k, v] of Object.entries(this.authHeaders())) xhr.setRequestHeader(k, v)
+      xhr.responseType = 'json'
+      xhr.timeout = 60_000
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) options.onProgress?.(e.loaded / e.total)
+      }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) return resolve(xhr.response as ApiMe)
+        void errorFrom({ status: xhr.status, json: async () => xhr.response }).then(reject)
+      }
+      xhr.onerror = () => reject(new ApiError(0, 'network_error', 'Cannot reach the server.'))
+      xhr.ontimeout = () =>
+        reject(new ApiError(0, 'network_error', 'The upload took too long. Try again.'))
+      const form = new FormData()
+      form.append('file', image, `${kind}.webp`)
+      xhr.send(form)
+    })
+  }
+
+  removeProfileImage(kind: ProfileImageKind): Promise<ApiMe> {
+    return this.request('DELETE', `/api/users/me/${kind}`)
+  }
+
+  /** Instance administrators: remove someone's inappropriate picture or banner. */
+  adminRemoveProfileImage(userId: string, kind: ProfileImageKind): Promise<void> {
+    return this.request(
+      'DELETE',
+      `/api/admin/accounts/${encodeURIComponent(userId)}/profile-media/${kind}`
+    )
+  }
+
+  /** Profile pictures/banners are fetched with the session token (never public URLs). */
+  async fetchProfileMedia(mediaId: string, size: 'full' | 'small'): Promise<Blob> {
+    let res: Response
+    try {
+      res = await fetch(
+        `${this.baseUrl}/api/profile-media/${encodeURIComponent(mediaId)}?size=${size}`,
+        { headers: this.authHeaders(), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS * 2) }
+      )
+    } catch {
+      throw new ApiError(0, 'network_error', 'Cannot reach the server.')
+    }
+    if (!res.ok) throw await errorFrom(res)
+    return res.blob()
   }
 
   servers(): Promise<ApiServer[]> {

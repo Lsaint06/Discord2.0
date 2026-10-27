@@ -1,5 +1,9 @@
-import type { ReactNode } from 'react'
-import type { PresenceStatus } from '../types'
+import { useState, type ReactNode } from 'react'
+import type { PresenceStatus, SelectableStatus } from '../types'
+import type { ApiCustomStatus } from '../net/protocol'
+import { statusLabels } from '../lib/format'
+import StatusMenu from './profile/StatusMenu'
+import { CustomStatusText } from './profile/ProfileCard'
 import type { VoiceStatus } from '../media/voiceLogic'
 import type { ConnectionQualityLabel } from '../media/MediaSession'
 import type { ScreenShareState } from '../media/ScreenShareController'
@@ -33,8 +37,16 @@ export interface VoiceConnection {
 interface UserPanelProps {
   displayName: string
   avatarColor: string
+  avatarId?: string | null
+  /** Presence shown on your avatar (from your chosen status). */
   status: PresenceStatus
-  statusText: string
+  statusPreference: SelectableStatus
+  customStatus: ApiCustomStatus | null
+  onSetStatus: (status: SelectableStatus) => void
+  onEditCustomStatus: () => void
+  onClearCustomStatus: () => void
+  onViewProfile: () => void
+  onEditProfile: () => void
   muted: boolean
   deafened: boolean
   voice: VoiceConnection | null
@@ -75,8 +87,15 @@ const QUALITY_TITLE: Record<ConnectionQualityLabel, string> = {
 function UserPanel({
   displayName,
   avatarColor,
+  avatarId,
   status,
-  statusText,
+  statusPreference,
+  customStatus,
+  onSetStatus,
+  onEditCustomStatus,
+  onClearCustomStatus,
+  onViewProfile,
+  onEditProfile,
   muted,
   deafened,
   voice,
@@ -95,6 +114,7 @@ function UserPanel({
   onStartAudio,
   shareStatus
 }: UserPanelProps): React.JSX.Element {
+  const [menuOpen, setMenuOpen] = useState(false)
   const micOff = muted || deafened
   const failed = voice?.status === 'error' || voice?.status === 'disconnected'
   const share = voice?.screenShare
@@ -258,19 +278,47 @@ function UserPanel({
       )}
 
       <div className="user-panel">
-        <div className="user-panel-identity">
+        <button
+          type="button"
+          className={`user-panel-identity${menuOpen ? ' open' : ''}`}
+          onClick={() => setMenuOpen((v) => !v)}
+          // The menu closes on outside clicks; this button toggles it instead.
+          onMouseDown={(e) => e.stopPropagation()}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          title="Set status"
+        >
           <Avatar
             name={displayName}
             color={avatarColor}
+            imageId={avatarId}
             size={34}
             status={status}
             ringColor="var(--bg-panel)"
           />
-          <div className="user-panel-names">
+          <span className="user-panel-names">
             <span className="user-panel-name">{displayName}</span>
-            <span className="user-panel-status">{statusText}</span>
-          </div>
-        </div>
+            <span className="user-panel-status">
+              {customStatus ? (
+                <CustomStatusText status={customStatus} />
+              ) : (
+                statusLabels[statusPreference]
+              )}
+            </span>
+          </span>
+        </button>
+        {menuOpen && (
+          <StatusMenu
+            current={statusPreference}
+            customStatus={customStatus}
+            onSelect={onSetStatus}
+            onEditCustomStatus={onEditCustomStatus}
+            onClearCustomStatus={onClearCustomStatus}
+            onViewProfile={onViewProfile}
+            onEditProfile={onEditProfile}
+            onClose={() => setMenuOpen(false)}
+          />
+        )}
 
         <div className="user-panel-actions">
           <button

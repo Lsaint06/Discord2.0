@@ -6,13 +6,13 @@ A self-hosted, Discord-inspired chat app for friends: an **Electron + React + Ty
 | --- | --- |
 | [`desktop/`](desktop/) | Electron desktop client |
 | [`server/`](server/) | Backend API + real-time gateway + Docker Compose (backend + LiveKit) ([server README](server/README.md)) |
-| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md) and [remote access options](docs/remote-access-options.md) |
+| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md), [profiles & presence](docs/milestone-8-identity.md) and [remote access options](docs/remote-access-options.md) |
 
-**Status — Milestone 7 (Project Gateway: accounts and permissions):**
-- **Accounts:** invite-only registration, Argon2id passwords, recovery codes, revocable sessions with a device list, and an encrypted token store in the desktop app (Windows DPAPI via Electron `safeStorage`).
-- **Servers:** owner / administrator / moderator / member roles, per-channel permission overrides, invitations, kick and ban, and a security log. The backend enforces all of it — including LiveKit voice and streaming grants.
-- **Migration:** existing development identities keep their history; an administrator issues each friend a one-time claim code.
-- **Unchanged:** Messaging 2.0 (Milestone 6), screen sharing (Milestone 5), voice (Milestone 4).
+**Status — Milestone 8 (Project Identity: profiles, presence and personalization):**
+- **Profiles:** profile pictures and banners (cropped in the app, re-encoded and metadata-stripped on the server), display names, bios, pronouns, profile colors, member-since dates, profile popouts and a full profile view with mutual servers.
+- **Presence:** Online / Idle / Do Not Disturb / Invisible saved on your account, automatic idle detection, correct presence with several PCs signed in, and custom statuses with emoji and expiry — all live.
+- **Appearance:** dark, light or system theme, accent color, cozy/compact messages and reduced motion, synced between your PCs (font size stays per PC).
+- **Milestone 7 (unchanged):** invite-only accounts, Argon2id passwords, revocable sessions, roles and permissions, invitations and moderation. Messaging 2.0, screen sharing and voice are unchanged too.
 
 > ⚠️ Development sign-in (no password) stays available while the server runs with `DEV_AUTH=true`, so friends can migrate. Turn it off once everyone has an account, and keep the server on your trusted LAN. Details: [docs/milestone-7-security.md](docs/milestone-7-security.md); remote access is only proposed in [docs/remote-access-options.md](docs/remote-access-options.md).
 
@@ -88,6 +88,15 @@ With the two clients from the procedure above:
 - **Notifications:** Settings → Notifications (message preview is off by default). Mute a channel with the bell in its header.
 
 Architecture, limits, storage, backup/restore, rollback and the full two-PC checklist: [docs/messaging-2-jetson.md](docs/messaging-2-jetson.md).
+
+## Profiles, status and appearance (Milestone 8)
+
+- **Your profile:** click your name in the bottom-left → **Edit Profile** (or Settings → Profile). Upload a picture and banner (crop, then Apply), set pronouns, "About me" and a profile color, then **Save Changes**.
+- **Other people:** click an avatar or name in chat or the member list for a popout; **View Full Profile** shows mutual servers.
+- **Status:** click your name in the bottom-left: Online, Idle, Do Not Disturb (also mutes desktop notifications), Invisible, or **Set a custom status** with an emoji and "clear after".
+- **Appearance:** Settings → Appearance (theme, accent, message display, timestamps, animations, idle timeout) follows your account to every PC; the chat font size is per PC.
+
+Details, security, migration, deployment and the two-PC checklist: [docs/milestone-8-identity.md](docs/milestone-8-identity.md).
 
 ## Accounts, roles and invitations (Milestone 7)
 

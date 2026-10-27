@@ -22,6 +22,8 @@ export interface MessageActions {
   jump: (channelId: string, messageId: string) => void
   retry: (nonce: string) => void
   discard: (nonce: string) => void
+  /** Opens the profile popout of a user next to the clicked element. */
+  openProfile: (userId: string, anchor: DOMRect) => void
 }
 
 interface MessageItemProps {
@@ -120,6 +122,27 @@ function EditBox({
   )
 }
 
+function AuthorName({
+  author,
+  color,
+  actions
+}: {
+  author: User
+  color?: string
+  actions: MessageActions
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className="message-author"
+      style={{ color }}
+      onClick={(e) => actions.openProfile(author.id, e.currentTarget.getBoundingClientRect())}
+    >
+      {author.name}
+    </button>
+  )
+}
+
 function MessageItem(props: MessageItemProps): React.JSX.Element {
   const { message, author, actions, editing } = props
   const local = message.pending || Boolean(message.failed)
@@ -141,7 +164,12 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
       ) : (
         <>
           {props.replyAuthor && (
-            <Avatar name={props.replyAuthor.name} color={props.replyAuthor.avatarColor} size={16} />
+            <Avatar
+              name={props.replyAuthor.name}
+              color={props.replyAuthor.avatarColor}
+              imageId={props.replyAuthor.avatarId}
+              size={16}
+            />
           )}
           <span className="reply-author">{props.replyAuthor?.name ?? 'Unknown'}</span>
           <span className="reply-content">
@@ -295,9 +323,7 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
               {formatTime(message.timestamp)}
             </time>
           )}
-          <span className="message-author" style={{ color: props.nameColor }}>
-            {author.name}
-          </span>
+          <AuthorName author={author} color={props.nameColor} actions={actions} />
           {author.bot && <span className="bot-tag">BOT</span>}
           <div className="message-compact-body">{content}</div>
         </div>
@@ -328,12 +354,23 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
     <article className={className} data-message-id={message.id} onContextMenu={onContextMenu}>
       {reply}
       <div className="message-main">
-        <Avatar name={author.name} color={author.avatarColor} size={40} />
+        <button
+          type="button"
+          className="message-avatar-button"
+          onClick={(e) => actions.openProfile(author.id, e.currentTarget.getBoundingClientRect())}
+          aria-label={`View ${author.name}’s profile`}
+          tabIndex={-1}
+        >
+          <Avatar
+            name={author.name}
+            color={author.avatarColor}
+            imageId={author.avatarId}
+            size={40}
+          />
+        </button>
         <div className="message-body">
           <div className="message-meta">
-            <span className="message-author" style={{ color: props.nameColor }}>
-              {author.name}
-            </span>
+            <AuthorName author={author} color={props.nameColor} actions={actions} />
             {author.bot && <span className="bot-tag">BOT</span>}
             {props.showTimestamps && (
               <time className="message-time" title={new Date(message.timestamp).toLocaleString()}>

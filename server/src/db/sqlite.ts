@@ -18,6 +18,9 @@ import type {
   NewMessage,
   PasswordResetRecord,
   PinRecord,
+  ProfileMediaRecord,
+  ProfilePatch,
+  CustomStatusRecord,
   ReactionSummary,
   ReadStateRecord,
   RegistrationInviteRecord,
@@ -30,7 +33,7 @@ import type {
   SessionRecord,
   UserRecord
 } from './repository.js'
-import type { ConfigurableRole, ServerRole } from '../protocol.js'
+import type { ConfigurableRole, ProfileImageKind, SelectableStatus, ServerRole } from '../protocol.js'
 import type { Override } from '../lib/permissions.js'
 import { RepositoryConflict } from './repository.js'
 
@@ -48,7 +51,34 @@ function toUser(r: Row): UserRecord {
     bot: num(r.is_bot) === 1,
     createdAt: num(r.created_at),
     instanceAdmin: num(r.instance_admin ?? 0) === 1,
-    disabledAt: r.disabled_at == null ? null : num(r.disabled_at)
+    disabledAt: r.disabled_at == null ? null : num(r.disabled_at),
+    bio: nullableStr(r.bio),
+    pronouns: nullableStr(r.pronouns),
+    accentColor: nullableStr(r.accent_color),
+    avatarId: nullableStr(r.avatar_id),
+    bannerId: nullableStr(r.banner_id),
+    statusPreference: toSelectableStatus(r.status_preference),
+    customStatusText: nullableStr(r.custom_status_text),
+    customStatusEmoji: nullableStr(r.custom_status_emoji),
+    customStatusExpiresAt: nullableNum(r.custom_status_expires_at)
+  }
+}
+
+const SELECTABLE_STATUSES: readonly SelectableStatus[] = ['online', 'idle', 'dnd', 'invisible']
+function toSelectableStatus(v: unknown): SelectableStatus {
+  return SELECTABLE_STATUSES.includes(v as SelectableStatus) ? (v as SelectableStatus) : 'online'
+}
+
+function toProfileMedia(r: Row): ProfileMediaRecord {
+  return {
+    id: str(r.id),
+    userId: str(r.user_id),
+    kind: str(r.kind) === 'banner' ? 'banner' : 'avatar',
+    width: num(r.width),
+    height: num(r.height),
+    size: num(r.size),
+    sha256: str(r.sha256),
+    createdAt: num(r.created_at)
   }
 }
 
@@ -292,14 +322,136 @@ export class SqliteRepository implements Repository {
     )
   }
 
-  async updateUser(id: string, patch: Partial<Pick<UserRecord, 'displayName' | 'avatarColor'>>) {
-    if (patch.displayName !== undefined) {
-      this.run('UPDATE users SET display_name = ? WHERE id = ?', patch.displayName, id)
-    }
-    if (patch.avatarColor !== undefined) {
-      this.run('UPDATE users SET avatar_color = ? WHERE id = ?', patch.avatarColor, id)
+  async updateUser(id: string, patch: ProfilePatch) {
+    const columns: [string, SQLInputValue][] = []
+    if (patch.displayName !== undefined) columns.push(['display_name', patch.displayName])
+    if (patch.avatarColor !== undefined) columns.push(['avatar_color', patch.avatarColor])
+    if (patch.bio !== undefined) columns.push(['bio', patch.bio])
+    if (patch.pronouns !== undefined) columns.push(['pronouns', patch.pronouns])
+    if (patch.accentColor !== undefined) columns.push(['accent_color', patch.accentColor])
+    if (columns.length > 0) {
+      // Column names come from the fixed list above, never from input; values are bound.
+      this.run(
+        `UPDATE users SET ${columns.map(([c]) => `${c} = ?`).join(', ')} WHERE id = ?`,
+        ...columns.map(([, v]) => v),
+        id
+      )
     }
     return this.getUser(id)
+  }
+
+  // ---- Profiles, presence, preferences (Milestone 8) ----
+
+  async setStatusPreference(userId: string, status: SelectableStatus) {
+    this.run('UPDATE users SET status_preference = ? WHERE id = ?', status, userId)
+    return this.getUser(userId)
+  }
+
+  async setCustomStatus(userId: string, status: CustomStatusRecord | null) {
+    this.run(
+      'UPDATE users SET custom_status_text = ?, custom_status_emoji = ?, custom_status_expires_at = ? WHERE id = ?',
+      status?.text ?? null,
+      status?.emoji ?? null,
+      status?.expiresAt ?? null,
+      userId
+    )
+    return this.getUser(userId)
+  }
+
+  async clearExpiredCustomStatuses(now: number) {
+    const ids = this.all(
+      'SELECT id FROM users WHERE custom_status_expires_at IS NOT NULL AND custom_status_expires_at <= ?',
+      now
+    ).map((r) => str(r.id))
+    if (ids.length > 0) {
+      this.run(
+        `UPDATE users SET custom_status_text = NULL, custom_status_emoji = NULL, custom_status_expires_at = NULL
+         WHERE custom_status_expires_at IS NOT NULL AND custom_status_expires_at <= ?`,
+        now
+      )
+    }
+    return ids
+  }
+
+  async replaceProfileMedia(userId: string, kind: ProfileImageKind, media: ProfileMediaRecord | null) {
+    const column = kind === 'avatar' ? 'avatar_id' : 'banner_id'
+    let previousId: string | null = null
+    this.transaction(() => {
+      const row = this.get(`SELECT ${column} AS current FROM users WHERE id = ?`, userId)
+      if (!row) throw new RepositoryConflict('user_not_found')
+      previousId = nullableStr(row.current)
+      if (media) {
+        this.run(
+          'INSERT INTO profile_media (id, user_id, kind, width, height, size, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          media.id,
+          userId,
+          kind,
+          media.width,
+          media.height,
+          media.size,
+          media.sha256,
+          media.createdAt
+        )
+      }
+      this.run(`UPDATE users SET ${column} = ? WHERE id = ?`, media?.id ?? null, userId)
+      if (previousId) this.run('DELETE FROM profile_media WHERE id = ?', previousId)
+    })
+    return { previousId, user: await this.getUser(userId) }
+  }
+
+  async getProfileMedia(id: string) {
+    const r = this.get('SELECT * FROM profile_media WHERE id = ?', id)
+    return r && toProfileMedia(r)
+  }
+
+  async listProfileMediaIds() {
+    return new Set(this.all('SELECT id FROM profile_media').map((r) => str(r.id)))
+  }
+
+  async isUserVisibleTo(viewerId: string, userId: string) {
+    const r = this.get(
+      `SELECT 1 AS ok FROM users u
+       WHERE u.id = ? AND (
+         u.is_bot = 1 OR u.id = ?
+         OR EXISTS (SELECT 1 FROM server_members a JOIN server_members b ON a.server_id = b.server_id
+                    WHERE a.user_id = ? AND b.user_id = u.id)
+         OR EXISTS (SELECT 1 FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN server_members sm ON sm.server_id = c.server_id AND sm.user_id = ?
+                    WHERE m.author_id = u.id))`,
+      userId,
+      viewerId,
+      viewerId,
+      viewerId
+    )
+    return Boolean(r)
+  }
+
+  async mutualServerIds(userA: string, userB: string) {
+    return this.all(
+      `SELECT a.server_id FROM server_members a
+       JOIN server_members b ON b.server_id = a.server_id AND b.user_id = ?
+       JOIN servers s ON s.id = a.server_id
+       WHERE a.user_id = ?
+       ORDER BY s.position, s.created_at`,
+      userB,
+      userA
+    ).map((r) => str(r.server_id))
+  }
+
+  async getPreferences(userId: string) {
+    const r = this.get('SELECT data, updated_at FROM user_preferences WHERE user_id = ?', userId)
+    return r ? { data: str(r.data), updatedAt: num(r.updated_at) } : undefined
+  }
+
+  async savePreferences(userId: string, data: string, now: number) {
+    this.run(
+      `INSERT INTO user_preferences (user_id, data, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+      userId,
+      data,
+      now
+    )
   }
 
   // ---- Accounts ----

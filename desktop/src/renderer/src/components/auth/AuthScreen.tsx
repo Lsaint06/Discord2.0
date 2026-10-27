@@ -133,7 +133,9 @@ function AuthScreen({ serverUrl, notice, onAuthenticated }: AuthScreenProps): Re
     }
   }
 
-  const accountsSupported = check.state === 'ok' && check.meta.accounts === true
+  // Milestone 8 needs profile/presence support on the server too.
+  const accountsSupported =
+    check.state === 'ok' && check.meta.accounts === true && check.meta.profiles === true
   const devAllowed = check.state === 'ok' && check.meta.devAuth
   const passwordsMatch = password === confirm
   const longEnough = [...password].length >= LIMITS.passwordMinLength
@@ -284,7 +286,7 @@ function AuthScreen({ serverUrl, notice, onAuthenticated }: AuthScreenProps): Re
         )}
         {check.state === 'ok' && !accountsSupported && (
           <p className="form-error">
-            This server is older than the app (no account support). Update the backend.
+            This server is older than the app. Update the backend to use this version.
           </p>
         )}
 

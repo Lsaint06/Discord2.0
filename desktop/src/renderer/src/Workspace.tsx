@@ -1,7 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Channel, ChannelCategory, Message, Server, User, UserSettings } from './types'
-import { presenceFromSetting, statusLabels } from './lib/format'
-import { loadSettings, saveSettings } from './net/session'
+import type {
+  Channel,
+  ChannelCategory,
+  Message,
+  SelectableStatus,
+  Server,
+  User,
+  UserSettings
+} from './types'
+import { presenceFromSetting } from './lib/format'
+import {
+  clearLegacyAppearance,
+  loadSettings,
+  readLegacyAppearance,
+  saveSettings
+} from './net/session'
+import { legacyAppearanceFrom } from './lib/appearance'
+import { ProfileMediaContext } from './lib/profileMedia'
+import { DEFAULT_ACCENT } from './data/defaults'
+import { useAppearance } from './hooks/useAppearance'
+import { useIdleDetection } from './hooks/useIdleDetection'
 import type { ApiMember, ApiServer, ApiUser, ServerRole } from './net/protocol'
 import { Permissions } from './net/protocol'
 import { ROLE_COLORS, ROLE_LABELS, hasPermission } from './lib/permissions'
@@ -16,7 +34,10 @@ import ChannelSidebar, { type VoiceUserDetails } from './components/ChannelSideb
 import ChatPanel, { type JumpTarget } from './components/ChatPanel'
 import MemberList from './components/MemberList'
 import UserPanel, { type VoiceConnection } from './components/UserPanel'
-import SettingsPanel from './components/SettingsPanel'
+import SettingsPanel, { type SectionId } from './components/SettingsPanel'
+import ProfilePopout from './components/profile/ProfilePopout'
+import ProfileModal from './components/profile/ProfileModal'
+import CustomStatusModal from './components/profile/CustomStatusModal'
 import CreateServerModal from './components/CreateServerModal'
 import ServerSettingsModal from './components/manage/ServerSettingsModal'
 import { InviteModal } from './components/manage/InviteModal'
@@ -100,6 +121,11 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   const [deafened, setDeafened] = useState(false)
   const [showMembers, setShowMembers] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSection, setSettingsSection] = useState<SectionId>('account')
+  const [popout, setPopout] = useState<{ userId: string; anchor: DOMRect } | null>(null)
+  const [profileFor, setProfileFor] = useState<string | null>(null)
+  const [customStatusOpen, setCustomStatusOpen] = useState(false)
+  const popoutClosedRef = useRef<{ userId: string; at: number } | null>(null)
   const [createServerOpen, setCreateServerOpen] = useState(false)
   const [serverSettingsFor, setServerSettingsFor] = useState<string | null>(null)
   const [inviteFor, setInviteFor] = useState<string | null>(null)
@@ -125,7 +151,6 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     []
   )
   const backend = useBackend(session, {
-    initialStatus: settings.status,
     onSessionInvalid: handleSessionInvalid,
     onIncomingMessage,
     onServerRemoved
@@ -134,6 +159,41 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   useEffect(() => {
     saveSettings(settings)
   }, [settings])
+
+  // ---- Appearance (synced preferences + this device's font size) and automatic idle ----
+  useAppearance(backend.preferences, settings.fontSize)
+  useIdleDetection(backend.preferences.idleTimeoutMinutes, backend.setIdle)
+
+  // One-time: copy pre-Milestone-8 local appearance/status settings to the account.
+  const legacySeededRef = useRef(false)
+  const { preferencesLoaded, preferences, me: meForSeed } = backend
+  useEffect(() => {
+    if (legacySeededRef.current || !preferencesLoaded || !meForSeed) return
+    legacySeededRef.current = true
+    const legacy = legacyAppearanceFrom(readLegacyAppearance(), DEFAULT_ACCENT)
+    if (!legacy || preferences.updatedAt !== null) {
+      // Nothing to copy, or this account already has preferences (e.g. set on another PC).
+      clearLegacyAppearance()
+      return
+    }
+    const tasks: Promise<string | null>[] = []
+    if (Object.keys(legacy.preferences).length > 0) {
+      tasks.push(backend.updatePreferences(legacy.preferences))
+    }
+    if (legacy.status && meForSeed.statusPreference === 'online') {
+      tasks.push(backend.setPresence(legacy.status))
+    }
+    if (legacy.customStatus && !meForSeed.ownCustomStatus) {
+      tasks.push(
+        backend.setCustomStatus({ text: legacy.customStatus, emoji: null, expiresInMs: null })
+      )
+    }
+    void Promise.all(tasks).then((errors) => {
+      if (errors.every((e) => e === null)) clearLegacyAppearance()
+    })
+    // Runs once per sign-in when preferences first arrive.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferencesLoaded, meForSeed])
 
   // ---- Voice ----
   const voice = useVoice({ fetchToken: backend.fetchVoiceToken, settings })
@@ -170,25 +230,54 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
 
   const selfId = backend.me?.id ?? ''
   const displayName = backend.me?.displayName ?? session.username
-  const selfStatus = presenceFromSetting(settings.status)
+  const statusPreference: SelectableStatus = backend.me?.statusPreference ?? 'online'
+  const selfCustomStatus = backend.me?.ownCustomStatus ?? null
+  const selfStatus = presenceFromSetting(statusPreference)
 
   const resolveUser = useCallback(
     (id: string): User => {
       const u: ApiUser | undefined = backend.users[id]
-      if (!u) return { id, name: 'Unknown User', avatarColor: '#5c5f66', status: 'offline' }
+      if (!u) {
+        return { id, name: 'Unknown User', username: '', avatarColor: '#5c5f66', status: 'offline' }
+      }
       const isSelf = id === selfId
       return {
         id: u.id,
         name: u.displayName,
+        username: u.username,
         avatarColor: u.avatarColor,
         bot: u.bot,
-        // Our own presence is shown from local settings so it updates instantly.
+        // You see your own chosen status (others see 'offline' while you are invisible).
         status: isSelf ? selfStatus : u.status,
-        activity: isSelf ? settings.customStatus || undefined : undefined
+        avatarId: u.avatarId,
+        bannerId: u.bannerId,
+        accentColor: u.accentColor,
+        bio: u.bio,
+        pronouns: u.pronouns,
+        createdAt: u.createdAt,
+        customStatus: isSelf ? selfCustomStatus : u.customStatus
       }
     },
-    [backend.users, selfId, selfStatus, settings.customStatus]
+    [backend.users, selfId, selfStatus, selfCustomStatus]
   )
+
+  // ---- Profiles ----
+  const openProfile = useCallback((userId: string, anchor: DOMRect) => {
+    // A click on the same person right after the popout closed (outside click) just closes it.
+    const closed = popoutClosedRef.current
+    if (closed && closed.userId === userId && Date.now() - closed.at < 300) return
+    setPopout({ userId, anchor })
+  }, [])
+  const closePopout = useCallback(() => {
+    setPopout((current) => {
+      if (current) popoutClosedRef.current = { userId: current.userId, at: Date.now() }
+      return null
+    })
+  }, [])
+  const openSettings = useCallback((section: SectionId = 'account') => {
+    setSettingsSection(section)
+    setSettingsOpen(true)
+  }, [])
 
   const servers = useMemo(() => {
     const userIds = Object.keys(backend.users)
@@ -398,7 +487,8 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
         typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
       if (
         !shouldNotify(m, {
-          enabled: settings.desktopNotifications,
+          // Do Not Disturb silences desktop notifications.
+          enabled: settings.desktopNotifications && statusPreference !== 'dnd',
           permission,
           meId: backend.me?.id,
           mutedChannels: settings.mutedChannels,
@@ -533,15 +623,27 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [notice])
 
-  const { setPresence } = backend
-  const updateSettings = useCallback(
-    (patch: Partial<UserSettings>) => {
-      setSettings((prev) => ({ ...prev, ...patch }))
-      if (patch.status) setPresence(patch.status)
+  const updateSettings = useCallback((patch: Partial<UserSettings>) => {
+    setSettings((prev) => ({ ...prev, ...patch }))
+  }, [])
+  const setStatus = useCallback(
+    (status: SelectableStatus) => {
+      void backend.setPresence(status).then((error) => {
+        if (error) setNotice(`Couldn’t change your status: ${error}`)
+      })
     },
-    [setPresence]
+    [backend]
   )
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const closeProfileModal = useCallback(() => setProfileFor(null), [])
+  const closeCustomStatus = useCallback(() => setCustomStatusOpen(false), [])
+  /** A member's role in the server on screen (for profile cards). */
+  const roleOf = (userId: string): { label: string; color?: string } | undefined => {
+    const role = activeServer
+      ? backend.members[activeServer.id]?.find((m) => m.userId === userId)?.role
+      : undefined
+    return role ? { label: ROLE_LABELS[role], color: ROLE_COLORS[role] } : undefined
+  }
   const closeCreateServer = useCallback(() => setCreateServerOpen(false), [])
   const closeServerSettings = useCallback(() => setServerSettingsFor(null), [])
   const closeInvite = useCallback(() => setInviteFor(null), [])
@@ -553,14 +655,9 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     if (serverSettingsFor) loadServerMembers(serverSettingsFor)
   }, [serverSettingsFor, loadServerMembers])
 
-  const appStyle = {
-    '--accent': settings.accentColor,
-    '--chat-font-size': `${settings.fontSize}px`
-  } as React.CSSProperties
-
   if (backend.phase !== 'ready' || !activeServer) {
     return (
-      <div className="app splash" style={appStyle}>
+      <div className="app splash">
         <div className="splash-card">
           {backend.phase === 'error' ? (
             <>
@@ -615,231 +712,295 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   const channelState = activeChannel ? backend.channels[activeChannel.id] : undefined
 
   return (
-    <div className="app" style={appStyle}>
-      <ServerSidebar
-        servers={servers}
-        activeServerId={activeServer.id}
-        unreadServerIds={unreadServerIds}
-        onSelectServer={selectServer}
-        onAddServer={() => setCreateServerOpen(true)}
-      />
+    <ProfileMediaContext.Provider value={backend.profileMedia}>
+      <div className="app">
+        <ServerSidebar
+          servers={servers}
+          activeServerId={activeServer.id}
+          unreadServerIds={unreadServerIds}
+          onSelectServer={selectServer}
+          onAddServer={() => setCreateServerOpen(true)}
+        />
 
-      <ChannelSidebar
-        server={activeServer}
-        activeChannelId={activeChannel?.id ?? ''}
-        unreadChannelIds={backend.unread}
-        unreadCounts={unreadCounts}
-        voiceChannelId={voiceChannelId}
-        selfId={selfId}
-        resolveUser={resolveUser}
-        voiceMembers={voiceMembers}
-        voiceDetails={voiceDetails}
-        getUserVolume={(userId) => settings.userVolumes[userId] ?? 100}
-        onUserVolumeChange={(userId, volume) =>
-          updateSettings({ userVolumes: { ...settings.userVolumes, [userId]: volume } })
-        }
-        isStreaming={isStreaming}
-        watchingId={watching}
-        onWatch={watchStream}
-        getStreamVolume={(userId) => settings.streamVolumes[userId] ?? 100}
-        onStreamVolumeChange={(userId, volume) =>
-          updateSettings({ streamVolumes: { ...settings.streamVolumes, [userId]: volume } })
-        }
-        onSelectChannel={selectChannel}
-        serverActions={serverActions(activeServer)}
-        footer={
-          <UserPanel
-            displayName={displayName}
-            avatarColor={backend.me?.avatarColor ?? settings.accentColor}
-            status={selfStatus}
-            statusText={settings.customStatus || statusLabels[settings.status]}
-            muted={muted}
-            deafened={deafened}
-            voice={voiceConnection}
-            onToggleMute={toggleMute}
-            onToggleDeafen={toggleDeafen}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onDisconnect={() => void voice.session.leave()}
-            onRetryVoice={() => voice.session.retry()}
-            onOpenMicSettings={
-              window.d2 ? () => void window.d2?.media.openMicrophoneSettings() : undefined
-            }
-            onShareScreen={() => {
-              voice.session.dismissScreenShareMessage()
-              if (!canStream) {
-                setNotice('You don’t have permission to stream in this channel.')
-                return
+        <ChannelSidebar
+          server={activeServer}
+          activeChannelId={activeChannel?.id ?? ''}
+          unreadChannelIds={backend.unread}
+          unreadCounts={unreadCounts}
+          voiceChannelId={voiceChannelId}
+          selfId={selfId}
+          resolveUser={resolveUser}
+          voiceMembers={voiceMembers}
+          voiceDetails={voiceDetails}
+          getUserVolume={(userId) => settings.userVolumes[userId] ?? 100}
+          onUserVolumeChange={(userId, volume) =>
+            updateSettings({ userVolumes: { ...settings.userVolumes, [userId]: volume } })
+          }
+          isStreaming={isStreaming}
+          watchingId={watching}
+          onWatch={watchStream}
+          getStreamVolume={(userId) => settings.streamVolumes[userId] ?? 100}
+          onStreamVolumeChange={(userId, volume) =>
+            updateSettings({ streamVolumes: { ...settings.streamVolumes, [userId]: volume } })
+          }
+          onSelectChannel={selectChannel}
+          serverActions={serverActions(activeServer)}
+          footer={
+            <UserPanel
+              displayName={displayName}
+              avatarColor={backend.me?.avatarColor ?? DEFAULT_ACCENT}
+              avatarId={backend.me?.avatarId}
+              status={selfStatus}
+              statusPreference={statusPreference}
+              customStatus={selfCustomStatus}
+              onSetStatus={setStatus}
+              onEditCustomStatus={() => setCustomStatusOpen(true)}
+              onClearCustomStatus={() => void backend.setCustomStatus(null)}
+              onViewProfile={() => setProfileFor(selfId)}
+              onEditProfile={() => openSettings('profile')}
+              muted={muted}
+              deafened={deafened}
+              voice={voiceConnection}
+              onToggleMute={toggleMute}
+              onToggleDeafen={toggleDeafen}
+              onOpenSettings={() => openSettings('account')}
+              onDisconnect={() => void voice.session.leave()}
+              onRetryVoice={() => voice.session.retry()}
+              onOpenMicSettings={
+                window.d2 ? () => void window.d2?.media.openMicrophoneSettings() : undefined
               }
-              setPickerOpen(true)
-            }}
-            onStopShare={() => void voice.session.stopScreenShare()}
-            onPreviewShare={() => {
-              setViewerMode('focus')
-              voice.session.watch(selfId)
-            }}
-            onChangeShareProfile={(profileId) => {
-              updateSettings({ screenShareProfile: profileId })
-              void voice.session.setScreenShareProfile(profileId)
-            }}
-            onDismissShareMessage={() => voice.session.dismissScreenShareMessage()}
-            onDismissDeviceNotice={() => voice.session.dismissDeviceNotice()}
-            onStartAudio={() => void voice.session.startAudio()}
-            shareStatus={
-              voice.state.screenShare.options ? (
-                <ShareHealthNote
-                  session={voice.session}
-                  profileId={voice.state.screenShare.options.profileId}
-                />
-              ) : undefined
-            }
-          />
-        }
-      />
-
-      {watching && (
-        // One viewer instance for both modes, so switching focus/mini never remounts the video.
-        <main className={viewerMode === 'focus' ? 'chat-panel stream-main' : 'stream-slot-mini'}>
-          <StreamViewer
-            session={voice.session}
-            identity={watching}
-            isSelf={watchingSelf}
-            sharerName={resolveUser(watching).name}
-            channelName={voiceNames?.channelName ?? ''}
-            live={watchedLive}
-            streamRevision={voice.state.streamRevision}
-            mode={viewerMode}
-            quality={voice.state.connectionQuality}
-            volume={
-              !watchingSelf && watchedParticipant?.sharingAudio
-                ? (settings.streamVolumes[watching] ?? 100)
-                : null
-            }
-            defaultShowStats={settings.showStreamStats}
-            onVolumeChange={(volume) =>
-              updateSettings({ streamVolumes: { ...settings.streamVolumes, [watching]: volume } })
-            }
-            onModeChange={setViewerMode}
-            onStopWatching={stopWatching}
-          />
-        </main>
-      )}
-
-      {watching && viewerMode === 'focus' ? null : activeChannel ? (
-        <ChatPanel
-          channel={activeChannel}
-          serverId={activeServer.id}
-          state={channelState}
-          readState={backend.readStates[activeChannel.id]}
-          meId={selfId}
-          banner={
-            <ConnectionBanner
-              status={backend.gateway.status}
-              retryInMs={backend.gateway.retryInMs}
+              onShareScreen={() => {
+                voice.session.dismissScreenShareMessage()
+                if (!canStream) {
+                  setNotice('You don’t have permission to stream in this channel.')
+                  return
+                }
+                setPickerOpen(true)
+              }}
+              onStopShare={() => void voice.session.stopScreenShare()}
+              onPreviewShare={() => {
+                setViewerMode('focus')
+                voice.session.watch(selfId)
+              }}
+              onChangeShareProfile={(profileId) => {
+                updateSettings({ screenShareProfile: profileId })
+                void voice.session.setScreenShareProfile(profileId)
+              }}
+              onDismissShareMessage={() => voice.session.dismissScreenShareMessage()}
+              onDismissDeviceNotice={() => voice.session.dismissDeviceNotice()}
+              onStartAudio={() => void voice.session.startAudio()}
+              shareStatus={
+                voice.state.screenShare.options ? (
+                  <ShareHealthNote
+                    session={voice.session}
+                    profileId={voice.state.screenShare.options.profileId}
+                  />
+                ) : undefined
+              }
             />
           }
-          selfName={displayName}
-          showMembers={showMembers}
-          compactMode={settings.compactMode}
-          showTimestamps={settings.showTimestamps}
-          notificationsMuted={Boolean(settings.mutedChannels[activeChannel.id])}
-          pinsRevision={backend.pinsRevision[activeChannel.id] ?? 0}
-          recentEmoji={settings.recentEmoji}
-          jumpTarget={jumpTarget}
-          users={userList}
-          backend={backend}
-          resolveUser={resolveUser}
-          roleColor={roleColor}
-          channelName={channelName}
-          onToggleMembers={() => setShowMembers((v) => !v)}
-          onToggleNotificationsMuted={() => toggleChannelMute(activeChannel.id)}
-          onEmojiUsed={useEmoji}
-          onJumpTo={jumpTo}
         />
-      ) : (
-        <main className="chat-panel empty-state">This server has no text channels yet.</main>
-      )}
 
-      {showMembers && activeChannel && !(watching && viewerMode === 'focus') && (
-        <MemberList server={activeServer} resolveUser={resolveUser} />
-      )}
+        {watching && (
+          // One viewer instance for both modes, so switching focus/mini never remounts the video.
+          <main className={viewerMode === 'focus' ? 'chat-panel stream-main' : 'stream-slot-mini'}>
+            <StreamViewer
+              session={voice.session}
+              identity={watching}
+              isSelf={watchingSelf}
+              sharerName={resolveUser(watching).name}
+              channelName={voiceNames?.channelName ?? ''}
+              live={watchedLive}
+              streamRevision={voice.state.streamRevision}
+              mode={viewerMode}
+              quality={voice.state.connectionQuality}
+              volume={
+                !watchingSelf && watchedParticipant?.sharingAudio
+                  ? (settings.streamVolumes[watching] ?? 100)
+                  : null
+              }
+              defaultShowStats={settings.showStreamStats}
+              onVolumeChange={(volume) =>
+                updateSettings({ streamVolumes: { ...settings.streamVolumes, [watching]: volume } })
+              }
+              onModeChange={setViewerMode}
+              onStopWatching={stopWatching}
+            />
+          </main>
+        )}
 
-      {pickerOpen && (
-        <ScreenSharePicker initial={shareDefaults} onGoLive={goLive} onClose={closePicker} />
-      )}
+        {watching && viewerMode === 'focus' ? null : activeChannel ? (
+          <ChatPanel
+            channel={activeChannel}
+            serverId={activeServer.id}
+            state={channelState}
+            readState={backend.readStates[activeChannel.id]}
+            meId={selfId}
+            banner={
+              <ConnectionBanner
+                status={backend.gateway.status}
+                retryInMs={backend.gateway.retryInMs}
+              />
+            }
+            selfName={displayName}
+            showMembers={showMembers}
+            compactMode={backend.preferences.density === 'compact'}
+            showTimestamps={backend.preferences.showTimestamps}
+            notificationsMuted={Boolean(settings.mutedChannels[activeChannel.id])}
+            pinsRevision={backend.pinsRevision[activeChannel.id] ?? 0}
+            recentEmoji={settings.recentEmoji}
+            jumpTarget={jumpTarget}
+            users={userList}
+            backend={backend}
+            resolveUser={resolveUser}
+            roleColor={roleColor}
+            channelName={channelName}
+            onToggleMembers={() => setShowMembers((v) => !v)}
+            onToggleNotificationsMuted={() => toggleChannelMute(activeChannel.id)}
+            onEmojiUsed={useEmoji}
+            onJumpTo={jumpTo}
+            onOpenProfile={openProfile}
+          />
+        ) : (
+          <main className="chat-panel empty-state">This server has no text channels yet.</main>
+        )}
 
-      {settingsOpen && (
-        <SettingsPanel
-          settings={settings}
-          voiceSession={voice.session}
-          voiceState={voice.state}
-          userName={(id) => resolveUser(id).name}
-          displayName={displayName}
-          username={backend.me?.username ?? session.username}
-          avatarColor={backend.me?.avatarColor ?? settings.accentColor}
-          serverUrl={session.httpUrl}
-          muted={muted}
-          deafened={deafened}
-          onChange={updateSettings}
-          onSaveDisplayName={backend.updateDisplayName}
-          onLogout={signOut}
-          api={backend.api}
-          me={backend.me}
-          servers={backend.servers}
-          onSignedOutEverywhere={() => {
-            void voice.session.leave()
-            onSignOut('You signed out on all devices.')
-          }}
-          onToggleMute={toggleMute}
-          onToggleDeafen={toggleDeafen}
-          onClose={closeSettings}
-        />
-      )}
+        {showMembers && activeChannel && !(watching && viewerMode === 'focus') && (
+          <MemberList server={activeServer} resolveUser={resolveUser} onOpenProfile={openProfile} />
+        )}
 
-      {createServerOpen && (
-        <CreateServerModal
-          onCreate={createServer}
-          api={backend.api}
-          onJoined={joinedServer}
-          onClose={closeCreateServer}
-        />
-      )}
+        {pickerOpen && (
+          <ScreenSharePicker initial={shareDefaults} onGoLive={goLive} onClose={closePicker} />
+        )}
 
-      {serverSettingsFor && serverForSettings && (
-        <ServerSettingsModal
-          api={backend.api}
-          server={serverForSettings}
-          meId={selfId}
-          members={backend.members[serverForSettings.id]}
-          revision={backend.serversRevision}
-          resolveUser={resolveUser}
-          onInvite={() => setInviteFor(serverForSettings.id)}
-          onClose={closeServerSettings}
-        />
-      )}
+        {settingsOpen && (
+          <SettingsPanel
+            settings={settings}
+            voiceSession={voice.session}
+            voiceState={voice.state}
+            userName={(id) => resolveUser(id).name}
+            username={backend.me?.username ?? session.username}
+            serverUrl={session.httpUrl}
+            muted={muted}
+            deafened={deafened}
+            initialSection={settingsSection}
+            onChange={updateSettings}
+            preferences={backend.preferences}
+            preferencesLoaded={backend.preferencesLoaded}
+            onPreferencesChange={backend.updatePreferences}
+            onProfileSave={backend.updateProfile}
+            onProfileImageUpload={backend.uploadProfileImage}
+            onProfileImageRemove={backend.removeProfileImage}
+            onSetStatus={setStatus}
+            onEditCustomStatus={() => setCustomStatusOpen(true)}
+            onLogout={signOut}
+            api={backend.api}
+            me={backend.me}
+            servers={backend.servers}
+            onSignedOutEverywhere={() => {
+              void voice.session.leave()
+              onSignOut('You signed out on all devices.')
+            }}
+            onToggleMute={toggleMute}
+            onToggleDeafen={toggleDeafen}
+            onClose={closeSettings}
+          />
+        )}
 
-      {inviteFor && (
-        <InviteModal
-          api={backend.api}
-          serverId={inviteFor}
-          serverName={backend.servers.find((s) => s.id === inviteFor)?.name ?? 'this server'}
-          onClose={closeInvite}
-        />
-      )}
+        {createServerOpen && (
+          <CreateServerModal
+            onCreate={createServer}
+            api={backend.api}
+            onJoined={joinedServer}
+            onClose={closeCreateServer}
+          />
+        )}
 
-      {notice && (
-        <div className="app-toast" role="status">
-          {notice}
-          <button
-            type="button"
-            className="icon-button small"
-            aria-label="Dismiss"
-            onClick={() => setNotice(null)}
-          >
-            ×
-          </button>
-        </div>
-      )}
-    </div>
+        {serverSettingsFor && serverForSettings && (
+          <ServerSettingsModal
+            api={backend.api}
+            server={serverForSettings}
+            meId={selfId}
+            members={backend.members[serverForSettings.id]}
+            revision={backend.serversRevision}
+            resolveUser={resolveUser}
+            onInvite={() => setInviteFor(serverForSettings.id)}
+            onClose={closeServerSettings}
+          />
+        )}
+
+        {inviteFor && (
+          <InviteModal
+            api={backend.api}
+            serverId={inviteFor}
+            serverName={backend.servers.find((s) => s.id === inviteFor)?.name ?? 'this server'}
+            onClose={closeInvite}
+          />
+        )}
+
+        {popout && (
+          <ProfilePopout
+            user={resolveUser(popout.userId)}
+            anchor={popout.anchor}
+            role={roleOf(popout.userId)}
+            isSelf={popout.userId === selfId}
+            selfCustomStatus={selfCustomStatus}
+            onViewProfile={() => {
+              setProfileFor(popout.userId)
+              setPopout(null)
+            }}
+            onEditProfile={() => {
+              setPopout(null)
+              openSettings('profile')
+            }}
+            onClose={closePopout}
+          />
+        )}
+
+        {profileFor && (
+          <ProfileModal
+            user={resolveUser(profileFor)}
+            isSelf={profileFor === selfId}
+            selfCustomStatus={selfCustomStatus}
+            role={roleOf(profileFor)}
+            servers={backend.servers}
+            fetchProfile={backend.fetchProfile}
+            onEditProfile={() => {
+              setProfileFor(null)
+              openSettings('profile')
+            }}
+            onOpenServer={(serverId) => {
+              setProfileFor(null)
+              setActiveServerId(serverId)
+            }}
+            onClose={closeProfileModal}
+          />
+        )}
+
+        {customStatusOpen && (
+          <CustomStatusModal
+            current={selfCustomStatus}
+            recentEmoji={settings.recentEmoji}
+            onSave={backend.setCustomStatus}
+            onClose={closeCustomStatus}
+          />
+        )}
+
+        {notice && (
+          <div className="app-toast" role="status">
+            {notice}
+            <button
+              type="button"
+              className="icon-button small"
+              aria-label="Dismiss"
+              onClick={() => setNotice(null)}
+            >
+              ×
+            </button>
+          </div>
+        )}
+      </div>
+    </ProfileMediaContext.Provider>
   )
 }
 

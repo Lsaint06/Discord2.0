@@ -75,10 +75,10 @@ All `/api/*` routes except `/api/meta` and `/api/dev/login` require `Authorizati
 | Method & path | Description |
 | --- | --- |
 | `GET /health` | Liveness probe |
-| `GET /api/meta` | Server name, API version (`2`), whether dev sign-in is enabled, `accounts: true`, `registration: "invite"` |
+| `GET /api/meta` | Server name, API version (`3`), whether dev sign-in is enabled, `accounts: true`, `registration: "invite"`, `profiles: true` |
 | `POST /api/dev/login` `{ username }` | **Dev only** (`DEV_AUTH`). Get-or-create a user without a password; refused for accounts that have one |
 | `GET /api/users/me` | Current user (including `instanceAdmin`, `hasPassword`) |
-| `PATCH /api/users/me` `{ displayName?, avatarColor? }` | Update profile (sent to people who share a server) |
+| `PATCH /api/users/me` `{ displayName?, avatarColor?, bio?, pronouns?, accentColor? }` | Update profile (sent to people who share a server; see Milestone 8 below) |
 | `GET /api/users` | Users who share a server with you, with presence |
 | `GET /api/servers` | Servers you are a member of, with the channels you can view, your role and effective permissions |
 | `POST /api/servers` `{ name, color }` | Create a server with `#general` + `Lounge`; you become its owner |
@@ -99,6 +99,19 @@ All `/api/*` routes except `/api/meta` and `/api/dev/login` require `Authorizati
 | `POST /api/livekit/webhook` | LiveKit → backend only. Verified with LiveKit's signed `Authorization` header |
 
 Every channel and message route requires membership of the channel's server (otherwise **404**) and the matching permission (otherwise **403**): View Channel to read, Send Messages / Attach Files / Add Reactions to write, Pin Messages to pin, Manage Messages to delete other people's messages. Request bodies with unknown fields are rejected (`400`).
+
+### Profiles, status and preferences (Milestone 8)
+
+Full design, image security and limits: [docs/milestone-8-identity.md](../docs/milestone-8-identity.md).
+
+| Method & path | Description |
+| --- | --- |
+| `PUT /api/users/me/status` `{ status?, customStatus?: { text?, emoji?, expiresInMs? } \| null }` | Status preference (synced across your devices) and custom status (1 min–7 days expiry, or none) |
+| `POST`/`DELETE /api/users/me/avatar` · `/api/users/me/banner` | Upload one image (multipart, ≤ 10 MB, PNG/JPEG/WebP/GIF by content) / remove. Re-encoded to metadata-free WebP |
+| `GET /api/profile-media/:id?size=full\|small` | Processed image; only for people who can see its owner |
+| `GET /api/users/:userId/profile` | `{ user, mutualServerIds }` (404 unless you share a server) |
+| `GET`/`PATCH /api/users/me/preferences` | Synced appearance preferences (theme, accent, density, reduced motion, timestamps, idle timeout) |
+| `DELETE /api/admin/accounts/:userId/profile-media/:kind` | Instance administrators: remove a picture/banner (audited) |
 
 ### Accounts and sessions (Milestone 7)
 
@@ -179,11 +192,11 @@ Allowed sources live in `VOICE_PUBLISH_SOURCES` in [`src/voice/access.ts`](src/v
 JSON frames `{ op, d }`. Types live in [`src/protocol.ts`](src/protocol.ts) (mirrored in the desktop app).
 
 1. Server → `hello { heartbeatIntervalMs }`
-2. Client → `identify { token }` (token sent in a frame, never in the URL, so it can't leak into logs)
+2. Client → `identify { token, idle? }` (token sent in a frame, never in the URL, so it can't leak into logs; `idle` = this device is already idle)
 3. Server → `ready { user, users, voiceStates }`
 4. Client → `heartbeat` every interval; server → `heartbeat_ack`. No traffic for 60 s ⇒ server closes the socket.
-5. Server pushes, only to users who can view the channel or server, `message_create`, `message_update`, `message_delete`, `reaction_update`, `pin_update`, `read_state_update` (only to that user's own sessions), `user_update` (profile + presence, to people who share a server), `server_create` (to the creator), `server_update` (membership, role or permission change — refetch), `server_remove` (kicked, banned, left or deleted), `voice_state_update { userId, channelId | null, streaming? }` (from LiveKit webhooks, reconciled with LiveKit every 30 s; `streaming: true` while the user is screen sharing).
-6. Client may send `set_status { status: online|idle|dnd|invisible }`.
+5. Server pushes, only to users who can view the channel or server, `message_create`, `message_update`, `message_delete`, `reaction_update`, `pin_update`, `read_state_update` (only to that user's own sessions), `user_update` (profile + presence, to people who share a server; only when what they see changes), `me_update` (your account: status preference, profile — your own sessions), `preferences_update` (synced preferences — your own sessions), `server_create` (to the creator), `server_update` (membership, role or permission change — refetch), `server_remove` (kicked, banned, left or deleted), `voice_state_update { userId, channelId | null, streaming? }` (from LiveKit webhooks, reconciled with LiveKit every 30 s; `streaming: true` while the user is screen sharing).
+6. Client may send `set_idle { idle }` (automatic idle detection on this device) and `set_status { status: online|idle|dnd|invisible }` (saved on the account; `PUT /api/users/me/status` is preferred).
 
 Close codes: `4001` auth failed or session revoked/expired (don't reconnect), `4002` identify timeout, `4003` invalid frame, `4004` heartbeat timeout, `4008` rate limited, `4010` server shutdown.
 
@@ -217,6 +230,9 @@ Messages are **sent over REST** (clear status codes, validation, rate limiting) 
 | Read acknowledgements, per user | 60 | 10/s |
 | Server creation, per user | 3 | 1/min |
 | Profile updates, per user | 10 | 1 per 5 s |
+| Profile image uploads/removals, per user | 6 | 1 per 10 s |
+| Status, custom status and preference changes, per user | 20 | 1 per 2 s |
+| Profile lookups and profile image downloads, per user | 300 | 20/s |
 | Gateway connections, per IP | 10 | 1 per 2 s |
 | Gateway frames, per connection | 20 | 2/s (excess ⇒ close `4008`) |
 | Voice tokens, per user | 10 | 1 per 3 s |
@@ -238,7 +254,7 @@ Messages are **sent over REST** (clear status codes, validation, rate limiting) 
 Even in development the server never trusts a client-supplied user id: the user is always derived from the session token, whose SHA-256 hash is what's stored.
 ## Docker (Linux ARM64 / Jetson)
 
-`docker-compose.yml` runs the backend **and** the LiveKit SFU (`livekit/livekit-server`, multi-arch). Both images run natively on ARM64 (`node:sqlite` is built into Node; no native addons). Full Jetson walkthrough — credentials, firewall, monitoring, troubleshooting: [docs/voice-deployment-jetson.md](../docs/voice-deployment-jetson.md).
+`docker-compose.yml` runs the backend **and** the LiveKit SFU (`livekit/livekit-server`, multi-arch). Both images run natively on ARM64 (`node:sqlite` and Argon2id are built into Node; image processing uses `sharp`, whose prebuilt `linux-arm64` libvips binary is installed by `npm ci` — nothing is compiled, and the image build fails early if it's missing). Full Jetson walkthrough — credentials, firewall, monitoring, troubleshooting: [docs/voice-deployment-jetson.md](../docs/voice-deployment-jetson.md).
 
 ```bash
 cd server

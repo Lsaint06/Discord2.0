@@ -1,5 +1,6 @@
 import type { AccessService } from './access.js'
 import type { AttachmentStore } from './attachments/store.js'
+import type { ProfileMediaStore } from './profile/media.js'
 import type { AuditLog } from './audit.js'
 import type { PasswordHasher } from './auth/password.js'
 import type { Config } from './config.js'
@@ -14,6 +15,8 @@ export interface AppContext {
   repo: Repository
   hub: GatewayHub
   attachments: AttachmentStore
+  /** Processed avatars and banners (inside the attachments directory / data volume). */
+  profileMedia: ProfileMediaStore
   access: AccessService
   audit: AuditLog
   hasher: PasswordHasher
@@ -45,6 +48,12 @@ export interface AppContext {
     readAcksPerUser: TokenBucketLimiter
     serversPerUser: TokenBucketLimiter
     profilePerUser: TokenBucketLimiter
+    /** Avatar/banner uploads (each one is decoded and re-encoded). */
+    profileMediaPerUser: TokenBucketLimiter
+    /** Status, custom status and preference changes. */
+    presencePerUser: TokenBucketLimiter
+    /** Profile lookups (popouts) and profile image downloads. */
+    profileReadsPerUser: TokenBucketLimiter
     voiceTokensPerUser: TokenBucketLimiter
   }
 }
@@ -75,6 +84,10 @@ export function createLimiters(): AppContext['limiters'] {
     readAcksPerUser: new TokenBucketLimiter(60, 10),
     serversPerUser: new TokenBucketLimiter(3, 1 / 60),
     profilePerUser: new TokenBucketLimiter(10, 0.2),
+    profileMediaPerUser: new TokenBucketLimiter(6, 1 / 10),
+    presencePerUser: new TokenBucketLimiter(20, 0.5),
+    // Opening popouts and loading avatars for a whole member list: generous.
+    profileReadsPerUser: new TokenBucketLimiter(300, 20),
     // Joins, channel switches and reconnects: generous burst, ~1 per 3 s sustained.
     voiceTokensPerUser: new TokenBucketLimiter(10, 1 / 3)
   }

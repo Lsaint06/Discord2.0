@@ -1,12 +1,7 @@
 import type { UserSettings } from '../types'
 
 export const defaultSettings: UserSettings = {
-  status: 'online',
-  customStatus: '',
-  compactMode: false,
-  showTimestamps: true,
   fontSize: 15,
-  accentColor: '#6d72f6',
   inputVolume: 100,
   outputVolume: 100,
   inputDeviceId: '',
@@ -35,4 +30,15 @@ export const defaultSettings: UserSettings = {
   notificationSounds: true
 }
 
-export const accentChoices = ['#6d72f6', '#3ba776', '#e0607e', '#f0a43a', '#4aa3df', '#9b6bd6']
+export const DEFAULT_ACCENT = '#6d72f6'
+
+export const accentChoices = [
+  '#6d72f6',
+  '#3ba776',
+  '#e0607e',
+  '#f0a43a',
+  '#4aa3df',
+  '#9b6bd6',
+  '#56b3a5',
+  '#d9734e'
+]

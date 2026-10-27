@@ -95,4 +95,13 @@ export interface D2DesktopApi {
     /** Fires on each press of the registered shortcut. Returns an unsubscribe function. */
     onToggle: (callback: () => void) => () => void
   }
+  system: {
+    /**
+     * 'idle' when there was no keyboard/mouse input on the PC for `thresholdSeconds`
+     * (60–7200), 'locked' when the screen is locked.
+     */
+    getIdleState: (thresholdSeconds: number) => Promise<SystemIdleState>
+  }
 }
+
+export type SystemIdleState = 'active' | 'idle' | 'locked' | 'unknown'

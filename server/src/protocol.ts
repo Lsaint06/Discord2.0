@@ -8,13 +8,36 @@ export type PresenceStatus = 'online' | 'idle' | 'dnd' | 'offline'
 export type SelectableStatus = 'online' | 'idle' | 'dnd' | 'invisible'
 export type ChannelType = 'text' | 'voice'
 
+/** Short custom status ("In a meeting 📅"). Absent when not set, expired, or the user appears offline. */
+export interface ApiCustomStatus {
+  text: string | null
+  emoji: string | null
+  /** Epoch ms when it clears itself; null = until cleared. */
+  expiresAt: number | null
+}
+
 export interface ApiUser {
   id: string
+  /** Permanent login name (lowercase). */
   username: string
+  /** Editable name shown in the app. */
   displayName: string
+  /** Fallback avatar background (initials) when there is no picture. */
   avatarColor: string
   bot: boolean
+  /** Effective presence as others see it (invisible users are 'offline'). */
   status: PresenceStatus
+  /** Profile picture id (GET /api/profile-media/:id); null = initials. */
+  avatarId: string | null
+  /** Profile banner id; null = accentColor (or avatarColor) is used. */
+  bannerId: string | null
+  /** Profile accent color (#rrggbb). */
+  accentColor: string | null
+  bio: string | null
+  pronouns: string | null
+  /** Account creation (epoch ms). */
+  createdAt: number
+  customStatus: ApiCustomStatus | null
 }
 
 /** The signed-in user, with account details only they can see. */
@@ -23,7 +46,53 @@ export interface ApiMe extends ApiUser {
   instanceAdmin: boolean
   /** Has a password (a real account). False for development identities. */
   hasPassword: boolean
+  /** The status you chose (synced across your devices). `status` is what others see. */
+  statusPreference: SelectableStatus
+  /** Your custom status even while invisible (others don't see it then). */
+  ownCustomStatus: ApiCustomStatus | null
 }
+
+/** Full profile for the profile modal. */
+export interface ApiProfile {
+  user: ApiUser
+  /** Servers you share with this user (ids of servers you are a member of). */
+  mutualServerIds: string[]
+}
+
+export type ThemePreference = 'dark' | 'light' | 'system'
+export type MessageDensity = 'cozy' | 'compact'
+export type ReducedMotionPreference = 'system' | 'on' | 'off'
+
+/** Per-account preferences, synchronized between your devices. */
+export interface ApiPreferences {
+  theme: ThemePreference
+  /** UI accent color; null = the default. */
+  accentColor: string | null
+  density: MessageDensity
+  reducedMotion: ReducedMotionPreference
+  showTimestamps: boolean
+  /** Minutes without keyboard/mouse input before you appear idle (per device). */
+  idleTimeoutMinutes: number
+  /** Last change (epoch ms); null = never saved (defaults). */
+  updatedAt: number | null
+}
+
+export const DEFAULT_PREFERENCES: ApiPreferences = {
+  theme: 'dark',
+  accentColor: null,
+  density: 'cozy',
+  reducedMotion: 'system',
+  showTimestamps: true,
+  idleTimeoutMinutes: 10,
+  updatedAt: null
+}
+
+export type ProfileImageKind = 'avatar' | 'banner'
+/** Output geometry of processed profile images (WebP). */
+export const PROFILE_IMAGE_SIZES = {
+  avatar: { full: { width: 512, height: 512 }, small: { width: 128, height: 128 } },
+  banner: { full: { width: 1500, height: 600 }, small: { width: 600, height: 240 } }
+} as const
 
 // ---- Roles and permissions (Milestone 7) ----
 
@@ -314,14 +383,32 @@ export const LIMITS = {
   inviteMaxAgeDays: 30,
   banReasonMaxLength: 200,
   channelNameMaxLength: 40,
-  channelTopicMaxLength: 200
+  channelTopicMaxLength: 200,
+  bioMaxLength: 190,
+  bioMaxLines: 8,
+  pronounsMaxLength: 40,
+  customStatusMaxLength: 128,
+  /** Longest custom status expiry (7 days). */
+  customStatusMaxMs: 7 * 24 * 60 * 60_000,
+  /** Profile picture / banner upload (before processing). */
+  profileImageMaxBytes: 10 * 1024 * 1024,
+  profileImageMaxPixels: 40_000_000,
+  avatarMinSize: 64,
+  bannerMinWidth: 300,
+  bannerMinHeight: 120,
+  idleTimeoutMinMinutes: 1,
+  idleTimeoutMaxMinutes: 120
 } as const
 
 /** Client → server gateway frames. */
 export type GatewayClientFrame =
-  | { op: 'identify'; d: { token: string } }
+  /** `idle`: this device has been idle (no input) since before connecting. */
+  | { op: 'identify'; d: { token: string; idle?: boolean } }
   | { op: 'heartbeat' }
+  /** Saves your status preference for the account (prefer PUT /api/users/me/status). */
   | { op: 'set_status'; d: { status: SelectableStatus } }
+  /** This device became idle / active (automatic idle detection). */
+  | { op: 'set_idle'; d: { idle: boolean } }
 
 /** Server → client gateway frames. */
 export type GatewayServerFrame =
@@ -351,6 +438,10 @@ export type GatewayServerFrame =
   /** Sent only to the user's own sessions (sync read position between their clients). */
   | { op: 'read_state_update'; d: { channelId: string; lastReadId: string } }
   | { op: 'user_update'; d: ApiUser }
+  /** Sent only to your own sessions: your account changed (status preference, profile). */
+  | { op: 'me_update'; d: ApiMe }
+  /** Sent only to your own sessions: synced preferences changed on another device. */
+  | { op: 'preferences_update'; d: ApiPreferences }
   | { op: 'server_create'; d: ApiServer }
   /** Your access to a server changed (channels, roles, members, permissions): refetch it. */
   | { op: 'server_update'; d: { serverId: string } }

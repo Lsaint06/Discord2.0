@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 # Multi-arch image (linux/amd64, linux/arm64 e.g. NVIDIA Jetson Orin Nano).
-# Pure JavaScript + Node's built-in SQLite: no native compilation needed on ARM64.
+# Node's built-in SQLite and Argon2id; image processing uses sharp, whose prebuilt libvips binaries
+# (@img/sharp-linux-arm64 / -x64, glibc) are installed by npm ci. Nothing is compiled.
 
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
@@ -9,6 +10,9 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build && npm prune --omit=dev
+# Fail the build early if sharp's native binary for this platform is missing (e.g. a lockfile
+# without the linux-arm64 package), instead of failing on the first avatar upload.
+RUN node -e "const s = require('sharp'); console.log('sharp', s.versions.sharp, 'libvips', s.versions.vips)"
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production \

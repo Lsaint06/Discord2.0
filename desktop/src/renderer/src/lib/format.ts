@@ -59,3 +59,13 @@ export const statusLabels: Record<SelectableStatus | PresenceStatus, string> = {
   invisible: 'Invisible',
   offline: 'Offline'
 }
+
+const memberSince = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric'
+})
+
+export function formatMemberSince(ts: number | undefined): string | null {
+  return ts ? memberSince.format(ts) : null
+}

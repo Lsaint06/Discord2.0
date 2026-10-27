@@ -148,6 +148,49 @@ export function normalizeColor(input: unknown): string {
   return input.toLowerCase()
 }
 
+/** Optional single-line text (pronouns, custom status): null/empty clears it. */
+function optionalLine(input: unknown, max: number, field: string, code: string): string | null {
+  if (input === null || input === undefined) return null
+  if (typeof input !== 'string') throw badRequest(`${field} must be a string`, code)
+  const value = input
+    .normalize('NFC')
+    .replace(CONTROL_CHARS, '')
+    .replace(BIDI_OVERRIDES, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (value.length > max) throw badRequest(`${field} must be at most ${max} characters`, code)
+  return value || null
+}
+
+export function normalizePronouns(input: unknown): string | null {
+  return optionalLine(input, LIMITS.pronounsMaxLength, 'Pronouns', 'invalid_pronouns')
+}
+
+export function normalizeCustomStatusText(input: unknown): string | null {
+  return optionalLine(input, LIMITS.customStatusMaxLength, 'Custom status', 'invalid_custom_status')
+}
+
+/** Bio: multi-line plain text (rendered as text, never HTML), limited length and lines. */
+export function normalizeBio(input: unknown): string | null {
+  if (input === null || input === undefined) return null
+  if (typeof input !== 'string') throw badRequest('Bio must be a string', 'invalid_bio')
+  const bio = input
+    .normalize('NFC')
+    .replace(/\r\n?/g, '\n')
+    .replace(CONTROL_CHARS, '')
+    .replace(BIDI_OVERRIDES, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  if (bio.length > LIMITS.bioMaxLength) {
+    throw badRequest(`Bio must be at most ${LIMITS.bioMaxLength} characters`, 'invalid_bio')
+  }
+  if (bio.split('\n').length > LIMITS.bioMaxLines) {
+    throw badRequest(`Bio can have at most ${LIMITS.bioMaxLines} lines`, 'invalid_bio')
+  }
+  return bio || null
+}
+
 const CURSOR = /^\d{1,19}$/
 
 export function parseCursor(input: unknown, name: string): string | undefined {

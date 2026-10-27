@@ -338,7 +338,7 @@ function MembersTab(props: {
             outranks(m.role)
           return (
             <li key={m.userId} className="manage-row">
-              <Avatar name={user.name} color={user.avatarColor} size={32} />
+              <Avatar name={user.name} color={user.avatarColor} imageId={user.avatarId} size={32} />
               <div className="manage-row-main">
                 <span className="manage-row-title" style={{ color: ROLE_COLORS[m.role] }}>
                   {user.name}

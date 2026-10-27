@@ -80,7 +80,12 @@ function PinsPanel(props: PinsPanelProps): React.JSX.Element {
           return (
             <div key={m.id} className="pin-item">
               <div className="search-result-meta">
-                <Avatar name={author.name} color={author.avatarColor} size={20} />
+                <Avatar
+                  name={author.name}
+                  color={author.avatarColor}
+                  imageId={author.avatarId}
+                  size={20}
+                />
                 <span className="search-result-author">{author.name}</span>
                 <time>{formatTimestamp(m.timestamp)}</time>
               </div>

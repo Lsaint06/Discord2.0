@@ -6,6 +6,7 @@ import type { UserRecord } from './db/repository.js'
 import { TokenBucketLimiter } from './lib/rateLimit.js'
 import {
   CloseCodes,
+  type ApiCustomStatus,
   type ApiMe,
   type ApiUser,
   type ApiVoiceState,
@@ -13,6 +14,14 @@ import {
   type PresenceStatus,
   type SelectableStatus
 } from './protocol.js'
+
+/** The user's own custom status if set and not expired. */
+export function ownCustomStatus(user: UserRecord, now = Date.now()): ApiCustomStatus | null {
+  if (!user.customStatusText && !user.customStatusEmoji) return null
+  const expiresAt = user.customStatusExpiresAt ?? null
+  if (expiresAt !== null && expiresAt <= now) return null
+  return { text: user.customStatusText ?? null, emoji: user.customStatusEmoji ?? null, expiresAt }
+}
 
 interface Connection {
   id: string
@@ -25,6 +34,8 @@ interface Connection {
   connectedAt: number
   lastSeen: number
   lastTouch: number
+  /** This device reported no user input for a while (automatic idle). */
+  idle: boolean
 }
 
 export interface GatewayOptions {
@@ -46,6 +57,8 @@ export interface GatewayDeps {
   /** Voice states the user may see. */
   voiceStates: (user: UserRecord) => Promise<ApiVoiceState[]>
   getUser: (id: string) => Promise<UserRecord | undefined>
+  /** Persists the user's chosen status (synced across their devices); returns the updated user. */
+  setStatusPreference: (userId: string, status: SelectableStatus) => Promise<UserRecord | undefined>
 }
 
 const DEFAULTS: GatewayOptions = {
@@ -54,13 +67,17 @@ const DEFAULTS: GatewayOptions = {
   identifyTimeoutMs: 10_000
 }
 
+const visibleKey = (u: ApiUser): string => JSON.stringify([u.status, u.customStatus])
+const OFFLINE_KEY = JSON.stringify(['offline', null])
+
 const SELECTABLE: ReadonlySet<string> = new Set(['online', 'idle', 'dnd', 'invisible'])
 /** Long-lived sockets count as session activity and are re-validated this often. */
 const SESSION_CHECK_MS = 5 * 60_000
 
 export class GatewayHub {
   private readonly connections = new Set<Connection>()
-  private readonly statuses = new Map<string, SelectableStatus>()
+  /** What others last saw (presence + custom status) per user, so nothing is re-broadcast needlessly. */
+  private readonly lastVisible = new Map<string, string>()
   private readonly frameLimiter = new TokenBucketLimiter(20, 2)
   private readonly sweeper: NodeJS.Timeout
   private readonly options: GatewayOptions
@@ -79,12 +96,29 @@ export class GatewayHub {
     return this.connections.size
   }
 
+  private connectionsOf(userId: string): Connection[] {
+    return [...this.connections].filter((c) => c.userId === userId)
+  }
+
+  /**
+   * Presence as other people see it, combining the saved preference with every connected
+   * device: offline without connections or when invisible; dnd/idle as chosen; otherwise idle
+   * only when *all* of the user's devices are idle.
+   */
   presenceOf(user: UserRecord): PresenceStatus {
     if (user.bot) return 'online'
-    const connected = [...this.connections].some((c) => c.userId === user.id)
-    if (!connected) return 'offline'
-    const status = this.statuses.get(user.id) ?? 'online'
-    return status === 'invisible' ? 'offline' : status
+    const conns = this.connectionsOf(user.id)
+    if (conns.length === 0) return 'offline'
+    const preference = user.statusPreference ?? 'online'
+    if (preference === 'invisible') return 'offline'
+    if (preference === 'dnd' || preference === 'idle') return preference
+    return conns.every((c) => c.idle) ? 'idle' : 'online'
+  }
+
+  /** The custom status others may see (none while it is expired or the user appears offline). */
+  customStatusOf(user: UserRecord, now = Date.now()): ApiCustomStatus | null {
+    if (this.presenceOf(user) === 'offline') return null
+    return ownCustomStatus(user, now)
   }
 
   toApiUser(user: UserRecord): ApiUser {
@@ -94,12 +128,19 @@ export class GatewayHub {
       displayName: user.displayName,
       avatarColor: user.avatarColor,
       bot: user.bot,
-      status: this.presenceOf(user)
+      status: this.presenceOf(user),
+      avatarId: user.avatarId ?? null,
+      bannerId: user.bannerId ?? null,
+      accentColor: user.accentColor ?? null,
+      bio: user.bio ?? null,
+      pronouns: user.pronouns ?? null,
+      createdAt: user.createdAt,
+      customStatus: this.customStatusOf(user)
     }
   }
 
   isOnline(userId: string): boolean {
-    return [...this.connections].some((c) => c.userId === userId)
+    return this.connectionsOf(userId).length > 0
   }
 
   handleConnection(socket: WebSocket): void {
@@ -110,7 +151,8 @@ export class GatewayHub {
       identifying: false,
       connectedAt: now,
       lastSeen: now,
-      lastTouch: now
+      lastTouch: now,
+      idle: false
     }
     this.connections.add(conn)
     this.send(conn, { op: 'hello', d: { heartbeatIntervalMs: this.options.heartbeatIntervalMs } })
@@ -146,7 +188,25 @@ export class GatewayHub {
   /** Presence/profile change: only people who share a server with the user hear about it. */
   async publishUser(user: UserRecord): Promise<void> {
     const audience = await this.deps.presenceAudience(user.id)
-    this.sendToUsers(audience, { op: 'user_update', d: this.toApiUser(user) })
+    const apiUser = this.toApiUser(user)
+    this.lastVisible.set(user.id, visibleKey(apiUser))
+    this.sendToUsers(audience, { op: 'user_update', d: apiUser })
+  }
+
+  /**
+   * Publishes only when what others can see (presence, custom status) actually changed:
+   * connect, idle, close, status or custom status changes. Unknown counts as offline, so an
+   * invisible user connecting or editing their status produces no event at all.
+   */
+  async publishPresenceIfChanged(user: UserRecord): Promise<void> {
+    const key = visibleKey(this.toApiUser(user))
+    if ((this.lastVisible.get(user.id) ?? OFFLINE_KEY) === key) return
+    await this.publishUser(user)
+  }
+
+  /** Sends the user's own account view (status preference, profile) to all their sessions. */
+  async publishMe(user: UserRecord): Promise<void> {
+    this.sendToUser(user.id, { op: 'me_update', d: await this.deps.me(user) })
   }
 
   /** Closes the sockets of revoked sessions (they must sign in again). */
@@ -200,10 +260,10 @@ export class GatewayHub {
         if (conn.socket.readyState !== conn.socket.OPEN) return
         const { user, session } = auth
 
-        const wasOnline = this.presenceOf(user) !== 'offline'
         conn.userId = user.id
         conn.sessionId = session.id
         conn.sessionExpiresAt = session.expiresAt
+        conn.idle = d?.idle === true
         conn.identifying = false
         const [me, users, voiceStates] = await Promise.all([
           this.deps.me(user),
@@ -214,7 +274,7 @@ export class GatewayHub {
           op: 'ready',
           d: { user: me, users: users.map((u) => this.toApiUser(u)), voiceStates }
         })
-        if (!wasOnline) await this.publishUser(user)
+        await this.publishPresenceIfChanged(user)
         this.log.info({ conn: conn.id, user: user.username, session: session.id }, 'gateway identified')
         return
       }
@@ -225,9 +285,21 @@ export class GatewayHub {
         if (typeof status !== 'string' || !SELECTABLE.has(status)) {
           return this.close(conn, CloseCodes.invalidFrame, 'Invalid status')
         }
-        this.statuses.set(conn.userId, status as SelectableStatus)
+        const user = await this.deps.setStatusPreference(conn.userId, status as SelectableStatus)
+        if (user) {
+          await this.publishPresenceIfChanged(user)
+          await this.publishMe(user)
+        }
+        return
+      }
+
+      case 'set_idle': {
+        if (!conn.userId) return this.close(conn, CloseCodes.authFailed, 'Not identified')
+        if (typeof d?.idle !== 'boolean') return this.close(conn, CloseCodes.invalidFrame, 'Invalid idle')
+        if (conn.idle === d.idle) return
+        conn.idle = d.idle
         const user = await this.deps.getUser(conn.userId)
-        if (user) await this.publishUser(user)
+        if (user) await this.publishPresenceIfChanged(user)
         return
       }
 
@@ -239,11 +311,9 @@ export class GatewayHub {
   private async onClose(conn: Connection): Promise<void> {
     this.connections.delete(conn)
     if (!conn.userId) return
-    const stillConnected = [...this.connections].some((c) => c.userId === conn.userId)
-    if (stillConnected) return
-    this.statuses.delete(conn.userId)
     const user = await this.deps.getUser(conn.userId).catch(() => undefined)
-    if (user) await this.publishUser(user).catch(() => undefined)
+    if (user) await this.publishPresenceIfChanged(user).catch(() => undefined)
+    if (!this.isOnline(conn.userId)) this.lastVisible.delete(conn.userId)
   }
 
   private async sweep(now = Date.now()): Promise<void> {

@@ -4,7 +4,13 @@ import type {
   ScreenLayering,
   ScreenProfileId
 } from './media/screenProfiles'
-import type { ApiAttachment, ApiMessageReference, ApiReaction, ServerRole } from './net/protocol'
+import type {
+  ApiAttachment,
+  ApiCustomStatus,
+  ApiMessageReference,
+  ApiReaction,
+  ServerRole
+} from './net/protocol'
 
 export type PresenceStatus = 'online' | 'idle' | 'dnd' | 'offline'
 
@@ -12,11 +18,20 @@ export type SelectableStatus = 'online' | 'idle' | 'dnd' | 'invisible'
 
 export interface User {
   id: string
+  /** Display name. */
   name: string
+  /** Permanent login name (empty for unknown users). */
+  username: string
   avatarColor: string
   status: PresenceStatus
-  activity?: string
   bot?: boolean
+  avatarId?: string | null
+  bannerId?: string | null
+  accentColor?: string | null
+  bio?: string | null
+  pronouns?: string | null
+  createdAt?: number
+  customStatus?: ApiCustomStatus | null
 }
 
 export type ChannelType = 'text' | 'voice'
@@ -83,13 +98,13 @@ export interface Message {
 
 export type InputMode = 'voice-activity' | 'push-to-talk'
 
+/**
+ * Settings stored on this device only (localStorage). Account-wide preferences (theme, accent,
+ * density, reduced motion, timestamps, idle timeout) live on the server: see ApiPreferences.
+ */
 export interface UserSettings {
-  status: SelectableStatus
-  customStatus: string
-  compactMode: boolean
-  showTimestamps: boolean
+  /** Chat font size in px (depends on this device's screen). */
   fontSize: number
-  accentColor: string
   /** Microphone gain, percent (0–200). */
   inputVolume: number
   /** Master playback volume, percent (0–200). */

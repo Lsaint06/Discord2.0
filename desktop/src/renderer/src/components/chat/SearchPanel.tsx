@@ -161,7 +161,12 @@ function SearchPanel(props: SearchPanelProps): React.JSX.Element {
               onClick={() => props.onJump(m)}
             >
               <div className="search-result-meta">
-                <Avatar name={author.name} color={author.avatarColor} size={20} />
+                <Avatar
+                  name={author.name}
+                  color={author.avatarColor}
+                  imageId={author.avatarId}
+                  size={20}
+                />
                 <span className="search-result-author">{author.name}</span>
                 <span className="search-result-where">#{props.channelName(m.channelId)}</span>
                 <time>{formatTimestamp(m.timestamp)}</time>

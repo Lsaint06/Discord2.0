@@ -1,4 +1,10 @@
-import type { ChannelType, ConfigurableRole, ServerRole } from '../protocol.js'
+import type {
+  ChannelType,
+  ConfigurableRole,
+  ProfileImageKind,
+  SelectableStatus,
+  ServerRole
+} from '../protocol.js'
 import type { Override } from '../lib/permissions.js'
 
 export interface UserRecord {
@@ -12,6 +18,43 @@ export interface UserRecord {
   instanceAdmin?: boolean
   /** Set when an administrator disabled the account (no sign-in, all sessions revoked). */
   disabledAt?: number | null
+  // ---- Profile and presence (Milestone 8); optional so older call sites stay valid ----
+  bio?: string | null
+  pronouns?: string | null
+  accentColor?: string | null
+  avatarId?: string | null
+  bannerId?: string | null
+  /** The status the user chose; live presence is computed by the gateway. */
+  statusPreference?: SelectableStatus
+  customStatusText?: string | null
+  customStatusEmoji?: string | null
+  customStatusExpiresAt?: number | null
+}
+
+export interface ProfilePatch {
+  displayName?: string
+  avatarColor?: string
+  bio?: string | null
+  pronouns?: string | null
+  accentColor?: string | null
+}
+
+export interface CustomStatusRecord {
+  text: string | null
+  emoji: string | null
+  expiresAt: number | null
+}
+
+export interface ProfileMediaRecord {
+  id: string
+  userId: string
+  kind: ProfileImageKind
+  width: number
+  height: number
+  /** Bytes of the full-size file. */
+  size: number
+  sha256: string
+  createdAt: number
 }
 
 export type SessionKind = 'dev' | 'password'
@@ -270,10 +313,33 @@ export interface Repository {
   findUserByUsername(username: string): Promise<UserRecord | undefined>
   listUsers(): Promise<UserRecord[]>
   createUser(user: UserRecord): Promise<UserRecord>
-  updateUser(
-    id: string,
-    patch: Partial<Pick<UserRecord, 'displayName' | 'avatarColor'>>
-  ): Promise<UserRecord | undefined>
+  updateUser(id: string, patch: ProfilePatch): Promise<UserRecord | undefined>
+
+  // ---- Profiles, presence, preferences (Milestone 8) ----
+  setStatusPreference(userId: string, status: SelectableStatus): Promise<UserRecord | undefined>
+  /** null clears the custom status. */
+  setCustomStatus(userId: string, status: CustomStatusRecord | null): Promise<UserRecord | undefined>
+  /** Clears custom statuses that expired at or before `now`; returns the affected user ids. */
+  clearExpiredCustomStatuses(now: number): Promise<string[]>
+  /**
+   * Atomically points the user's avatar/banner at `media` (or removes it when null), deleting
+   * the previous media row. Returns the previous media id (its files can then be removed).
+   */
+  replaceProfileMedia(
+    userId: string,
+    kind: ProfileImageKind,
+    media: ProfileMediaRecord | null
+  ): Promise<{ previousId: string | null; user: UserRecord | undefined }>
+  getProfileMedia(id: string): Promise<ProfileMediaRecord | undefined>
+  /** Every profile media id that has a row (for the orphan file sweep). */
+  listProfileMediaIds(): Promise<Set<string>>
+  /** Same rule as listVisibleUsers, for one user. */
+  isUserVisibleTo(viewerId: string, userId: string): Promise<boolean>
+  /** Servers both users are members of. */
+  mutualServerIds(userA: string, userB: string): Promise<string[]>
+  /** Stored preferences JSON and its timestamp, or undefined if never saved. */
+  getPreferences(userId: string): Promise<{ data: string; updatedAt: number } | undefined>
+  savePreferences(userId: string, data: string, now: number): Promise<void>
 
   // ---- Accounts (Milestone 7) ----
   setInstanceAdmin(userId: string, admin: boolean): Promise<void>

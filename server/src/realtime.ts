@@ -7,6 +7,7 @@ import type { ChannelRecord, UserRecord } from './db/repository.js'
 import type { ApiMe, ApiVoiceState, GatewayServerFrame } from './protocol.js'
 import { Permissions } from './protocol.js'
 import type { VoiceStateChange } from './voice/voiceStates.js'
+import { ownCustomStatus } from './gateway.js'
 
 /** Sends a channel-scoped event to everyone who can currently view the channel. */
 export async function publishToChannel(
@@ -33,8 +34,35 @@ export async function toApiMe(ctx: AppContext, user: UserRecord): Promise<ApiMe>
   return {
     ...ctx.hub.toApiUser(user),
     instanceAdmin: Boolean(user.instanceAdmin),
-    hasPassword: withPassword.has(user.id)
+    hasPassword: withPassword.has(user.id),
+    statusPreference: user.statusPreference ?? 'online',
+    ownCustomStatus: ownCustomStatus(user)
   }
+}
+
+/**
+ * After the user changed their profile (name, picture, bio…): everyone who can see them gets
+ * the new profile, and all of their own devices get the updated account view.
+ */
+export async function publishProfileChange(ctx: AppContext, user: UserRecord): Promise<void> {
+  await ctx.hub.publishUser(user)
+  await ctx.hub.publishMe(user)
+}
+
+/** After a status / custom status change: others only if what they see changed. */
+export async function publishStatusChange(ctx: AppContext, user: UserRecord): Promise<void> {
+  await ctx.hub.publishPresenceIfChanged(user)
+  await ctx.hub.publishMe(user)
+}
+
+/** Clears expired custom statuses and tells everyone affected. Returns how many expired. */
+export async function expireCustomStatuses(ctx: AppContext, now = Date.now()): Promise<number> {
+  const ids = await ctx.repo.clearExpiredCustomStatuses(now)
+  for (const id of ids) {
+    const user = await ctx.repo.getUser(id)
+    if (user) await publishStatusChange(ctx, user)
+  }
+  return ids.length
 }
 
 /** Voice states in voice channels the user can view. */

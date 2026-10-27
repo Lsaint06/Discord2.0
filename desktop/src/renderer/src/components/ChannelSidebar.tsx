@@ -205,7 +205,12 @@ function ChannelSidebar({
                                   <span
                                     className={`voice-avatar${details?.speaking ? ' speaking' : ''}`}
                                   >
-                                    <Avatar name={user.name} color={user.avatarColor} size={22} />
+                                    <Avatar
+                                      name={user.name}
+                                      color={user.avatarColor}
+                                      imageId={user.avatarId}
+                                      size={22}
+                                    />
                                   </span>
                                   <span className="voice-user-name">{user.name}</span>
                                   {(details?.muted || details?.deafened) && (

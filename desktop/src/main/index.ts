@@ -7,6 +7,7 @@ import { setupScreenCapture } from './screenCapture'
 import { applyEncoderFlags, setupEncoderFlagsIpc } from './encoderFlags'
 import { isAppUrl, isWebUrl } from './appUrl'
 import { setupCredentialStorage } from './credentials'
+import { setupSystemIdle } from './system'
 
 // Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
 // Lets two clients run side by side on one PC for testing.
@@ -96,6 +97,7 @@ app.whenReady().then(() => {
   setupScreenCapture()
   setupEncoderFlagsIpc(isAppUrl)
   setupCredentialStorage()
+  setupSystemIdle()
 
   createWindow()
 

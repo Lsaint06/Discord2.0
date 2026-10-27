@@ -69,6 +69,8 @@ interface ChatPanelProps {
   onEmojiUsed: (emoji: string) => void
   /** Navigate to a message in any channel (switches channel if needed). */
   onJumpTo: (channelId: string, messageId: string) => void
+  /** Open a user's profile popout (stable callback). */
+  onOpenProfile: (userId: string, anchor: DOMRect) => void
 }
 
 function useWindowFocus(): boolean {
@@ -346,9 +348,10 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
       openImage: (a) => setLightbox(a),
       jump: (c, id) => jumpRef.current(c, id),
       retry: (nonce) => backend.retryMessage(channel.id, nonce),
-      discard: (nonce) => backend.discardMessage(channel.id, nonce)
+      discard: (nonce) => backend.discardMessage(channel.id, nonce),
+      openProfile: (userId, anchor) => props.onOpenProfile(userId, anchor)
     }),
-    // props.onEmojiUsed is stable (useCallback in Workspace).
+    // props.onEmojiUsed and props.onOpenProfile are stable (useCallback in Workspace).
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [backend, channel.id]
   )

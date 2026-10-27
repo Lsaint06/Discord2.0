@@ -28,6 +28,7 @@ export type AuditAction =
   | 'admin.account_enabled'
   | 'admin.merge'
   | 'admin.set_owner'
+  | 'admin.profile_media_removed'
   | 'server.create'
   | 'server.update'
   | 'server.invite_created'

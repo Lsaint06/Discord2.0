@@ -290,5 +290,47 @@ export const sqliteMigrations: Migration[] = [
         FROM servers s CROSS JOIN users u
         WHERE u.is_bot = 0;
     `
+  },
+  {
+    // Milestone 8 (profiles, presence, preferences). Additive only: new nullable/defaulted
+    // columns and new tables, so Milestone 7 code keeps working on a migrated database.
+    version: 4,
+    name: 'profiles_and_presence',
+    sql: `
+      ALTER TABLE users ADD COLUMN bio TEXT;
+      ALTER TABLE users ADD COLUMN pronouns TEXT;
+      ALTER TABLE users ADD COLUMN accent_color TEXT;
+      ALTER TABLE users ADD COLUMN avatar_id TEXT;
+      ALTER TABLE users ADD COLUMN banner_id TEXT;
+      -- The status the user picked (synced across devices); presence itself is computed live.
+      ALTER TABLE users ADD COLUMN status_preference TEXT NOT NULL DEFAULT 'online'
+        CHECK (status_preference IN ('online', 'idle', 'dnd', 'invisible'));
+      ALTER TABLE users ADD COLUMN custom_status_text TEXT;
+      ALTER TABLE users ADD COLUMN custom_status_emoji TEXT;
+      ALTER TABLE users ADD COLUMN custom_status_expires_at INTEGER;
+      CREATE INDEX users_custom_status_expiry_idx ON users(custom_status_expires_at)
+        WHERE custom_status_expires_at IS NOT NULL;
+
+      -- Processed (re-encoded, metadata-free) profile pictures and banners. Files live under
+      -- <attachments dir>/profile/<id[0..2]>/<id>.webp (+ <id>.small.webp).
+      CREATE TABLE profile_media (
+        id         TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL CHECK (kind IN ('avatar', 'banner')),
+        width      INTEGER NOT NULL,
+        height     INTEGER NOT NULL,
+        size       INTEGER NOT NULL,
+        sha256     TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX profile_media_user_idx ON profile_media(user_id);
+
+      -- Synced per-account preferences (theme, accent, density…), validated JSON.
+      CREATE TABLE user_preferences (
+        user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        data       TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `
   }
 ]

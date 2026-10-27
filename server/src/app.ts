@@ -13,7 +13,9 @@ import type { Repository } from './db/repository.js'
 import { GatewayHub, type GatewayOptions } from './gateway.js'
 import { ApiError, tooManyRequests } from './lib/errors.js'
 import type { ApiErrorBody } from './protocol.js'
-import { publishVoiceChanges, toApiMe, visibleVoiceStates } from './realtime.js'
+import { join } from 'node:path'
+import { ProfileMediaStore } from './profile/media.js'
+import { expireCustomStatuses, publishVoiceChanges, toApiMe, visibleVoiceStates } from './realtime.js'
 import { registerAdminRoutes } from './routes/admin.js'
 import { cleanupAttachments, registerAttachmentRoutes } from './routes/attachments.js'
 import { registerAuthRoutes } from './routes/auth.js'
@@ -23,6 +25,7 @@ import { registerMemberRoutes } from './routes/members.js'
 import { registerMessageRoutes } from './routes/messages.js'
 import { registerReadStateRoutes, registerSearchRoutes } from './routes/readStates.js'
 import { registerServerRoutes } from './routes/servers.js'
+import { cleanupProfileMedia, registerProfileRoutes } from './routes/profile.js'
 import { registerUserRoutes } from './routes/users.js'
 import { registerVoiceRoutes } from './routes/voice.js'
 import { voiceAuthorizer } from './voice/enforce.js'
@@ -36,6 +39,8 @@ export interface BuildOptions {
   voiceReconcileIntervalMs?: number
   /** How often to clean up abandoned uploads, orphan files and old sessions; 0 disables (tests). */
   attachmentCleanupIntervalMs?: number
+  /** How often to clear expired custom statuses; 0 disables (tests call expireCustomStatuses). */
+  statusExpiryIntervalMs?: number
   /** Override the password hasher (tests use cheaper, still OWASP-compliant parameters). */
   hasher?: PasswordHasher
 }
@@ -89,6 +94,8 @@ export async function buildApp(
     repo,
     access,
     attachments: new AttachmentStore(config.attachments.dir),
+    // Same volume as attachments; AttachmentStore only ever touches its files/ and tmp/ folders.
+    profileMedia: new ProfileMediaStore(join(config.attachments.dir, 'profile')),
     audit: new AuditLog(repo, app.log),
     hasher:
       options.hasher ??
@@ -111,7 +118,8 @@ export async function buildApp(
       visibleUsers: (user) => repo.listVisibleUsers(user.id),
       presenceAudience: (userId) => access.presenceAudienceOf(userId),
       voiceStates: (user) => visibleVoiceStates(ctx, user),
-      getUser: (id) => repo.getUser(id)
+      getUser: (id) => repo.getUser(id),
+      setStatusPreference: (userId, status) => repo.setStatusPreference(userId, status)
     },
     app.log,
     options.gateway
@@ -200,12 +208,14 @@ export async function buildApp(
 
   app.get('/api/meta', async () => ({
     name: 'Discord 2.0',
-    apiVersion: 2,
+    apiVersion: 3,
     devAuth: config.devAuth,
     voice: config.livekit !== null,
     // Real accounts; new ones only with an invitation from an administrator.
     accounts: true,
-    registration: 'invite'
+    registration: 'invite',
+    // Milestone 8: profiles, profile images, synced status and preferences.
+    profiles: true
   }))
 
   app.get(
@@ -226,6 +236,7 @@ export async function buildApp(
   registerDevAuthRoutes(app, ctx)
   registerAdminRoutes(app, ctx)
   registerUserRoutes(app, ctx)
+  registerProfileRoutes(app, ctx)
   registerServerRoutes(app, ctx)
   registerMemberRoutes(app, ctx)
   registerInviteRoutes(app, ctx)
@@ -240,9 +251,9 @@ export async function buildApp(
   if (cleanupMs > 0) {
     app.addHook('onReady', async () => {
       const run = (): void => {
-        cleanupAttachments(ctx, app.log).catch((err: unknown) =>
-          app.log.error({ err }, 'attachment cleanup failed')
-        )
+        cleanupAttachments(ctx, app.log)
+          .then(() => cleanupProfileMedia(ctx, app.log))
+          .catch((err: unknown) => app.log.error({ err }, 'attachment cleanup failed'))
         repo
           .purgeExpired(Date.now(), { sessionsMs: 30 * DAY, auditMs: 365 * DAY })
           .then((removed) => {
@@ -256,12 +267,27 @@ export async function buildApp(
     })
   }
 
+  // Custom statuses with an expiry (30 min, 1 h, today…) clear themselves and notify people.
+  const expiryMs = options.statusExpiryIntervalMs ?? 15_000
+  let expiryTimer: NodeJS.Timeout | null = null
+  if (expiryMs > 0) {
+    app.addHook('onReady', async () => {
+      expiryTimer = setInterval(() => {
+        expireCustomStatuses(ctx).catch((err: unknown) =>
+          app.log.error({ err }, 'custom status expiry failed')
+        )
+      }, expiryMs)
+      expiryTimer.unref()
+    })
+  }
+
   const reconcileMs = options.voiceReconcileIntervalMs ?? 30_000
   if (bridge && reconcileMs > 0) app.addHook('onReady', async () => bridge.start(reconcileMs))
 
   app.addHook('onClose', async () => {
     bridge?.stop()
     if (cleanupTimer) clearInterval(cleanupTimer)
+    if (expiryTimer) clearInterval(expiryTimer)
     hub.shutdown()
     for (const limiter of Object.values(ctx.limiters)) limiter.dispose()
   })

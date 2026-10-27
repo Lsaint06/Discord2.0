@@ -8,7 +8,8 @@ import type {
   ScreenCaptureCapabilities,
   ScreenSelectResult,
   ScreenSourceInfo,
-  StoredCredentials
+  StoredCredentials,
+  SystemIdleState
 } from './types'
 
 /**
@@ -65,6 +66,13 @@ const d2: D2DesktopApi = {
       ipcRenderer.on('d2:ptt-toggle', listener)
       return () => ipcRenderer.removeListener('d2:ptt-toggle', listener)
     }
+  },
+  system: {
+    getIdleState: (thresholdSeconds) =>
+      ipcRenderer.invoke(
+        'd2:idle-state',
+        Math.round(Number(thresholdSeconds))
+      ) as Promise<SystemIdleState>
   }
 }
 

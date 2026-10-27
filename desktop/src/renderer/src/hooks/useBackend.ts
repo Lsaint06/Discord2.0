@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Message, SelectableStatus } from '../types'
-import { ApiClient, ApiError, type SearchParams } from '../net/api'
+import {
+  ApiClient,
+  ApiError,
+  type CustomStatusInput,
+  type PreferencesPatch,
+  type ProfilePatch,
+  type SearchParams
+} from '../net/api'
 import { GatewayClient, type GatewayStatus } from '../net/gateway'
 import {
   LIMITS,
   type ApiAttachment,
   type ApiMe,
   type ApiMember,
+  type ApiPreferences,
+  type ApiProfile,
   type ApiServer,
   type ApiUser,
-  type ApiVoiceToken
+  type ApiVoiceToken,
+  type ProfileImageKind,
+  DEFAULT_PREFERENCES
 } from '../net/protocol'
 import {
   applyDelete,
@@ -26,6 +37,7 @@ import {
 } from '../chat/messageState'
 import { applyIncoming, applyReadPosition, type ReadState } from '../chat/unread'
 import { AttachmentCache } from '../chat/attachmentCache'
+import { parseProfileMediaKey } from '../lib/profileMedia'
 
 export interface ChannelState {
   messages: Message[]
@@ -46,7 +58,6 @@ export interface BackendSession {
 }
 
 interface Options {
-  initialStatus: SelectableStatus
   onSessionInvalid: () => void
   /** Called for every new message from the gateway (notifications). */
   onIncomingMessage?: (message: Message) => void
@@ -111,6 +122,24 @@ export interface Backend {
   voiceStreaming: Record<string, true>
   gateway: { status: GatewayStatus; retryInMs?: number }
   attachments: AttachmentCache
+  /** Authenticated cache for profile pictures/banners (keys from profileMediaKey). */
+  profileMedia: AttachmentCache
+  /** Synced account preferences (defaults until loaded). */
+  preferences: ApiPreferences
+  /** True once the server's preferences have been loaded. */
+  preferencesLoaded: boolean
+  updatePreferences: (patch: PreferencesPatch) => Promise<string | null>
+  updateProfile: (patch: ProfilePatch) => Promise<string | null>
+  uploadProfileImage: (
+    kind: ProfileImageKind,
+    image: Blob,
+    onProgress?: (fraction: number) => void
+  ) => Promise<string | null>
+  removeProfileImage: (kind: ProfileImageKind) => Promise<string | null>
+  setCustomStatus: (input: CustomStatusInput | null) => Promise<string | null>
+  /** This device is idle / active (automatic idle detection). */
+  setIdle: (idle: boolean) => void
+  fetchProfile: (userId: string) => Promise<ApiProfile>
   focusChannel: (channelId: string) => void
   markRead: (channelId: string) => void
   ackRead: (channelId: string, messageId: string) => void
@@ -139,16 +168,28 @@ export interface Backend {
   deleteAttachment: (attachmentId: string) => void
   createServer: (name: string, color: string) => Promise<{ server?: ApiServer; error?: string }>
   updateDisplayName: (displayName: string) => Promise<string | null>
-  setPresence: (status: SelectableStatus) => void
+  setPresence: (status: SelectableStatus) => Promise<string | null>
   fetchVoiceToken: (channelId: string) => Promise<ApiVoiceToken>
   retryInitialLoad: () => void
 }
 
 export function useBackend(session: BackendSession, options: Options): Backend {
-  const { initialStatus, onSessionInvalid, onIncomingMessage, onServerRemoved } = options
+  const { onSessionInvalid, onIncomingMessage, onServerRemoved } = options
 
   const [api] = useState(() => new ApiClient(session.httpUrl, session.token))
   const [attachments] = useState(() => new AttachmentCache((id) => api.fetchAttachment(id)))
+  const [profileMedia] = useState(
+    () =>
+      new AttachmentCache(
+        (key) => {
+          const { id, size } = parseProfileMediaKey(key)
+          return api.fetchProfileMedia(id, size)
+        },
+        48 * 1024 * 1024
+      )
+  )
+  const [preferences, setPreferences] = useState<ApiPreferences>(DEFAULT_PREFERENCES)
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false)
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
   const [loadError, setLoadError] = useState<string>()
   const [loadAttempt, setLoadAttempt] = useState(0)
@@ -167,6 +208,8 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   })
 
   const gatewayRef = useRef<GatewayClient | null>(null)
+  /** This device's idle state (survives gateway reconnects). */
+  const idleRef = useRef(false)
   const channelsRef = useRef(channels)
   const readStatesRef = useRef(readStates)
   const meIdRef = useRef<string | undefined>(undefined)
@@ -198,6 +241,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     membersRef.current = members
   }, [members])
   useEffect(() => () => attachments.clear(), [attachments])
+  useEffect(() => () => profileMedia.clear(), [profileMedia])
 
   const handleAuthError = useCallback((err: unknown): boolean => {
     if (err instanceof ApiError && err.isUnauthorized) {
@@ -263,6 +307,17 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         if (cancelled || handleAuthError(err)) return
         setLoadError(describeError(err))
         setPhase('error')
+      })
+    // Preferences are not essential to start: defaults apply until they arrive.
+    api
+      .preferences()
+      .then((prefs) => {
+        if (cancelled) return
+        setPreferences(prefs)
+        setPreferencesLoaded(true)
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) handleAuthError(err)
       })
 
     // After a reconnect, re-fetch what may have changed while we were offline: new messages,
@@ -378,6 +433,14 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         setUsers((prev) => ({ ...prev, [u.id]: u }))
         if (u.id === meIdRef.current) setMe((prev) => (prev ? { ...prev, ...u } : prev))
       },
+      onMeUpdate: (updated) => {
+        setMe(updated)
+        setUsers((prev) => ({ ...prev, [updated.id]: updated }))
+      },
+      onPreferencesUpdate: (prefs) => {
+        setPreferences(prefs)
+        setPreferencesLoaded(true)
+      },
       onServerCreate: (s) => {
         setServers((prev) => (prev.some((x) => x.id === s.id) ? prev : [...prev, s]))
       },
@@ -413,7 +476,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         onServerRemovedRef.current?.(serverId, reason)
       }
     })
-    client.setStatus(initialStatus)
+    client.setIdle(idleRef.current)
     client.connect()
     gatewayRef.current = client
 
@@ -422,8 +485,6 @@ export function useBackend(session: BackendSession, options: Options): Backend {
       client.disconnect()
       gatewayRef.current = null
     }
-    // initialStatus is only needed once per connection.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     api,
     session.gatewayUrl,
@@ -909,9 +970,101 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     [api, handleAuthError]
   )
 
-  const setPresence = useCallback((status: SelectableStatus) => {
-    gatewayRef.current?.setStatus(status)
+  /** Applies an updated account view from a REST response. */
+  const applyMe = useCallback((updated: ApiMe) => {
+    setMe(updated)
+    setUsers((prev) => ({ ...prev, [updated.id]: updated }))
   }, [])
+
+  /** Runs an account action; resolves to an error message or null. */
+  const accountAction = useCallback(
+    async (action: () => Promise<ApiMe>): Promise<string | null> => {
+      try {
+        applyMe(await action())
+        return null
+      } catch (err) {
+        if (handleAuthError(err)) return 'Signed out'
+        return describeError(err)
+      }
+    },
+    [applyMe, handleAuthError]
+  )
+
+  const setPresence = useCallback(
+    (status: SelectableStatus) => {
+      // Optimistic: your own status updates instantly; the server confirms (or we roll back).
+      const previous = me?.statusPreference
+      setMe((prev) => (prev ? { ...prev, statusPreference: status } : prev))
+      return accountAction(() => api.setStatus({ status })).then((error) => {
+        if (error && previous)
+          setMe((prev) => (prev ? { ...prev, statusPreference: previous } : prev))
+        return error
+      })
+    },
+    [accountAction, api, me?.statusPreference]
+  )
+
+  const setCustomStatus = useCallback(
+    (input: CustomStatusInput | null) =>
+      accountAction(() => api.setStatus({ customStatus: input })),
+    [accountAction, api]
+  )
+
+  const updateProfile = useCallback(
+    (patch: ProfilePatch) => accountAction(() => api.updateMe(patch)),
+    [accountAction, api]
+  )
+
+  const uploadProfileImage = useCallback(
+    (kind: ProfileImageKind, image: Blob, onProgress?: (fraction: number) => void) =>
+      accountAction(() => api.uploadProfileImage(kind, image, { onProgress })),
+    [accountAction, api]
+  )
+
+  const removeProfileImage = useCallback(
+    (kind: ProfileImageKind) => accountAction(() => api.removeProfileImage(kind)),
+    [accountAction, api]
+  )
+
+  const updatePreferences = useCallback(
+    async (patch: PreferencesPatch): Promise<string | null> => {
+      let previous: ApiPreferences | undefined
+      setPreferences((prev) => {
+        previous = prev
+        return { ...prev, ...patch }
+      })
+      try {
+        const saved = await api.updatePreferences(patch)
+        setPreferences(saved)
+        setPreferencesLoaded(true)
+        return null
+      } catch (err) {
+        if (previous) setPreferences(previous)
+        if (handleAuthError(err)) return 'Signed out'
+        return describeError(err)
+      }
+    },
+    [api, handleAuthError]
+  )
+
+  const setIdle = useCallback((idle: boolean) => {
+    idleRef.current = idle
+    gatewayRef.current?.setIdle(idle)
+  }, [])
+
+  const fetchProfile = useCallback(
+    async (userId: string): Promise<ApiProfile> => {
+      try {
+        const profile = await api.profile(userId)
+        setUsers((prev) => ({ ...prev, [profile.user.id]: profile.user }))
+        return profile
+      } catch (err) {
+        handleAuthError(err)
+        throw err
+      }
+    },
+    [api, handleAuthError]
+  )
 
   const fetchVoiceToken = useCallback(
     async (channelId: string): Promise<ApiVoiceToken> => {
@@ -981,6 +1134,16 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     voiceStreaming,
     gateway,
     attachments,
+    profileMedia,
+    preferences,
+    preferencesLoaded,
+    updatePreferences,
+    updateProfile,
+    uploadProfileImage,
+    removeProfileImage,
+    setCustomStatus,
+    setIdle,
+    fetchProfile,
     focusChannel,
     markRead,
     ackRead,

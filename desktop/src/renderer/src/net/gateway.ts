@@ -2,12 +2,12 @@ import {
   CloseCodes,
   type ApiMe,
   type ApiMessage,
+  type ApiPreferences,
   type ApiServer,
   type ApiUser,
   type ApiVoiceState,
   type GatewayClientFrame,
-  type GatewayServerFrame,
-  type SelectableStatus
+  type GatewayServerFrame
 } from './protocol'
 
 export type GatewayStatus = 'connecting' | 'connected' | 'reconnecting' | 'auth_failed' | 'closed'
@@ -29,6 +29,10 @@ export interface GatewayHandlers {
   onPinUpdate: (update: GatewayEvent<'pin_update'>) => void
   onReadStateUpdate: (update: GatewayEvent<'read_state_update'>) => void
   onUserUpdate: (user: ApiUser) => void
+  /** Your own account changed (status preference, profile) — possibly on another device. */
+  onMeUpdate: (me: ApiMe) => void
+  /** Your synced preferences changed on another device. */
+  onPreferencesUpdate: (preferences: ApiPreferences) => void
   onServerCreate: (server: ApiServer) => void
   onServerUpdate: (update: GatewayEvent<'server_update'>) => void
   onServerRemove: (removed: GatewayEvent<'server_remove'>) => void
@@ -57,7 +61,9 @@ export class GatewayClient {
   private attempt = 0
   private hasBeenReady = false
   private stopped = false
-  private desiredStatus: SelectableStatus = 'online'
+  /** This device's automatic idle state, reported on identify and whenever it changes. */
+  private idle = false
+  private identified = false
 
   constructor(
     private readonly url: string,
@@ -88,9 +94,11 @@ export class GatewayClient {
     this.handlers.onStatus('closed')
   }
 
-  setStatus(status: SelectableStatus): void {
-    this.desiredStatus = status
-    this.send({ op: 'set_status', d: { status } })
+  /** Reports this device as idle/active. Sent now if connected, else with the next identify. */
+  setIdle(idle: boolean): void {
+    if (this.idle === idle) return
+    this.idle = idle
+    if (this.identified) this.send({ op: 'set_idle', d: { idle } })
   }
 
   private readonly onNetworkOnline = (): void => {
@@ -125,6 +133,7 @@ export class GatewayClient {
     socket.onclose = (event) => {
       if (this.socket !== socket) return
       this.socket = null
+      this.identified = false
       this.clearTimers()
       if (this.stopped) return
       if (event.code === CloseCodes.authFailed) {
@@ -142,13 +151,15 @@ export class GatewayClient {
     switch (frame.op) {
       case 'hello':
         this.startHeartbeat(frame.d.heartbeatIntervalMs)
-        this.send({ op: 'identify', d: { token: this.token } })
+        this.identified = false
+        // Include the idle state so a reconnect while away never flashes 'online'.
+        this.send({ op: 'identify', d: { token: this.token, idle: this.idle } })
         break
       case 'ready': {
         const isReconnect = this.hasBeenReady
         this.hasBeenReady = true
         this.attempt = 0
-        if (this.desiredStatus !== 'online') this.setStatus(this.desiredStatus)
+        this.identified = true
         this.handlers.onStatus('connected')
         this.handlers.onReady(frame.d, isReconnect)
         break
@@ -176,6 +187,12 @@ export class GatewayClient {
         break
       case 'user_update':
         this.handlers.onUserUpdate(frame.d)
+        break
+      case 'me_update':
+        this.handlers.onMeUpdate(frame.d)
+        break
+      case 'preferences_update':
+        this.handlers.onPreferencesUpdate(frame.d)
         break
       case 'server_create':
         this.handlers.onServerCreate(frame.d)

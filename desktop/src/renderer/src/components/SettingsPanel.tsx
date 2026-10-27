@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import type { SelectableStatus, UserSettings } from '../types'
-import { accentChoices, defaultSettings } from '../data/defaults'
-import { presenceFromSetting, statusLabels } from '../lib/format'
-import { LIMITS } from '../net/protocol'
+import type { SelectableStatus, User, UserSettings } from '../types'
+import { defaultSettings } from '../data/defaults'
+import { formatMemberSince, presenceFromSetting, statusLabels } from '../lib/format'
+import { describeStatusExpiry } from '../lib/appearance'
 import type { MediaSession, MediaSnapshot } from '../media/MediaSession'
 import {
   projectedEgressMbps,
@@ -14,18 +14,21 @@ import {
   type ScreenLayering,
   type ScreenProfileId
 } from '../media/screenProfiles'
-import Avatar from './Avatar'
 import { CloseIcon } from './Icons'
 import { Field, Toggle } from './SettingsControls'
 import VoiceSettings from './VoiceSettings'
 import DiagnosticsPanel from './DiagnosticsPanel'
 import { AdminSection, DevicesSection, SecuritySection } from './manage/AccountSections'
-import type { ApiClient } from '../net/api'
-import type { ApiMe, ApiServer } from '../net/protocol'
+import type { ApiClient, PreferencesPatch, ProfilePatch } from '../net/api'
+import type { ApiMe, ApiPreferences, ApiServer, ProfileImageKind } from '../net/protocol'
+import ProfileSettings from './profile/ProfileSettings'
+import AppearanceSettings from './profile/AppearanceSettings'
+import ProfileCard, { CustomStatusText } from './profile/ProfileCard'
 import EncoderSettings from './EncoderSettings'
 
-type SectionId =
+export type SectionId =
   | 'account'
+  | 'profile'
   | 'security'
   | 'devices'
   | 'admin'
@@ -37,6 +40,7 @@ type SectionId =
 
 const sections: { id: SectionId; label: string; adminOnly?: boolean }[] = [
   { id: 'account', label: 'My Account' },
+  { id: 'profile', label: 'Profile' },
   { id: 'security', label: 'Security' },
   { id: 'devices', label: 'Devices' },
   { id: 'admin', label: 'Administration', adminOnly: true },
@@ -54,14 +58,25 @@ interface SettingsPanelProps {
   voiceSession: MediaSession
   voiceState: MediaSnapshot
   userName: (userId: string) => string
-  displayName: string
   username: string
-  avatarColor: string
   serverUrl: string
   muted: boolean
   deafened: boolean
+  /** Section to open first (e.g. 'profile' from "Edit Profile"). */
+  initialSection?: SectionId
   onChange: (patch: Partial<UserSettings>) => void
-  onSaveDisplayName: (name: string) => Promise<string | null>
+  preferences: ApiPreferences
+  preferencesLoaded: boolean
+  onPreferencesChange: (patch: PreferencesPatch) => Promise<string | null>
+  onProfileSave: (patch: ProfilePatch) => Promise<string | null>
+  onProfileImageUpload: (
+    kind: ProfileImageKind,
+    image: Blob,
+    onProgress: (fraction: number) => void
+  ) => Promise<string | null>
+  onProfileImageRemove: (kind: ProfileImageKind) => Promise<string | null>
+  onSetStatus: (status: SelectableStatus) => void
+  onEditCustomStatus: () => void
   onLogout: () => void
   api: ApiClient
   me: ApiMe | null
@@ -78,14 +93,20 @@ function SettingsPanel({
   voiceSession,
   voiceState,
   userName,
-  displayName,
   username,
-  avatarColor,
   serverUrl,
   muted,
   deafened,
+  initialSection = 'account',
   onChange,
-  onSaveDisplayName,
+  preferences,
+  preferencesLoaded,
+  onPreferencesChange,
+  onProfileSave,
+  onProfileImageUpload,
+  onProfileImageRemove,
+  onSetStatus,
+  onEditCustomStatus,
   onLogout,
   api,
   me,
@@ -95,10 +116,8 @@ function SettingsPanel({
   onToggleDeafen,
   onClose
 }: SettingsPanelProps): React.JSX.Element {
-  const [section, setSection] = useState<SectionId>('account')
-  const [nameDraft, setNameDraft] = useState(displayName)
-  const [nameSaving, setNameSaving] = useState(false)
-  const [nameMessage, setNameMessage] = useState<{ error: boolean; text: string } | null>(null)
+  const [section, setSection] = useState<SectionId>(initialSection)
+  const [now] = useState(() => Date.now())
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -108,17 +127,23 @@ function SettingsPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const trimmedName = nameDraft.trim()
-  const nameChanged = trimmedName.length > 0 && trimmedName !== displayName
-
-  const saveName = async (): Promise<void> => {
-    if (!nameChanged || nameSaving) return
-    setNameSaving(true)
-    setNameMessage(null)
-    const error = await onSaveDisplayName(trimmedName)
-    setNameSaving(false)
-    setNameMessage(error ? { error: true, text: error } : { error: false, text: 'Saved' })
-  }
+  const statusPreference = me?.statusPreference ?? 'online'
+  const self: User | null = me
+    ? {
+        id: me.id,
+        name: me.displayName,
+        username: me.username,
+        avatarColor: me.avatarColor,
+        status: presenceFromSetting(statusPreference),
+        avatarId: me.avatarId,
+        bannerId: me.bannerId,
+        accentColor: me.accentColor,
+        bio: me.bio,
+        pronouns: me.pronouns,
+        createdAt: me.createdAt,
+        customStatus: me.ownCustomStatus
+      }
+    : null
 
   return (
     <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="User Settings">
@@ -156,148 +181,143 @@ function SettingsPanel({
           {section === 'account' && (
             <>
               <h2>My Account</h2>
-              <div className="profile-card">
-                <div className="profile-banner" style={{ background: settings.accentColor }} />
-                <div className="profile-card-body">
-                  <Avatar
-                    name={displayName}
-                    color={avatarColor}
-                    size={80}
-                    status={presenceFromSetting(settings.status)}
-                    ringColor="var(--bg-floating)"
-                  />
-                  <div>
-                    <div className="profile-name">{displayName}</div>
-                    <div className="profile-sub">
-                      {settings.customStatus || statusLabels[settings.status]}
-                    </div>
+              {self && me ? (
+                <>
+                  <div className="account-card">
+                    <ProfileCard user={self} variant="preview" customStatus={me.ownCustomStatus}>
+                      <div className="profile-card-actions">
+                        <button
+                          type="button"
+                          className="button primary small"
+                          onClick={() => setSection('profile')}
+                        >
+                          Edit User Profile
+                        </button>
+                      </div>
+                    </ProfileCard>
                   </div>
-                </div>
-              </div>
 
-              <Field label="Display Name">
-                <form
-                  className="inline-form"
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    void saveName()
-                  }}
-                >
-                  <input
-                    className="text-input"
-                    type="text"
-                    value={nameDraft}
-                    maxLength={LIMITS.displayNameMaxLength}
-                    onChange={(e) => {
-                      setNameDraft(e.target.value)
-                      setNameMessage(null)
-                    }}
-                  />
-                  <button
-                    type="submit"
-                    className="button primary"
-                    disabled={!nameChanged || nameSaving}
-                  >
-                    {nameSaving ? 'Saving…' : 'Save'}
-                  </button>
-                </form>
-                {nameMessage && (
-                  <span className={`field-hint${nameMessage.error ? ' error' : ''}`}>
-                    {nameMessage.text}
-                  </span>
-                )}
-              </Field>
+                  <dl className="account-details">
+                    <div>
+                      <dt>Display Name</dt>
+                      <dd>{me.displayName}</dd>
+                    </div>
+                    <div>
+                      <dt>Username</dt>
+                      <dd>
+                        @{username}
+                        <span className="muted"> · permanent, used to sign in</span>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Account</dt>
+                      <dd>
+                        {me.hasPassword ? 'Password account' : 'Development identity (no password)'}
+                        {me.instanceAdmin ? ' · Administrator' : ''}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Member Since</dt>
+                      <dd>{formatMemberSince(me.createdAt) ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>Server</dt>
+                      <dd>
+                        <code>{serverUrl}</code>
+                      </dd>
+                    </div>
+                  </dl>
+                  {!me.hasPassword && (
+                    <div className="dev-notice">
+                      <strong>Development identity</strong>
+                      <span>
+                        This identity has no password. See Security to claim it as a real account.
+                      </span>
+                    </div>
+                  )}
 
-              <div className="dev-notice">
-                <strong>{me?.hasPassword ? 'Account' : 'Development identity'}</strong>
-                <span>
-                  Signed in as <code>@{username}</code> on <code>{serverUrl}</code>.{' '}
-                  {me?.hasPassword
-                    ? 'Password, recovery codes and devices are under Security and Devices.'
-                    : 'This identity has no password. See Security to claim it as a real account.'}
-                </span>
-              </div>
+                  <Field label="Custom Status">
+                    <div className="custom-status-row">
+                      {me.ownCustomStatus ? (
+                        <span>
+                          <CustomStatusText status={me.ownCustomStatus} />
+                          {me.ownCustomStatus.expiresAt && (
+                            <span className="muted">
+                              {' '}
+                              · {describeStatusExpiry(me.ownCustomStatus.expiresAt, now)}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="muted">No custom status</span>
+                      )}
+                      <button
+                        type="button"
+                        className="button secondary small"
+                        onClick={onEditCustomStatus}
+                      >
+                        {me.ownCustomStatus ? 'Edit' : 'Set Status'}
+                      </button>
+                    </div>
+                  </Field>
 
-              <Field label="Custom Status">
-                <input
-                  className="text-input"
-                  type="text"
-                  value={settings.customStatus}
-                  maxLength={64}
-                  placeholder="What are you up to?"
-                  onChange={(e) => onChange({ customStatus: e.target.value })}
+                  <Field label="Online Status">
+                    <div className="status-options" role="radiogroup" aria-label="Online status">
+                      {statusOptions.map((status) => (
+                        <label
+                          key={status}
+                          className={`status-option${statusPreference === status ? ' selected' : ''}`}
+                        >
+                          <input
+                            type="radio"
+                            name="status"
+                            value={status}
+                            checked={statusPreference === status}
+                            onChange={() => onSetStatus(status)}
+                          />
+                          <span
+                            className={`status-dot inline status-${presenceFromSetting(status)}`}
+                          />
+                          {statusLabels[status]}
+                        </label>
+                      ))}
+                    </div>
+                    <span className="field-hint muted">
+                      Synced to all your devices. Invisible shows you as offline to everyone else.
+                    </span>
+                  </Field>
+                </>
+              ) : (
+                <div className="spinner" aria-label="Loading" />
+              )}
+            </>
+          )}
+
+          {section === 'profile' && (
+            <>
+              <h2>Profile</h2>
+              {me ? (
+                <ProfileSettings
+                  me={me}
+                  onSave={onProfileSave}
+                  onUpload={onProfileImageUpload}
+                  onRemove={onProfileImageRemove}
                 />
-              </Field>
-
-              <Field label="Online Status">
-                <div className="status-options" role="radiogroup">
-                  {statusOptions.map((status) => (
-                    <label
-                      key={status}
-                      className={`status-option${settings.status === status ? ' selected' : ''}`}
-                    >
-                      <input
-                        type="radio"
-                        name="status"
-                        value={status}
-                        checked={settings.status === status}
-                        onChange={() => onChange({ status })}
-                      />
-                      <span className={`status-dot inline status-${presenceFromSetting(status)}`} />
-                      {statusLabels[status]}
-                    </label>
-                  ))}
-                </div>
-              </Field>
+              ) : (
+                <div className="spinner" aria-label="Loading" />
+              )}
             </>
           )}
 
           {section === 'appearance' && (
-            <>
-              <h2>Appearance</h2>
-              <Field label="Accent Color">
-                <div className="swatches">
-                  {accentChoices.map((color) => (
-                    <button
-                      key={color}
-                      type="button"
-                      className={`swatch${settings.accentColor === color ? ' selected' : ''}`}
-                      style={{ background: color }}
-                      onClick={() => onChange({ accentColor: color })}
-                      aria-label={`Accent ${color}`}
-                      aria-pressed={settings.accentColor === color}
-                    />
-                  ))}
-                </div>
-              </Field>
-
-              <Field label={`Chat Font Size — ${settings.fontSize}px`}>
-                <input
-                  className="slider"
-                  type="range"
-                  min={12}
-                  max={20}
-                  step={1}
-                  value={settings.fontSize}
-                  onChange={(e) => onChange({ fontSize: Number(e.target.value) })}
-                />
-              </Field>
-
-              <Toggle
-                label="Compact Mode"
-                description="Fit more messages on screen by removing avatars and spacing."
-                checked={settings.compactMode}
-                onChange={(compactMode) => onChange({ compactMode })}
-              />
-              <Toggle
-                label="Show Timestamps"
-                description="Display the time each message was sent."
-                checked={settings.showTimestamps}
-                onChange={(showTimestamps) => onChange({ showTimestamps })}
-              />
-            </>
+            <AppearanceSettings
+              preferences={preferences}
+              loaded={preferencesLoaded}
+              onChange={onPreferencesChange}
+              fontSize={settings.fontSize}
+              onFontSizeChange={(fontSize) => onChange({ fontSize })}
+            />
           )}
-
           {section === 'voice' && (
             <VoiceSettings
               session={voiceSession}
