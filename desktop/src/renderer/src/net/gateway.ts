@@ -11,6 +11,10 @@ import {
 
 export type GatewayStatus = 'connecting' | 'connected' | 'reconnecting' | 'auth_failed' | 'closed'
 
+/** Payload of a server frame by op. */
+export type GatewayEvent<Op extends GatewayServerFrame['op']> =
+  Extract<GatewayServerFrame, { op: Op }> extends { d: infer D } ? D : never
+
 export interface GatewayHandlers {
   onStatus: (status: GatewayStatus, retryInMs?: number) => void
   onReady: (
@@ -18,6 +22,11 @@ export interface GatewayHandlers {
     isReconnect: boolean
   ) => void
   onMessage: (message: ApiMessage) => void
+  onMessageUpdate: (update: GatewayEvent<'message_update'>) => void
+  onMessageDelete: (deleted: GatewayEvent<'message_delete'>) => void
+  onReactionUpdate: (update: GatewayEvent<'reaction_update'>) => void
+  onPinUpdate: (update: GatewayEvent<'pin_update'>) => void
+  onReadStateUpdate: (update: GatewayEvent<'read_state_update'>) => void
   onUserUpdate: (user: ApiUser) => void
   onServerCreate: (server: ApiServer) => void
   onVoiceStateUpdate: (state: {
@@ -146,6 +155,21 @@ export class GatewayClient {
         break
       case 'message_create':
         this.handlers.onMessage(frame.d)
+        break
+      case 'message_update':
+        this.handlers.onMessageUpdate(frame.d)
+        break
+      case 'message_delete':
+        this.handlers.onMessageDelete(frame.d)
+        break
+      case 'reaction_update':
+        this.handlers.onReactionUpdate(frame.d)
+        break
+      case 'pin_update':
+        this.handlers.onPinUpdate(frame.d)
+        break
+      case 'read_state_update':
+        this.handlers.onReadStateUpdate(frame.d)
         break
       case 'user_update':
         this.handlers.onUserUpdate(frame.d)

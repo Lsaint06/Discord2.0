@@ -1,4 +1,5 @@
 import { isIP } from 'node:net'
+import { dirname, join, resolve } from 'node:path'
 
 export interface LiveKitConfig {
   apiKey: string
@@ -8,6 +9,28 @@ export interface LiveKitConfig {
   apiUrl: string
   /** WebSocket URL handed to desktop clients (e.g. ws://192.168.68.65:7880). */
   publicUrl: string
+}
+
+export interface AttachmentConfig {
+  /** Directory for attachment binaries (inside the persistent data volume). */
+  dir: string
+  maxImageBytes: number
+  maxFileBytes: number
+  maxFilesPerMessage: number
+  /** Total bytes accepted in one upload request. */
+  maxRequestBytes: number
+  /** Images larger than this many pixels are rejected (protects clients from decode bombs). */
+  maxImagePixels: number
+  /** Per-user storage quota (sent + pending). */
+  userQuotaBytes: number
+  /** Total storage for all attachments. */
+  totalQuotaBytes: number
+  /** Uploads are refused when the volume has less free space than this. */
+  minFreeDiskBytes: number
+  /** Max uploaded-but-unsent attachments per user. */
+  maxPendingPerUser: number
+  /** Unsent uploads older than this are deleted by the cleanup job. */
+  pendingTtlMs: number
 }
 
 export interface Config {
@@ -27,6 +50,42 @@ export interface Config {
   logLevel: string
   /** Voice (LiveKit). null = voice disabled. */
   livekit: LiveKitConfig | null
+  attachments: AttachmentConfig
+}
+
+const MB = 1024 * 1024
+
+function positiveNumber(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name]
+  if (raw === undefined || raw === '') return fallback
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a positive number`)
+  return value
+}
+
+/** Defaults to "<directory of the SQLite file>/attachments" so both share the same volume. */
+function defaultAttachmentsDir(databaseUrl: string): string {
+  if (databaseUrl.startsWith('sqlite:')) {
+    const file = databaseUrl.slice('sqlite:'.length)
+    if (file && file !== ':memory:') return join(dirname(resolve(file)), 'attachments')
+  }
+  return resolve('./data/attachments')
+}
+
+function parseAttachments(env: NodeJS.ProcessEnv, databaseUrl: string): AttachmentConfig {
+  return {
+    dir: resolve(env.ATTACHMENTS_DIR || defaultAttachmentsDir(databaseUrl)),
+    maxImageBytes: positiveNumber(env, 'UPLOAD_MAX_IMAGE_MB', 15) * MB,
+    maxFileBytes: positiveNumber(env, 'UPLOAD_MAX_FILE_MB', 25) * MB,
+    maxFilesPerMessage: Math.min(10, Math.floor(positiveNumber(env, 'UPLOAD_MAX_FILES', 5))),
+    maxRequestBytes: positiveNumber(env, 'UPLOAD_MAX_REQUEST_MB', 50) * MB,
+    maxImagePixels: positiveNumber(env, 'UPLOAD_MAX_IMAGE_MEGAPIXELS', 50) * 1_000_000,
+    userQuotaBytes: positiveNumber(env, 'UPLOAD_USER_QUOTA_MB', 1024) * MB,
+    totalQuotaBytes: positiveNumber(env, 'UPLOAD_TOTAL_QUOTA_MB', 20 * 1024) * MB,
+    minFreeDiskBytes: positiveNumber(env, 'UPLOAD_MIN_FREE_DISK_MB', 2048) * MB,
+    maxPendingPerUser: 20,
+    pendingTtlMs: 6 * 60 * 60_000
+  }
 }
 
 function parseLiveKit(env: NodeJS.ProcessEnv): LiveKitConfig | null {
@@ -76,20 +135,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`Invalid PORT: ${env.PORT}`)
   }
+  const databaseUrl = env.DATABASE_URL ?? 'sqlite:./data/discord2.db'
 
   return {
     env: nodeEnv,
     // Loopback by default so the development server is never reachable from other machines by accident.
     host: env.HOST ?? '127.0.0.1',
     port,
-    databaseUrl: env.DATABASE_URL ?? 'sqlite:./data/discord2.db',
+    databaseUrl,
     devAuth: bool(env.DEV_AUTH, !isProd),
     corsOrigins: list(env.CORS_ORIGINS),
     allowLocalhostOrigins: bool(env.ALLOW_LOCALHOST_ORIGINS, !isProd),
     allowNullOrigin: bool(env.ALLOW_NULL_ORIGIN, true),
     trustProxy: bool(env.TRUST_PROXY, false),
     logLevel: env.LOG_LEVEL ?? (isProd ? 'info' : 'debug'),
-    livekit: parseLiveKit(env)
+    livekit: parseLiveKit(env),
+    attachments: parseAttachments(env, databaseUrl)
   }
 }
 

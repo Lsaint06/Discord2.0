@@ -392,9 +392,15 @@ function SettingsPanel({
               <h2>Notifications</h2>
               <Toggle
                 label="Desktop Notifications"
-                description="Show a notification when you are mentioned."
+                description="Show a notification for new messages in channels you haven’t muted while you’re looking elsewhere."
                 checked={settings.desktopNotifications}
                 onChange={(desktopNotifications) => onChange({ desktopNotifications })}
+              />
+              <Toggle
+                label="Show Message Preview"
+                description="Include message text in notifications. Off by default so content isn’t shown on a shared screen."
+                checked={settings.notificationPreview}
+                onChange={(notificationPreview) => onChange({ notificationPreview })}
               />
               <Toggle
                 label="Notification Sounds"

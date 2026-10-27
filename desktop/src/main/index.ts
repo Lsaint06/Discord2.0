@@ -5,7 +5,7 @@ import icon from '../../resources/icon.png?asset'
 import { setupMediaIntegration } from './media'
 import { setupScreenCapture } from './screenCapture'
 import { applyEncoderFlags, setupEncoderFlagsIpc } from './encoderFlags'
-import { isAppUrl } from './appUrl'
+import { isAppUrl, isWebUrl } from './appUrl'
 
 // Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
 // Lets two clients run side by side on one PC for testing.
@@ -50,9 +50,17 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  // Links in messages open in the system browser, but only plain web URLs.
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isWebUrl(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+  // The app window never navigates away from the app itself.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isAppUrl(url)) {
+      event.preventDefault()
+      if (isWebUrl(url)) void shell.openExternal(url)
+    }
   })
 
   // HMR for renderer base on electron-vite cli.

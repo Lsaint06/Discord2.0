@@ -13,7 +13,7 @@ import { isAppUrl } from './appUrl'
 
 /**
  * Narrowly scoped main-process media integration:
- * - grants microphone (audio-only) capture to our own renderer, denies every other permission
+ * - grants microphone (audio-only) capture and notifications to our own renderer, denies every other permission
  * - reports the OS microphone privacy state (Windows/macOS)
  * - optional system-wide push-to-talk via a single Electron globalShortcut (no keyboard hooks)
  */
@@ -53,12 +53,18 @@ export function setupMediaIntegration(): void {
     callback(
       permission === 'clipboard-sanitized-write' ||
         permission === 'display-capture' ||
-        permission === 'fullscreen'
+        permission === 'fullscreen' ||
+        permission === 'notifications'
     )
   })
 
   ses.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
-    if (permission !== 'media' && permission !== 'display-capture' && permission !== 'fullscreen') {
+    if (
+      permission !== 'media' &&
+      permission !== 'display-capture' &&
+      permission !== 'fullscreen' &&
+      permission !== 'notifications'
+    ) {
       return false
     }
     // Never expose cameras (this also hides them from enumerateDevices).

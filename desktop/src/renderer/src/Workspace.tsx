@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Channel, ChannelCategory, Server, User, UserSettings } from './types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Channel, ChannelCategory, Message, Server, User, UserSettings } from './types'
 import { presenceFromSetting, statusLabels } from './lib/format'
 import { loadSettings, saveSettings } from './net/session'
 import type { ApiServer, ApiUser } from './net/protocol'
@@ -7,9 +7,11 @@ import { useBackend, type BackendSession } from './hooks/useBackend'
 import { useVoice } from './hooks/useVoice'
 import { usePushToTalk } from './hooks/usePushToTalk'
 import { describeKey } from './media/voiceLogic'
+import { notificationText, shouldNotify } from './chat/unread'
+import { pushRecent } from './chat/emoji'
 import ServerSidebar from './components/ServerSidebar'
 import ChannelSidebar, { type VoiceUserDetails } from './components/ChannelSidebar'
-import ChatPanel from './components/ChatPanel'
+import ChatPanel, { type JumpTarget } from './components/ChatPanel'
 import MemberList from './components/MemberList'
 import UserPanel, { type VoiceConnection } from './components/UserPanel'
 import SettingsPanel from './components/SettingsPanel'
@@ -19,8 +21,6 @@ import ScreenSharePicker from './components/ScreenSharePicker'
 import StreamViewer, { type ViewerMode } from './components/StreamViewer'
 import ShareHealthNote from './components/ShareHealthNote'
 import type { ScreenShareOptions, ScreenSource } from './media/ScreenShareController'
-
-const EMPTY_MESSAGES: never[] = []
 
 function toUiServer(server: ApiServer, memberIds: string[]): Server {
   const categories: ChannelCategory[] = []
@@ -87,9 +87,12 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     () => onSignOut('Your session is no longer valid. Please sign in again.'),
     [onSignOut]
   )
+  const notifyRef = useRef<(m: Message) => void>(() => undefined)
+  const onIncomingMessage = useCallback((m: Message) => notifyRef.current(m), [])
   const backend = useBackend(session, {
     initialStatus: settings.status,
-    onSessionInvalid: handleSessionInvalid
+    onSessionInvalid: handleSessionInvalid,
+    onIncomingMessage
   })
 
   useEffect(() => {
@@ -284,9 +287,6 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
 
   const selectServer = (serverId: string): void => {
     setActiveServerId(serverId)
-    const server = servers.find((s) => s.id === serverId)
-    const channelId = activeChannelByServer[serverId] || (server && defaultChannel(server)?.id)
-    if (channelId) backend.markRead(channelId)
   }
 
   const selectChannel = (channel: Channel): void => {
@@ -295,11 +295,104 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
       void voice.session.join(channel.id)
       return
     }
+    // Opening a channel doesn't mark it read; the chat panel does that once the newest
+    // messages are actually on screen in a focused window.
     setActiveChannelByServer((prev) => ({ ...prev, [activeServer.id]: channel.id }))
-    backend.markRead(channel.id)
     // Keep watching in a mini player while reading chat.
     if (watching) setViewerMode('mini')
   }
+
+  // ---- Jump to a message anywhere (search results, links, notifications) ----
+  const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null)
+  const serversRef = useRef(servers)
+  useEffect(() => {
+    serversRef.current = servers
+  }, [servers])
+  const jumpTo = useCallback((channelId: string, messageId: string) => {
+    const server = serversRef.current.find((s) =>
+      s.categories.some((c) => c.channels.some((ch) => ch.id === channelId))
+    )
+    if (!server) return
+    setActiveServerId(server.id)
+    setActiveChannelByServer((prev) => ({ ...prev, [server.id]: channelId }))
+    setViewerMode((mode) => (mode === 'focus' ? 'mini' : mode))
+    setJumpTarget((prev) => ({ channelId, messageId, seq: (prev?.seq ?? 0) + 1 }))
+  }, [])
+
+  const channelName = useCallback(
+    (channelId: string): string => {
+      for (const s of servers) {
+        for (const c of s.categories) {
+          const ch = c.channels.find((x) => x.id === channelId)
+          if (ch) return ch.name
+        }
+      }
+      return 'unknown'
+    },
+    [servers]
+  )
+
+  // ---- Desktop notifications (content hidden unless the user opts in) ----
+  useEffect(() => {
+    notifyRef.current = (m: Message) => {
+      const permission =
+        typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+      if (
+        !shouldNotify(m, {
+          enabled: settings.desktopNotifications,
+          permission,
+          meId: backend.me?.id,
+          mutedChannels: settings.mutedChannels,
+          activeChannelId,
+          windowFocused: document.hasFocus()
+        })
+      ) {
+        return
+      }
+      const { title, body } = notificationText({
+        authorName: resolveUser(m.authorId).name,
+        channelName: channelName(m.channelId),
+        content: m.content,
+        attachmentCount: m.attachments?.length ?? 0,
+        showPreview: settings.notificationPreview
+      })
+      const n = new Notification(title, {
+        body,
+        silent: !settings.notificationSounds,
+        tag: m.channelId
+      })
+      n.onclick = () => {
+        window.focus()
+        jumpTo(m.channelId, m.id)
+      }
+    }
+  })
+
+  const toggleChannelMute = (channelId: string): void => {
+    const next = { ...settings.mutedChannels }
+    if (next[channelId]) delete next[channelId]
+    else next[channelId] = true
+    updateSettings({ mutedChannels: next })
+  }
+
+  const useEmoji = useCallback(
+    (emoji: string) =>
+      setSettings((prev) => ({ ...prev, recentEmoji: pushRecent(prev.recentEmoji, emoji) })),
+    []
+  )
+
+  const userList = useMemo(
+    () =>
+      Object.keys(backend.users)
+        .map(resolveUser)
+        .filter((u) => !u.bot),
+    [backend.users, resolveUser]
+  )
+  const unreadCounts = useMemo(
+    () =>
+      Object.fromEntries(Object.entries(backend.readStates).map(([id, r]) => [id, r.unreadCount])),
+    [backend.readStates]
+  )
 
   const toggleMute = (): void => {
     // Unmuting while deafened also undeafens, matching common voice-chat behavior.
@@ -383,6 +476,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
         server={activeServer}
         activeChannelId={activeChannel?.id ?? ''}
         unreadChannelIds={backend.unread}
+        unreadCounts={unreadCounts}
         voiceChannelId={voiceChannelId}
         selfId={selfId}
         resolveUser={resolveUser}
@@ -476,11 +570,10 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
       {watching && viewerMode === 'focus' ? null : activeChannel ? (
         <ChatPanel
           channel={activeChannel}
-          messages={channelState?.messages ?? EMPTY_MESSAGES}
-          loaded={channelState?.loaded ?? false}
-          loadError={channelState?.error}
-          hasMore={channelState?.hasMore ?? false}
-          loadingOlder={channelState?.loadingOlder ?? false}
+          serverId={activeServer.id}
+          state={channelState}
+          readState={backend.readStates[activeChannel.id]}
+          meId={selfId}
           banner={
             <ConnectionBanner
               status={backend.gateway.status}
@@ -491,14 +584,19 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
           showMembers={showMembers}
           compactMode={settings.compactMode}
           showTimestamps={settings.showTimestamps}
+          notificationsMuted={Boolean(settings.mutedChannels[activeChannel.id])}
+          pinsRevision={backend.pinsRevision[activeChannel.id] ?? 0}
+          recentEmoji={settings.recentEmoji}
+          jumpTarget={jumpTarget}
+          users={userList}
+          backend={backend}
           resolveUser={resolveUser}
           roleColor={roleColor}
+          channelName={channelName}
           onToggleMembers={() => setShowMembers((v) => !v)}
-          onSendMessage={(content) => backend.sendMessage(activeChannel.id, content)}
-          onLoadOlder={() => void backend.loadOlder(activeChannel.id)}
-          onReload={() => backend.reloadChannel(activeChannel.id)}
-          onRetryMessage={(nonce) => backend.retryMessage(activeChannel.id, nonce)}
-          onDiscardMessage={(nonce) => backend.discardMessage(activeChannel.id, nonce)}
+          onToggleNotificationsMuted={() => toggleChannelMute(activeChannel.id)}
+          onEmojiUsed={useEmoji}
+          onJumpTo={jumpTo}
         />
       ) : (
         <main className="chat-panel empty-state">This server has no text channels yet.</main>

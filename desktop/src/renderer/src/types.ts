@@ -4,6 +4,7 @@ import type {
   ScreenLayering,
   ScreenProfileId
 } from './media/screenProfiles'
+import type { ApiAttachment, ApiMessageReference, ApiReaction } from './net/protocol'
 
 export type PresenceStatus = 'online' | 'idle' | 'dnd' | 'offline'
 
@@ -67,6 +68,11 @@ export interface Message {
   pending?: boolean
   /** Error text when sending failed. */
   failed?: string
+  editedAt?: number | null
+  replyTo?: ApiMessageReference | null
+  attachments?: ApiAttachment[]
+  reactions?: ApiReaction[]
+  pinned?: boolean
 }
 
 export type InputMode = 'voice-activity' | 'push-to-talk'
@@ -112,5 +118,10 @@ export interface UserSettings {
   /** Show the live stats overlay in the stream viewer by default. */
   showStreamStats: boolean
   desktopNotifications: boolean
+  /** Include message text in OS notifications (off by default for privacy). */
+  notificationPreview: boolean
+  /** Channels whose desktop notifications are muted. */
+  mutedChannels: Record<string, boolean>
+  recentEmoji: string[]
   notificationSounds: boolean
 }

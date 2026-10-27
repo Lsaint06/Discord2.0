@@ -16,6 +16,16 @@ services:
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}
       LIVEKIT_URL: http://livekit:7880
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:?set LIVEKIT_PUBLIC_URL in .env, e.g. ws://192.168.68.65:7880}
+      # Attachments (Milestone 6). Files live in /data/attachments on the same volume as the
+      # database. Empty = built-in default (see .env.example).
+      UPLOAD_MAX_IMAGE_MB: ${UPLOAD_MAX_IMAGE_MB:-}
+      UPLOAD_MAX_FILE_MB: ${UPLOAD_MAX_FILE_MB:-}
+      UPLOAD_MAX_FILES: ${UPLOAD_MAX_FILES:-}
+      UPLOAD_MAX_REQUEST_MB: ${UPLOAD_MAX_REQUEST_MB:-}
+      UPLOAD_MAX_IMAGE_MEGAPIXELS: ${UPLOAD_MAX_IMAGE_MEGAPIXELS:-}
+      UPLOAD_USER_QUOTA_MB: ${UPLOAD_USER_QUOTA_MB:-}
+      UPLOAD_TOTAL_QUOTA_MB: ${UPLOAD_TOTAL_QUOTA_MB:-}
+      UPLOAD_MIN_FREE_DISK_MB: ${UPLOAD_MIN_FREE_DISK_MB:-}
     ports:
       # Loopback by default. On the Jetson set BIND_ADDRESS to its LAN IP (192.168.68.65).
       - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3001}:3001"

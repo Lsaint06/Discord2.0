@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.3.1",
+    "@fastify/multipart": "^9.4.0",
     "@fastify/websocket": "^11.3.4",
     "fastify": "^5.12.7",
     "livekit-server-sdk": "^2.19.2"

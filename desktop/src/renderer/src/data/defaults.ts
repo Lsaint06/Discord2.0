@@ -29,6 +29,9 @@ export const defaultSettings: UserSettings = {
   screenShareBackupLayer: true,
   showStreamStats: false,
   desktopNotifications: true,
+  notificationPreview: false,
+  mutedChannels: {},
+  recentEmoji: [],
   notificationSounds: true
 }
 

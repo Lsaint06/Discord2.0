@@ -1,14 +1,18 @@
 import cors from '@fastify/cors'
+import multipart from '@fastify/multipart'
 import websocket from '@fastify/websocket'
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
+import { AttachmentStore } from './attachments/store.js'
 import { isOriginAllowed, type Config } from './config.js'
 import { createLimiters, type AppContext } from './context.js'
 import type { Repository } from './db/repository.js'
 import { GatewayHub, type GatewayOptions } from './gateway.js'
 import { ApiError, tooManyRequests } from './lib/errors.js'
 import type { ApiErrorBody } from './protocol.js'
+import { cleanupAttachments, registerAttachmentRoutes } from './routes/attachments.js'
 import { registerDevAuthRoutes } from './routes/devAuth.js'
 import { registerMessageRoutes } from './routes/messages.js'
+import { registerReadStateRoutes, registerSearchRoutes } from './routes/readStates.js'
 import { registerServerRoutes } from './routes/servers.js'
 import { registerUserRoutes } from './routes/users.js'
 import { registerVoiceRoutes } from './routes/voice.js'
@@ -20,6 +24,8 @@ export interface BuildOptions {
   logger?: boolean
   /** How often to reconcile voice presence with LiveKit; 0 disables (tests). */
   voiceReconcileIntervalMs?: number
+  /** How often to clean up abandoned uploads and orphan files; 0 disables (tests). */
+  attachmentCleanupIntervalMs?: number
 }
 
 function errorBody(code: string, message: string, retryAfterMs?: number): ApiErrorBody {
@@ -35,6 +41,8 @@ export async function buildApp(
     logger: options.logger === false ? false : { level: config.logLevel },
     bodyLimit: 16 * 1024,
     trustProxy: config.trustProxy,
+    // Don't let an in-progress download or upload hold up shutdown/restart.
+    forceCloseConnections: true,
     // Strict JSON types: never silently coerce e.g. a number into a message string.
     ajv: { customOptions: { coerceTypes: false } }
   })
@@ -56,6 +64,7 @@ export async function buildApp(
     config,
     repo,
     hub,
+    attachments: new AttachmentStore(config.attachments.dir),
     voice: { store: voiceStore, bridge },
     limiters: createLimiters()
   }
@@ -84,11 +93,23 @@ export async function buildApp(
 
   await app.register(cors, {
     origin: (origin, cb) => cb(null, isOriginAllowed(config, origin)),
-    methods: ['GET', 'POST', 'PATCH'],
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
     allowedHeaders: ['Authorization', 'Content-Type'],
     maxAge: 600
   })
   await app.register(websocket, { options: { maxPayload: 4096 } })
+  // Streaming multipart: files go straight to disk; these are hard parser limits on top of the
+  // per-type checks in routes/attachments.ts.
+  await app.register(multipart, {
+    limits: {
+      fileSize: Math.max(config.attachments.maxImageBytes, config.attachments.maxFileBytes),
+      files: config.attachments.maxFilesPerMessage,
+      fields: 4,
+      fieldSize: 1024,
+      parts: config.attachments.maxFilesPerMessage + 4,
+      headerPairs: 50
+    }
+  })
 
   app.setErrorHandler((err: FastifyError | ApiError, request, reply) => {
     if (err instanceof ApiError) {
@@ -136,13 +157,32 @@ export async function buildApp(
   registerUserRoutes(app, ctx)
   registerServerRoutes(app, ctx)
   registerMessageRoutes(app, ctx)
+  registerAttachmentRoutes(app, ctx)
+  registerReadStateRoutes(app, ctx)
+  registerSearchRoutes(app, ctx)
   registerVoiceRoutes(app, ctx)
+
+  const cleanupMs = options.attachmentCleanupIntervalMs ?? 60 * 60_000
+  let cleanupTimer: NodeJS.Timeout | null = null
+  if (cleanupMs > 0) {
+    app.addHook('onReady', async () => {
+      const run = (): void => {
+        cleanupAttachments(ctx, app.log).catch((err: unknown) =>
+          app.log.error({ err }, 'attachment cleanup failed')
+        )
+      }
+      run()
+      cleanupTimer = setInterval(run, cleanupMs)
+      cleanupTimer.unref()
+    })
+  }
 
   const reconcileMs = options.voiceReconcileIntervalMs ?? 30_000
   if (bridge && reconcileMs > 0) app.addHook('onReady', async () => bridge.start(reconcileMs))
 
   app.addHook('onClose', async () => {
     bridge?.stop()
+    if (cleanupTimer) clearInterval(cleanupTimer)
     hub.shutdown()
     for (const limiter of Object.values(ctx.limiters)) limiter.dispose()
   })

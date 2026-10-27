@@ -78,8 +78,17 @@ All `/api/*` routes except `/api/meta` and `/api/dev/login` require `Authorizati
 | `GET /api/servers` | Servers with their channels |
 | `POST /api/servers` `{ name, color }` | Create a server with `#general` + `Lounge` (broadcasts `server_create`) |
 | `GET /api/servers/:serverId/channels` | Channels of one server |
-| `GET /api/channels/:channelId/messages?before=&after=&limit=` | Message history, oldest→newest. Cursor = message id; `limit` ≤ 100 (default 50) |
-| `POST /api/channels/:channelId/messages` `{ content, nonce? }` | Send a message (broadcasts `message_create`) |
+| `GET /api/channels/:channelId/messages?before=&after=&around=&limit=` | Message history, oldest→newest. Cursor = message id; `around` returns a window centred on a message (jump to message); `limit` ≤ 100 (default 50) |
+| `POST /api/channels/:channelId/messages` `{ content, nonce?, replyToId?, attachmentIds? }` | Send a message (broadcasts `message_create`). `content` may be empty when attachments are included; `replyToId` must be in the same channel |
+| `PATCH /api/channels/:channelId/messages/:messageId` `{ content, expectedEditedAt? }` | Edit your own message (`403` otherwise, `409` if it changed meanwhile). Broadcasts `message_update` |
+| `DELETE /api/channels/:channelId/messages/:messageId` | Delete your own message and its attachment files. Broadcasts `message_delete` |
+| `PUT`/`DELETE /api/channels/:channelId/messages/:messageId/reactions/:emoji` | Add/remove your reaction (idempotent). Broadcasts `reaction_update` with the authoritative count |
+| `GET /api/channels/:channelId/pins` · `PUT`/`DELETE …/pins/:messageId` | List / pin / unpin (≤ 50 pins per channel). Broadcasts `pin_update` |
+| `POST /api/channels/:channelId/attachments` (multipart) | Upload files before sending; returns pending attachments that only the uploader can see until a message claims them |
+| `GET /api/attachments/:attachmentId[?download=1]` | Download (authenticated; images inline, everything else as a download) |
+| `DELETE /api/attachments/:attachmentId` | Cancel an unsent upload |
+| `GET /api/read-states` · `PUT /api/channels/:channelId/read` `{ messageId }` | Unread state per channel; mark read (moves forward only). Broadcasts `read_state_update` to your own sessions |
+| `GET /api/search?q=&channelId=\|serverId=&authorId=&since=&until=&before=&limit=` | Full-text search (SQLite FTS5), newest first, `limit` ≤ 25, paginate with `nextBefore` |
 | `POST /api/voice/channels/:channelId/token` | Voice: `{ url, token, room, identity, expiresAt }` for one voice channel (see below) |
 | `GET /api/voice/states` | Voice: who is in which voice channel `[{ userId, channelId }]` |
 | `POST /api/livekit/webhook` | LiveKit → backend only. Verified with LiveKit's signed `Authorization` header |
@@ -102,7 +111,7 @@ JSON frames `{ op, d }`. Types live in [`src/protocol.ts`](src/protocol.ts) (mir
 2. Client → `identify { token }` (token sent in a frame, never in the URL, so it can't leak into logs)
 3. Server → `ready { user, users, voiceStates }`
 4. Client → `heartbeat` every interval; server → `heartbeat_ack`. No traffic for 60 s ⇒ server closes the socket.
-5. Server pushes `message_create`, `user_update` (profile + presence), `server_create`, `voice_state_update { userId, channelId | null, streaming? }` (from LiveKit webhooks, reconciled with LiveKit every 30 s; `streaming: true` while the user is screen sharing).
+5. Server pushes `message_create`, `message_update`, `message_delete`, `reaction_update`, `pin_update`, `read_state_update` (only to that user's own sessions), `user_update` (profile + presence), `server_create`, `voice_state_update { userId, channelId | null, streaming? }` (from LiveKit webhooks, reconciled with LiveKit every 30 s; `streaming: true` while the user is screen sharing).
 6. Client may send `set_status { status: online|idle|dnd|invisible }`.
 
 Close codes: `4001` auth failed (don't reconnect), `4002` identify timeout, `4003` invalid frame, `4004` heartbeat timeout, `4008` rate limited, `4010` server shutdown.
@@ -112,7 +121,8 @@ Messages are **sent over REST** (clear status codes, validation, rate limiting) 
 ## Validation and abuse limits
 
 - Strict JSON schemas (`additionalProperties: false`, no type coercion), 16 KB body limit, 4 KB WebSocket frame limit.
-- Message content: trimmed, CR/LF normalized, control and bidi-override characters stripped, 1–2000 characters, text channels only.
+- Message content: trimmed, CR/LF normalized, control and bidi-override characters stripped, 1–2000 characters (0 allowed with attachments), text channels only.
+- Attachments: extension allowlist checked against the file's magic bytes, size/pixel limits, per-user and total quotas, minimum free disk space. Details: [docs/messaging-2-jetson.md](../docs/messaging-2-jetson.md).
 - Usernames `[a-z0-9_.-]{2,32}`; display names 1–32; server names 1–40; colors `#rrggbb`.
 - Rate limits (in-memory token buckets):
 
@@ -121,6 +131,12 @@ Messages are **sent over REST** (clear status codes, validation, rate limiting) 
 | Any `/api` request, per IP | 120 | 20/s |
 | Dev sign-in, per IP | 10 | 1 per 10 s |
 | Messages, per user | 5 | 1/s |
+| Edits and deletes, per user | 10 | 1/s |
+| Reactions, per user | 20 | 4/s |
+| Pins, per user | 10 | 1 per 2 s |
+| Upload requests, per user | 10 | 1 per 2 s |
+| Searches, per user | 10 | 1/s |
+| Read acknowledgements, per user | 60 | 10/s |
 | Server creation, per user | 3 | 1/min |
 | Profile updates, per user | 10 | 1 per 5 s |
 | Gateway connections, per IP | 10 | 1 per 2 s |
@@ -142,6 +158,8 @@ Messages are **sent over REST** (clear status codes, validation, rate limiting) 
 | In-memory rate limits & presence | Reset on restart; single process only | Fine for one Jetson; use Redis if ever scaled out |
 | Voice access via dev identities | Anyone who can sign in (i.e. anyone on the LAN) can get a voice token for any voice channel | Real authentication + per-server membership; voice tokens are only as trustworthy as the session that requested them |
 | Plain `ws://` LiveKit signaling | Signaling unencrypted on the LAN (media is still DTLS-SRTP) | `wss://` via a TLS reverse proxy |
+| Message permissions (Milestone 6) | Anyone signed in can read every text channel, react and pin; only authors can edit/delete; there are no moderators | Roles: moderators who can delete/pin, per-channel read permissions |
+| Attachments readable by any signed-in user | Access is checked against the session, but every user can read every channel | Same channel permissions as messages once they exist |
 
 Even in development the server never trusts a client-supplied user id: the user is always derived from the session token, whose SHA-256 hash is what's stored.
 
@@ -174,7 +192,7 @@ Do **not** port-forward this server on your router. For remote friends, prefer a
 Storage is behind the async [`Repository`](src/db/repository.ts) interface; routes never touch SQL directly.
 
 1. Add a `PostgresRepository` implementing `Repository` with the `pg` driver (`$1, $2…` parameters).
-2. Port [`migrations.ts`](src/db/migrations.ts) — the header comment lists the type changes (`INTEGER` epoch → `BIGINT`, `AUTOINCREMENT` → `GENERATED ALWAYS AS IDENTITY`, `0/1` → `BOOLEAN`).
+2. Port [`migrations.ts`](src/db/migrations.ts) — the header comment lists the type changes (`INTEGER` epoch → `BIGINT`, `AUTOINCREMENT` → `GENERATED ALWAYS AS IDENTITY`, `0/1` → `BOOLEAN`). Search uses an SQLite FTS5 table kept in sync by triggers; on PostgreSQL use a generated `tsvector` column with a GIN index instead (`searchMessages` is the only query that changes).
 3. Handle `postgres://` in `createRepository()` and set `DATABASE_URL`.
 4. Copy data with a one-off script that reads via `SqliteRepository` and writes via `PostgresRepository`.
 

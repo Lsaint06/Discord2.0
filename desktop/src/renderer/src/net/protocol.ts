@@ -34,15 +34,71 @@ export interface ApiServer {
   channels: ApiChannel[]
 }
 
+export interface ApiAttachment {
+  /** Opaque server-generated id (also the storage key). */
+  id: string
+  /** Sanitized original file name (display/download name only; never used as a path). */
+  filename: string
+  /** Content type chosen by the server from its allowlist (never the client's claim). */
+  contentType: string
+  /** 'image' = shown inline; 'file' = always downloaded. */
+  kind: 'image' | 'file'
+  size: number
+  /** Display dimensions (EXIF orientation already applied) for images. */
+  width?: number
+  height?: number
+}
+
+export interface ApiReaction {
+  emoji: string
+  count: number
+  /** The requesting user reacted with this emoji. */
+  me: boolean
+}
+
+/** Compact preview of the message being replied to. */
+export interface ApiMessageReference {
+  id: string
+  /** The original message no longer exists. */
+  deleted: boolean
+  authorId?: string
+  /** First characters of the original content. */
+  content?: string
+  attachmentCount?: number
+}
+
 export interface ApiMessage {
   /** Monotonically increasing decimal string; usable as a pagination cursor. */
   id: string
   channelId: string
   authorId: string
+  /** May be empty when the message only has attachments. */
   content: string
   createdAt: number
   /** Echoed back from the sender so it can reconcile its optimistic message. */
   nonce?: string
+  /** Epoch ms of the last edit (absent/null if never edited). */
+  editedAt?: number | null
+  replyTo?: ApiMessageReference | null
+  attachments?: ApiAttachment[]
+  reactions?: ApiReaction[]
+  pinned?: boolean
+}
+
+export interface ApiReadState {
+  channelId: string
+  /** Last message the user has read (null = nothing yet). */
+  lastReadId: string | null
+  /** Newest message in the channel. */
+  lastMessageId: string | null
+  /** Messages from others after lastReadId (capped at LIMITS.unreadCountCap). */
+  unreadCount: number
+}
+
+export interface ApiSearchResult {
+  messages: ApiMessage[]
+  /** Pass as `before` to fetch the next page; null when there are no more results. */
+  nextBefore: string | null
 }
 
 export interface ApiErrorBody {
@@ -73,7 +129,16 @@ export const LIMITS = {
   displayNameMaxLength: 32,
   serverNameMaxLength: 40,
   messagesPageMax: 100,
-  messagesPageDefault: 50
+  messagesPageDefault: 50,
+  attachmentsPerMessage: 5,
+  reactionsPerMessage: 20,
+  emojiMaxLength: 32,
+  pinsPerChannel: 50,
+  searchPageMax: 25,
+  searchQueryMaxLength: 100,
+  replyPreviewLength: 120,
+  unreadCountCap: 99,
+  filenameMaxLength: 120
 } as const
 
 /** Client → server gateway frames. */
@@ -88,9 +153,33 @@ export type GatewayServerFrame =
   | { op: 'ready'; d: { user: ApiUser; users: ApiUser[]; voiceStates: ApiVoiceState[] } }
   | { op: 'heartbeat_ack' }
   | { op: 'message_create'; d: ApiMessage }
+  /** Content edit. Apply only if editedAt is newer than what the client has. */
+  | {
+      op: 'message_update'
+      d: { id: string; channelId: string; content: string; editedAt: number }
+    }
+  | { op: 'message_delete'; d: { id: string; channelId: string } }
+  /** Authoritative count for one emoji on one message after `userId` added/removed it. */
+  | {
+      op: 'reaction_update'
+      d: {
+        channelId: string
+        messageId: string
+        emoji: string
+        count: number
+        userId: string
+        added: boolean
+      }
+    }
+  | {
+      op: 'pin_update'
+      d: { channelId: string; messageId: string; pinned: boolean; userId: string; at: number }
+    }
+  /** Sent only to the user's own sessions (sync read position between their clients). */
+  | { op: 'read_state_update'; d: { channelId: string; lastReadId: string } }
   | { op: 'user_update'; d: ApiUser }
   | { op: 'server_create'; d: ApiServer }
-  /** channelId null = the user left voice. */
+  /** channelId null = the user left voice. `streaming` is included when share state changed. */
   | {
       op: 'voice_state_update'
       d: { userId: string; channelId: string | null; streaming?: boolean }

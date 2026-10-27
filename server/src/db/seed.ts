@@ -151,13 +151,17 @@ export async function seedIfEmpty(repo: Repository): Promise<boolean> {
     channelId: 'hangout-welcome',
     authorId: SYSTEM_BOT_ID,
     content: 'Welcome to Discord 2.0! Messages here are stored on your own server.',
-    createdAt: now
+    createdAt: now,
+    replyToId: null,
+    attachmentIds: []
   })
   await repo.createMessage({
     channelId: 'hangout-general',
     authorId: SYSTEM_BOT_ID,
     content: 'This is #general. Open a second client and say hi 👋',
-    createdAt: now
+    createdAt: now,
+    replyToId: null,
+    attachmentIds: []
   })
   return true
 }

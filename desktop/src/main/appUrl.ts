@@ -10,3 +10,13 @@ export function isAppUrl(url: string | undefined): boolean {
     return false
   }
 }
+
+/** Only http(s) links may be handed to the system browser. */
+export function isWebUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url)
+    return protocol === 'https:' || protocol === 'http:'
+  } catch {
+    return false
+  }
+}

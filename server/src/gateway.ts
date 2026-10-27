@@ -108,6 +108,16 @@ export class GatewayHub {
     }
   }
 
+  /** Delivers a frame only to the given user's identified sessions. */
+  sendToUser(userId: string, frame: GatewayServerFrame): void {
+    const payload = JSON.stringify(frame)
+    for (const conn of this.connections) {
+      if (conn.userId === userId && conn.socket.readyState === conn.socket.OPEN) {
+        conn.socket.send(payload)
+      }
+    }
+  }
+
   shutdown(): void {
     clearInterval(this.sweeper)
     this.frameLimiter.dispose()

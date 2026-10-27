@@ -13,6 +13,8 @@ interface ChannelSidebarProps {
   server: Server
   activeChannelId: string
   unreadChannelIds: Set<string>
+  /** Unread message counts per channel (shown as a badge). */
+  unreadCounts?: Record<string, number>
   /** Voice channel we're in (or joining), if any. */
   voiceChannelId: string | null
   selfId: string
@@ -38,6 +40,7 @@ function ChannelSidebar({
   server,
   activeChannelId,
   unreadChannelIds,
+  unreadCounts,
   voiceChannelId,
   selfId,
   resolveUser,
@@ -119,7 +122,16 @@ function ChannelSidebar({
                           <SpeakerIcon size={20} className="channel-icon" />
                         )}
                         <span className="channel-name">{channel.name}</span>
-                        {unread && !active && <span className="unread-dot" />}
+                        {unread && !active && (unreadCounts?.[channel.id] ?? 0) > 0 ? (
+                          <span
+                            className="unread-badge"
+                            aria-label={`${unreadCounts![channel.id]} unread`}
+                          >
+                            {unreadCounts![channel.id] >= 99 ? '99+' : unreadCounts![channel.id]}
+                          </span>
+                        ) : (
+                          unread && !active && <span className="unread-dot" />
+                        )}
                       </button>
 
                       {participants.length > 0 && (

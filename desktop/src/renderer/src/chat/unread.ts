@@ -1,0 +1,161 @@
+/**
+ * Unread tracking, notification and scroll decisions as pure functions (unit tested).
+ */
+import type { Message } from '../types'
+
+export interface ReadState {
+  /** Last message this user has read (server-authoritative, moves forward only). */
+  lastReadId: string | null
+  /** Unread messages from others (server count, then kept live from gateway events). */
+  unreadCount: number
+  lastMessageId: string | null
+}
+
+const newer = (a: string | null | undefined, b: string | null | undefined): boolean =>
+  a != null && (b == null || Number(a) > Number(b))
+
+/** Applies a read position (from our own ack or another session); never moves backwards. */
+export function applyReadPosition(
+  state: ReadState | undefined,
+  lastReadId: string,
+  /** Messages from others we have loaded for this channel, if any, to recount precisely. */
+  loaded?: { messages: Message[]; meId: string | undefined }
+): ReadState {
+  const base: ReadState = state ?? { lastReadId: null, unreadCount: 0, lastMessageId: lastReadId }
+  if (!newer(lastReadId, base.lastReadId)) return base
+  let unreadCount = 0
+  if (newer(base.lastMessageId, lastReadId)) {
+    // Something newer than the read position exists; count what we can see, else keep 1.
+    unreadCount = loaded
+      ? loaded.messages.filter(
+          (m) => !m.pending && !m.failed && m.authorId !== loaded.meId && newer(m.id, lastReadId)
+        ).length
+      : Math.max(1, base.unreadCount)
+  }
+  return { ...base, lastReadId, unreadCount }
+}
+
+/** A new message arrived over the gateway. */
+export function applyIncoming(
+  state: ReadState | undefined,
+  message: { id: string; authorId: string },
+  meId: string | undefined
+): ReadState {
+  const base: ReadState = state ?? { lastReadId: null, unreadCount: 0, lastMessageId: null }
+  const lastMessageId = newer(message.id, base.lastMessageId) ? message.id : base.lastMessageId
+  if (message.authorId === meId) {
+    // Our own message means we've read up to it (the server advances it too).
+    return { lastReadId: message.id, unreadCount: 0, lastMessageId }
+  }
+  if (!newer(message.id, base.lastReadId)) return { ...base, lastMessageId }
+  return { ...base, lastMessageId, unreadCount: base.unreadCount + 1 }
+}
+
+/**
+ * Whether the channel on screen should be marked read now. Being open isn't enough: the window
+ * must have focus and the user must actually be looking at the newest messages.
+ */
+export function shouldAcknowledge(input: {
+  latestId: string | undefined
+  lastReadId: string | null | undefined
+  windowFocused: boolean
+  nearBottom: boolean
+  /** The loaded window doesn't reach the newest message (viewing old history). */
+  hasNewer: boolean
+}): boolean {
+  return (
+    input.latestId !== undefined &&
+    input.windowFocused &&
+    input.nearBottom &&
+    !input.hasNewer &&
+    newer(input.latestId, input.lastReadId)
+  )
+}
+
+/** The first message from someone else after the read position (where "New" is drawn). */
+export function firstUnreadId(
+  messages: Message[],
+  lastReadId: string | null | undefined,
+  meId: string | undefined
+): string | undefined {
+  if (lastReadId == null) return undefined
+  return messages.find(
+    (m) => !m.pending && !m.failed && m.authorId !== meId && newer(m.id, lastReadId)
+  )?.id
+}
+
+// ---- Notifications ----
+
+export interface NotifyContext {
+  enabled: boolean
+  permission: NotificationPermission | 'unsupported'
+  meId: string | undefined
+  mutedChannels: Record<string, boolean>
+  activeChannelId: string | undefined
+  windowFocused: boolean
+}
+
+export function shouldNotify(
+  message: { authorId: string; channelId: string },
+  ctx: NotifyContext
+): boolean {
+  if (!ctx.enabled || ctx.permission !== 'granted') return false
+  if (message.authorId === ctx.meId) return false
+  if (ctx.mutedChannels[message.channelId]) return false
+  // Already looking at that conversation.
+  if (ctx.windowFocused && ctx.activeChannelId === message.channelId) return false
+  return true
+}
+
+/** Notification text. Message content is only included when the user opted in. */
+export function notificationText(input: {
+  authorName: string
+  channelName: string
+  content: string
+  attachmentCount: number
+  showPreview: boolean
+}): { title: string; body: string } {
+  const title = `${input.authorName} in #${input.channelName}`
+  if (!input.showPreview) return { title, body: 'New message' }
+  const text = input.content.trim()
+  const body =
+    text.length > 0
+      ? text.length > 120
+        ? `${text.slice(0, 119)}…`
+        : text
+      : input.attachmentCount > 0
+        ? `Sent ${input.attachmentCount === 1 ? 'an attachment' : `${input.attachmentCount} attachments`}`
+        : 'New message'
+  return { title, body }
+}
+
+// ---- Scrolling ----
+
+export const NEAR_BOTTOM_PX = 80
+
+export function isNearBottom(
+  el: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  threshold = NEAR_BOTTOM_PX
+): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold
+}
+
+/** Keeps the same content under the viewport after older messages are inserted above it. */
+export function anchoredScrollTop(
+  prev: { scrollTop: number; scrollHeight: number },
+  nextScrollHeight: number
+): number {
+  return Math.max(0, prev.scrollTop + (nextScrollHeight - prev.scrollHeight))
+}
+
+/** How the list changed between renders, to decide how to scroll. */
+export function listChange(
+  prev: { firstId?: string; lastId?: string; count: number },
+  next: { firstId?: string; lastId?: string; count: number }
+): 'none' | 'prepended' | 'appended' | 'replaced' {
+  if (prev.count === 0) return next.count === 0 ? 'none' : 'replaced'
+  if (prev.firstId === next.firstId && prev.lastId === next.lastId) return 'none'
+  if (prev.lastId === next.lastId && prev.firstId !== next.firstId) return 'prepended'
+  if (prev.firstId === next.firstId && prev.lastId !== next.lastId) return 'appended'
+  return 'replaced'
+}

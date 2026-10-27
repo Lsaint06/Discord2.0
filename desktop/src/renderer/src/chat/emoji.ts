@@ -1,0 +1,281 @@
+/** Curated emoji set for the picker and reactions (no external data or network access). */
+
+export interface EmojiEntry {
+  emoji: string
+  /** Space-separated search keywords. */
+  keywords: string
+}
+
+export interface EmojiCategory {
+  id: string
+  label: string
+  emojis: EmojiEntry[]
+}
+
+const e = (emoji: string, keywords: string): EmojiEntry => ({ emoji, keywords })
+
+export const EMOJI_CATEGORIES: EmojiCategory[] = [
+  {
+    id: 'smileys',
+    label: 'Smileys',
+    emojis: [
+      e('😀', 'grin smile happy'),
+      e('😃', 'smile happy'),
+      e('😄', 'smile laugh'),
+      e('😁', 'grin beam'),
+      e('😆', 'laugh squint'),
+      e('😅', 'sweat smile nervous'),
+      e('🤣', 'rofl rolling laugh'),
+      e('😂', 'joy tears laugh lol'),
+      e('🙂', 'slight smile'),
+      e('🙃', 'upside down'),
+      e('😉', 'wink'),
+      e('😊', 'blush smile'),
+      e('😇', 'angel halo innocent'),
+      e('🥰', 'love hearts'),
+      e('😍', 'heart eyes love'),
+      e('🤩', 'star struck wow'),
+      e('😘', 'kiss'),
+      e('😋', 'yum tasty'),
+      e('😛', 'tongue'),
+      e('😜', 'wink tongue crazy'),
+      e('🤪', 'zany crazy'),
+      e('🤑', 'money'),
+      e('🤗', 'hug'),
+      e('🤭', 'oops giggle'),
+      e('🤫', 'shush quiet'),
+      e('🤔', 'think hmm'),
+      e('🤐', 'zip mouth'),
+      e('😐', 'neutral'),
+      e('😑', 'expressionless'),
+      e('😶', 'no mouth speechless'),
+      e('😏', 'smirk'),
+      e('😒', 'unamused'),
+      e('🙄', 'eye roll'),
+      e('😬', 'grimace awkward'),
+      e('😌', 'relieved'),
+      e('😔', 'pensive sad'),
+      e('😪', 'sleepy'),
+      e('😴', 'sleep zzz'),
+      e('😷', 'mask sick'),
+      e('🤒', 'sick thermometer'),
+      e('🤢', 'nauseated sick'),
+      e('🤮', 'vomit'),
+      e('🥵', 'hot'),
+      e('🥶', 'cold freeze'),
+      e('😵', 'dizzy'),
+      e('🤯', 'mind blown explode'),
+      e('🤠', 'cowboy'),
+      e('🥳', 'party celebrate'),
+      e('😎', 'cool sunglasses'),
+      e('🤓', 'nerd'),
+      e('🧐', 'monocle'),
+      e('😕', 'confused'),
+      e('😟', 'worried'),
+      e('🙁', 'frown'),
+      e('😮', 'open mouth wow'),
+      e('😯', 'hushed'),
+      e('😲', 'astonished shock'),
+      e('😳', 'flushed embarrassed'),
+      e('🥺', 'pleading puppy eyes'),
+      e('🥹', 'holding back tears'),
+      e('😦', 'frowning'),
+      e('😨', 'fearful'),
+      e('😰', 'anxious sweat'),
+      e('😢', 'cry sad tear'),
+      e('😭', 'sob cry'),
+      e('😱', 'scream'),
+      e('😖', 'confounded'),
+      e('😣', 'persevere'),
+      e('😞', 'disappointed'),
+      e('😓', 'downcast sweat'),
+      e('😩', 'weary'),
+      e('😫', 'tired'),
+      e('🥱', 'yawn'),
+      e('😤', 'triumph huff'),
+      e('😡', 'angry rage'),
+      e('😠', 'angry mad'),
+      e('🤬', 'swear cursing'),
+      e('😈', 'devil smiling'),
+      e('💀', 'skull dead'),
+      e('💩', 'poop'),
+      e('🤡', 'clown'),
+      e('👻', 'ghost'),
+      e('👽', 'alien'),
+      e('🤖', 'robot bot')
+    ]
+  },
+  {
+    id: 'people',
+    label: 'People',
+    emojis: [
+      e('👍', 'thumbs up yes like +1'),
+      e('👎', 'thumbs down no -1'),
+      e('👌', 'ok perfect'),
+      e('✌️', 'peace victory'),
+      e('🤞', 'fingers crossed luck'),
+      e('🤟', 'love you'),
+      e('🤘', 'rock on'),
+      e('🤙', 'call me shaka'),
+      e('👈', 'point left'),
+      e('👉', 'point right'),
+      e('👆', 'point up'),
+      e('👇', 'point down'),
+      e('☝️', 'index up'),
+      e('✋', 'raised hand stop'),
+      e('👋', 'wave hello bye'),
+      e('👏', 'clap applause'),
+      e('🙌', 'raise hands hooray'),
+      e('🤝', 'handshake deal'),
+      e('🙏', 'pray please thanks'),
+      e('💪', 'muscle strong flex'),
+      e('🫡', 'salute'),
+      e('🫶', 'heart hands'),
+      e('👀', 'eyes look'),
+      e('🧠', 'brain smart'),
+      e('🤷', 'shrug'),
+      e('🤦', 'facepalm'),
+      e('🙋', 'raise hand'),
+      e('🙇', 'bow')
+    ]
+  },
+  {
+    id: 'hearts',
+    label: 'Hearts & Symbols',
+    emojis: [
+      e('❤️', 'heart love red'),
+      e('🧡', 'orange heart'),
+      e('💛', 'yellow heart'),
+      e('💚', 'green heart'),
+      e('💙', 'blue heart'),
+      e('💜', 'purple heart'),
+      e('🖤', 'black heart'),
+      e('🤍', 'white heart'),
+      e('💔', 'broken heart'),
+      e('💯', 'hundred 100 perfect'),
+      e('💥', 'boom collision'),
+      e('💫', 'dizzy star'),
+      e('💬', 'speech chat'),
+      e('✅', 'check yes done'),
+      e('❌', 'cross no wrong'),
+      e('⚠️', 'warning'),
+      e('❓', 'question'),
+      e('❗', 'exclamation'),
+      e('➕', 'plus'),
+      e('🔥', 'fire lit hot'),
+      e('✨', 'sparkles'),
+      e('⭐', 'star'),
+      e('🌟', 'glowing star'),
+      e('⚡', 'zap lightning'),
+      e('🎵', 'music note'),
+      e('🔔', 'bell'),
+      e('📌', 'pin pushpin'),
+      e('🆗', 'ok button'),
+      e('🆒', 'cool button'),
+      e('🆕', 'new'),
+      e('1️⃣', 'one 1'),
+      e('2️⃣', 'two 2'),
+      e('3️⃣', 'three 3')
+    ]
+  },
+  {
+    id: 'activities',
+    label: 'Activities',
+    emojis: [
+      e('🎉', 'tada party celebrate'),
+      e('🎊', 'confetti'),
+      e('🎈', 'balloon'),
+      e('🎁', 'gift present'),
+      e('🏆', 'trophy win'),
+      e('🥇', 'gold medal first'),
+      e('🎮', 'game controller gaming'),
+      e('🕹️', 'joystick arcade'),
+      e('🎲', 'dice'),
+      e('♟️', 'chess'),
+      e('🎯', 'target bullseye'),
+      e('⚽', 'soccer football'),
+      e('🏀', 'basketball'),
+      e('🏈', 'football'),
+      e('🎾', 'tennis'),
+      e('🚗', 'car'),
+      e('🏎️', 'race car rocket league'),
+      e('🚀', 'rocket launch'),
+      e('✈️', 'plane'),
+      e('🎧', 'headphones'),
+      e('🎤', 'microphone sing'),
+      e('🎬', 'movie clapper'),
+      e('📺', 'tv'),
+      e('💻', 'laptop computer'),
+      e('🖥️', 'desktop computer'),
+      e('⌨️', 'keyboard'),
+      e('🖱️', 'mouse'),
+      e('📷', 'camera'),
+      e('📎', 'paperclip attachment'),
+      e('🔗', 'link'),
+      e('📝', 'memo note'),
+      e('📚', 'books study'),
+      e('💡', 'idea bulb'),
+      e('🔧', 'wrench fix'),
+      e('🐛', 'bug'),
+      e('⏰', 'alarm clock'),
+      e('⏳', 'hourglass wait')
+    ]
+  },
+  {
+    id: 'nature',
+    label: 'Nature & Food',
+    emojis: [
+      e('🐶', 'dog'),
+      e('🐱', 'cat'),
+      e('🦊', 'fox'),
+      e('🐻', 'bear'),
+      e('🐼', 'panda'),
+      e('🐸', 'frog'),
+      e('🐵', 'monkey'),
+      e('🙈', 'see no evil'),
+      e('🐧', 'penguin'),
+      e('🦄', 'unicorn'),
+      e('🐢', 'turtle slow'),
+      e('🐍', 'snake'),
+      e('🌈', 'rainbow'),
+      e('☀️', 'sun'),
+      e('🌙', 'moon night'),
+      e('❄️', 'snow'),
+      e('🌊', 'wave ocean'),
+      e('🌸', 'blossom flower'),
+      e('🍕', 'pizza'),
+      e('🍔', 'burger'),
+      e('🍟', 'fries'),
+      e('🌮', 'taco'),
+      e('🍜', 'ramen noodles'),
+      e('🍣', 'sushi'),
+      e('🍪', 'cookie'),
+      e('🍩', 'donut'),
+      e('🎂', 'cake birthday'),
+      e('🍿', 'popcorn'),
+      e('☕', 'coffee'),
+      e('🍺', 'beer'),
+      e('🥤', 'soda drink'),
+      e('🍎', 'apple'),
+      e('🍌', 'banana'),
+      e('🥑', 'avocado'),
+      e('🌶️', 'hot pepper spicy')
+    ]
+  }
+]
+
+export const ALL_EMOJI: EmojiEntry[] = EMOJI_CATEGORIES.flatMap((c) => c.emojis)
+
+/** Quick reactions shown first in the message toolbar. */
+export const QUICK_REACTIONS = ['👍', '❤️', '😂', '🔥', '🎉', '👀']
+
+export function searchEmoji(query: string): EmojiEntry[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return ALL_EMOJI
+  return ALL_EMOJI.filter((entry) => words.every((w) => entry.keywords.includes(w)))
+}
+
+/** Most-recent-first list without duplicates, capped. */
+export function pushRecent(recent: string[], emoji: string, max = 16): string[] {
+  return [emoji, ...recent.filter((r) => r !== emoji)].slice(0, max)
+}

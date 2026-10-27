@@ -6,9 +6,12 @@ A self-hosted, Discord-inspired chat app for friends: an **Electron + React + Ty
 | --- | --- |
 | [`desktop/`](desktop/) | Electron desktop client |
 | [`server/`](server/) | Backend API + real-time gateway + Docker Compose (backend + LiveKit) ([server README](server/README.md)) |
-| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md) and [screen sharing performance](docs/screen-sharing-performance.md) |
+| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md) and [Messaging 2.0](docs/messaging-2-jetson.md) |
 
-**Status — Milestone 5:** screen sharing ("Go Live") in voice channels: in-app source picker (screens and windows), optional Windows system audio, 1080p30 / 1080p60 / 1440p60 presets with GPU H.264 encoding, a stream viewer (focus, mini player, fullscreen, live stats), LIVE badges, per-stream volume, input sensitivity with a level meter, a mic test, and a diagnostics page. Voice (Milestone 4) and text messaging, history and presence (Milestone 2) are unchanged.
+**Status — Milestone 6 (Messaging 2.0):**
+- **Messages:** attachments (upload, paste, drag & drop, inline images with a lightbox, file downloads), edit and delete, replies, reactions with an emoji picker, pinned messages, and safe Markdown with code highlighting.
+- **Finding things:** full-text search with filters, unread counts synced across your PCs with a *NEW* divider, and desktop notifications (message text hidden by default).
+- **Unchanged:** screen sharing (Milestone 5), voice (Milestone 4), and presence (Milestone 2).
 
 > ⚠️ Sign-in currently uses **development identities** (no password). Keep the server on your own PC or a trusted LAN. Details: [server/README.md → Development-only capabilities](server/README.md#development-only-capabilities).
 
@@ -57,7 +60,7 @@ Use `D2_PROFILE` to give each desktop window its own isolated profile (separate 
 3. **Terminal 3 (Client B):** `cd desktop; $env:D2_PROFILE='bob'; npm run dev` → sign in as **bob**. (Its dev server picks the next free port automatically. Window titles end in "— alice" / "— bob".)
 4. **Presence:** each window's member list shows both users online.
 5. **Real-time delivery:** in Client A, open *The Hangout → #general* and send `hello from A`. It appears in Client B immediately, without refreshing. Reply from B; it appears in A.
-6. **Unread markers:** put B in `#memes`, send a message from A in `#general`. B shows an unread dot on `#general`; it clears when opened.
+6. **Unread markers:** put B in `#memes`, send two messages from A in `#general`. B shows a **2** badge on `#general`; opening it shows a *NEW* divider and the badge clears.
 7. **Mentions:** send `@bob hi` from A — the message is highlighted in B.
 8. **Reconnect:** stop the backend (Ctrl+C in Terminal 1). Both clients show *"Connection lost. Reconnecting…"*. Send a message from B — it is marked *Not sent* with **Retry**/**Discard**.
 9. **Persistence:** restart the backend (`npm run dev`). Both clients reconnect by themselves (no sign-in) and fetch anything they missed. Click **Retry** in B — the message is delivered to A. All earlier messages are still there.
@@ -65,6 +68,18 @@ Use `D2_PROFILE` to give each desktop window its own isolated profile (separate 
 11. **Limits:** the composer stops at 2000 characters, and sending more than 5 messages in a couple of seconds marks the extras *"Not sent: Slow down — try again in Ns"* (use **Retry**).
 
 Automated equivalent of steps 4–9: `cd server; npm test`.
+
+## Messaging 2.0 (attachments, edits, replies, reactions, search, pins)
+
+With the two clients from the procedure above:
+
+- **Attach:** click **+**, paste a screenshot (Ctrl+V) or drop files on the chat. Images show inline; click one for the lightbox. Files (PDF, TXT, ZIP, Office…) show a **Download** card. Limits: 5 files per message, images ≤ 15 MB, other files ≤ 25 MB; executables and other types are rejected.
+- **Edit / delete:** hover a message for its toolbar or right-click it. ↑ in an empty composer edits your last message. Only the author can edit or delete.
+- **Reply / react / pin:** from the hover toolbar or the right-click menu. Pins are listed under the pin icon in the channel header.
+- **Search:** Ctrl+F → words, optional author and dates, *This channel* or *Whole server*. Click a result to jump to it.
+- **Notifications:** Settings → Notifications (message preview is off by default). Mute a channel with the bell in its header.
+
+Architecture, limits, storage, backup/restore, rollback and the full two-PC checklist: [docs/messaging-2-jetson.md](docs/messaging-2-jetson.md).
 
 ## Voice with the Jetson
 
