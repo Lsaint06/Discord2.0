@@ -166,6 +166,18 @@ export async function buildApp(
     }
   })
 
+  // A WebSocket upgrade that is answered with a normal HTTP response (refused origin, rate limit,
+  // unknown path, error) leaves the raw socket open: Node hands upgrade sockets over entirely and
+  // never closes them itself. Close it once the response is written, so refused upgrades can't
+  // pile up open connections.
+  app.addHook('onResponse', async (request, reply) => {
+    if (!request.headers.upgrade || reply.statusCode === 101) return
+    const socket = request.raw.socket
+    if (!socket || socket.destroyed) return
+    socket.end()
+    setTimeout(() => socket.destroy(), 1000).unref()
+  })
+
   await app.register(cors, {
     origin: (origin, cb) => cb(null, isOriginAllowed(config, origin)),
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],

@@ -1,21 +1,41 @@
-# Development/LAN deployment (Linux ARM64, e.g. NVIDIA Jetson Orin Nano). LAN-only by design:
-# never port-forward these ports or expose them through a public tunnel.
-# All credentials come from an untracked .env next to this file (see .env.example).
+# Discord 2.0 on Linux ARM64 (NVIDIA Jetson Orin Nano). All credentials come from an untracked
+# .env next to this file (see .env.example).
+#
+# Two ways to run it:
+#   docker compose up -d                    LAN only (backend + LiveKit), as before
+#   docker compose --profile public up -d   adds Caddy: HTTPS/WSS on 443 for friends outside the
+#                                           LAN (see docs/milestone-11-project-connect.md)
+#
+# Never forward 22, 3001 or 7880 on the router. In public mode forward only 80/tcp, 443/tcp
+# (Caddy), 7881/tcp and 7882/udp (LiveKit media).
 services:
   server:
     build: .
     image: discord2-server:dev
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
-      # DEVELOPMENT ONLY identities. Disable (false) once real authentication exists.
-      DEV_AUTH: ${DEV_AUTH:-true}
+      # DEVELOPMENT ONLY password-less identities. Off unless explicitly enabled; production
+      # refuses to start with it on (see config.ts).
+      DEV_AUTH: ${DEV_AUTH:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Desktop apps older than 1.1 load from file:// and send Origin "null". Set true only
+      # while such apps still need to connect; the 1.1 app uses its own app:// origin.
+      ALLOW_NULL_ORIGIN: ${ALLOW_NULL_ORIGIN:-}
+      # Only Caddy's fixed address (below) may tell the backend a client's real IP.
+      TRUST_PROXY: ${TRUST_PROXY:-172.30.0.10}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Voice. The secret stays inside the backend; clients only ever receive short-lived JWTs.
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY in .env}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}
-      LIVEKIT_URL: http://livekit:7880
-      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:?set LIVEKIT_PUBLIC_URL in .env, e.g. ws://192.168.68.65:7880}
+      # LiveKit runs on the host network; the backend reaches its API through the Docker host.
+      LIVEKIT_URL: http://host.docker.internal:7880
+      # What clients connect to for signaling. Public mode: wss://<PUBLIC_HOSTNAME>.
+      # LAN-only mode: ws://<Jetson LAN IP>:7880.
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:?set LIVEKIT_PUBLIC_URL in .env, e.g. wss://name.duckdns.org or ws://192.168.68.65:7880}
+      # Optional: handed to clients that connect on the LAN address (no router loopback needed).
+      LIVEKIT_LAN_URL: ${LIVEKIT_LAN_URL:-}
       # Attachments (Milestone 6). Files live in /data/attachments on the same volume as the
       # database. Empty = built-in default (see .env.example).
       UPLOAD_MAX_IMAGE_MB: ${UPLOAD_MAX_IMAGE_MB:-}
@@ -33,18 +53,65 @@ services:
       ARGON2_PASSES: ${ARGON2_PASSES:-}
       ARGON2_PARALLELISM: ${ARGON2_PARALLELISM:-}
       ARGON2_MAX_CONCURRENT: ${ARGON2_MAX_CONCURRENT:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
-      # Loopback by default. On the Jetson set BIND_ADDRESS to its LAN IP (192.168.68.65).
+      # LAN access (desktop "Home network" profile). Loopback by default; on the Jetson set
+      # BIND_ADDRESS to its LAN IP (192.168.68.65). Never forwarded on the router.
       - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3001}:3001"
     volumes:
       - discord2-data:/data
+    networks:
+      default:
+        ipv4_address: 172.30.0.20
     depends_on:
       - livekit
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  caddy:
+    # TLS (free Let's Encrypt certificates) + reverse proxy for public access. Only started with
+    # `--profile public`.
+    image: caddy:2.11.7-alpine
+    profiles: ["public"]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?set PUBLIC_HOSTNAME in .env for public mode, e.g. name.duckdns.org}
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account: keep across restarts (Let's Encrypt rate limits).
+      - caddy-data:/data
+      - caddy-config:/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      default:
+        # Fixed: the backend trusts X-Forwarded-For only from this address (TRUST_PROXY).
+        ipv4_address: 172.30.0.10
+    depends_on:
+      - server
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
 
   livekit:
     # Official multi-arch image (linux/amd64 + linux/arm64). Pinned for reproducible deploys.
     image: livekit/livekit-server:v1.13.11
     restart: unless-stopped
+    # Host networking, so LiveKit can offer clients both its LAN address (PCs at home) and the
+    # public address (friends elsewhere) as media candidates. Ports used on the host:
+    #   7880/tcp signaling (LAN + Caddy only, never forwarded), 7881/tcp ICE/TCP, 7882/udp ICE/UDP.
+    network_mode: host
+    security_opt:
+      - no-new-privileges:true
     environment:
       # Config is generated from .env so no secret ever lives in a tracked file.
       LIVEKIT_CONFIG: |
@@ -53,15 +120,25 @@ services:
           # ICE over TCP fallback and a single multiplexed UDP port for all media.
           tcp_port: 7881
           udp_port: 7882
-          # LAN-only: advertise the Jetson's LAN address instead of discovering a public IP via STUN.
-          use_external_ip: false
-          node_ip: ${LIVEKIT_NODE_IP:?set LIVEKIT_NODE_IP in .env, e.g. 192.168.68.65}
+          # LAN-only mode: false, and node_ip = the Jetson's LAN address.
+          # Public mode: true. LiveKit discovers the public IP via STUN at start-up
+          # (deploy/public-ip-watch.sh restarts it when the IP changes).
+          use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP:-false}
+          node_ip: ${LIVEKIT_NODE_IP:-}
+          # Keep the LAN address as a candidate too, so PCs at home connect directly.
+          advertise_internal_ip: true
+          # Many home routers don't loop traffic back to their own public address.
+          skip_external_ip_validation: true
+          # Only offer the LAN address (not Docker bridge addresses) as a local candidate.
+          ips:
+            includes:
+              - ${LIVEKIT_LAN_CIDR:-192.168.0.0/16}
         keys:
           ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
         webhook:
           api_key: ${LIVEKIT_API_KEY}
           urls:
-            - http://server:3001/api/livekit/webhook
+            - http://${BIND_ADDRESS:-127.0.0.1}:${PORT:-3001}/api/livekit/webhook
         room:
           auto_create: true
           empty_timeout: 300
@@ -85,11 +162,6 @@ services:
             - mime: video/rtx
         logging:
           level: ${LIVEKIT_LOG_LEVEL:-info}
-    ports:
-      # Signaling (WebSocket) + ICE/TCP + ICE/UDP mux, all on the LAN address only.
-      - "${BIND_ADDRESS:-127.0.0.1}:7880:7880/tcp"
-      - "${BIND_ADDRESS:-127.0.0.1}:7881:7881/tcp"
-      - "${BIND_ADDRESS:-127.0.0.1}:7882:7882/udp"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7880/"]
       interval: 30s
@@ -100,6 +172,17 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
   discord2-data:
+  caddy-data:
+  caddy-config:

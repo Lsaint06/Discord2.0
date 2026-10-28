@@ -27,7 +27,7 @@ This guide deploys Discord 2.0's backend **and** a self-hosted [LiveKit](https:/
 | 7881 | TCP | livekit | ICE over TCP (fallback when UDP is blocked) |
 | 7882 | UDP | livekit | All media (single multiplexed UDP port) |
 
-All four are published on `BIND_ADDRESS` (the Jetson's LAN IP) only.
+The backend (3001) is published on `BIND_ADDRESS` (the Jetson's LAN IP) only. LiveKit's ports (7880/7881/7882) use host networking since Milestone 11 and listen on the Jetson's interfaces: keep them on the LAN with the firewall rules below.
 
 ## 1. Prerequisites (on the Jetson)
 
@@ -60,10 +60,10 @@ LIVEKIT_NODE_IP=192.168.68.65
 LIVEKIT_PUBLIC_URL=ws://192.168.68.65:7880
 LIVEKIT_API_KEY=<API Key from generate-keys>
 LIVEKIT_API_SECRET=<API Secret from generate-keys>   # letters/digits, ≥ 32 chars
-DEV_AUTH=true                                        # development identities (see Security)
+DEV_AUTH=false                                       # development identities off (production refuses them)
 ```
 
-`LIVEKIT_URL` is set by `docker-compose.yml` (`http://livekit:7880`); leave it empty in `.env`.
+`LIVEKIT_URL` is set by `docker-compose.yml` (`http://host.docker.internal:7880`); leave it empty in `.env`.
 
 ## 3. Firewall (only if `ufw` is active)
 

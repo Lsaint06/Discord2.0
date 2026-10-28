@@ -54,6 +54,13 @@ export async function loadSession(serverUrl: string): Promise<StoredSession | nu
   return session && session.serverUrl === serverUrl ? session : null
 }
 
+/** Which server the saved sign-in belongs to (null if none), without using it. */
+export async function savedSessionServer(): Promise<string | null> {
+  const bridge = window.d2?.credentials
+  const session = bridge ? await bridge.load() : memory
+  return session?.serverUrl ?? null
+}
+
 export async function saveSession(session: StoredSession): Promise<void> {
   const bridge = window.d2?.credentials
   if (bridge) await bridge.save(session)

@@ -77,7 +77,9 @@ export async function issueVoiceToken(
   user: UserRecord,
   channel: ChannelRecord,
   permissions: number,
-  now = Date.now()
+  now = Date.now(),
+  /** Signaling URL for this client (LAN or public); defaults to the public URL. */
+  url = config.publicUrl
 ): Promise<ApiVoiceToken> {
   const room = roomNameForChannel(channel.id)
   const at = new AccessToken(config.apiKey, config.apiSecret, {
@@ -87,7 +89,7 @@ export async function issueVoiceToken(
   })
   at.addGrant(voiceGrant(room, permissions))
   return {
-    url: config.publicUrl,
+    url,
     token: await at.toJwt(),
     room,
     identity: user.id,

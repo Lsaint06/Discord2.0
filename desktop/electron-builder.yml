@@ -1,3 +1,5 @@
+# Keep these stable: they identify the installed app (upgrade in place, notifications, saved
+# sign-in in %APPDATA%\desktop). Changing them would install a second copy.
 appId: com.discord2.app
 productName: Discord 2.0
 directories:
@@ -38,6 +40,6 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
-publish:
-  provider: generic
-  url: https://example.com/auto-updates
+# No auto-update feed: new versions are distributed as installers (see
+# docs/milestone-11-project-connect.md). A newer installer upgrades in place (same appId).
+publish: null

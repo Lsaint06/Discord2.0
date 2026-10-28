@@ -42,6 +42,8 @@ import { applyIncoming, applyReadPosition, type ReadState } from '../chat/unread
 import { AttachmentCache } from '../chat/attachmentCache'
 import { parseProfileMediaKey } from '../lib/profileMedia'
 import { applyRelationship, bumpConversation, type Relationships } from '../chat/conversations'
+import { checkLivekitUrl } from '../net/endpoints'
+import { extraLivekitUrl } from '../net/config'
 
 export interface ChannelState {
   messages: Message[]
@@ -1210,13 +1212,18 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   const fetchVoiceToken = useCallback(
     async (channelId: string): Promise<ApiVoiceToken> => {
       try {
-        return await api.voiceToken(channelId)
+        const grant = await api.voiceToken(channelId)
+        // Only connect to the voice server that belongs to this server, encrypted when it is.
+        const verdict = checkLivekitUrl(grant.url, { httpUrl: session.httpUrl }, extraLivekitUrl)
+        // 403: shown to the user as-is, and not retried (retrying can't fix it).
+        if (!verdict.ok) throw new ApiError(403, 'voice_url_rejected', verdict.error)
+        return grant
       } catch (err) {
         handleAuthError(err)
         throw err
       }
     },
-    [api, handleAuthError]
+    [api, handleAuthError, session.httpUrl]
   )
 
   const retryInitialLoad = useCallback(() => {

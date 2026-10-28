@@ -2,7 +2,7 @@
 
 Self-hosted backend for Discord 2.0: **Node.js + TypeScript + Fastify + WebSockets**, storing data in **SQLite** (via Node's built-in `node:sqlite`, no native build step) with a planned path to **PostgreSQL**. Voice runs through a self-hosted **LiveKit** SFU; this server only issues LiveKit access tokens and tracks voice presence.
 
-> ⚠️ **Self-hosted, LAN-only for now.** Milestone 7 adds real accounts (Argon2id passwords, invite-only registration, revocable sessions, roles and permissions). Password-less *development identities* remain available while `DEV_AUTH=true` — turn it off once everyone has an account and **before** any remote access. Never expose the server directly to the internet. See [docs/milestone-7-security.md](../docs/milestone-7-security.md) and [Development-only capabilities](#development-only-capabilities).
+> ⚠️ **Self-hosted.** LAN-only by default. Milestone 11 adds an optional public mode (`docker compose --profile public`): Caddy with free HTTPS on 443 in front of the backend, LiveKit media on 7881/7882. Never expose port 3001 or 7880 directly. Production refuses `DEV_AUTH=true`. See [docs/milestone-11-project-connect.md](../docs/milestone-11-project-connect.md), [docs/milestone-7-security.md](../docs/milestone-7-security.md) and [Development-only capabilities](#development-only-capabilities).
 
 ## Requirements
 
@@ -33,7 +33,7 @@ On first start the database is created at `server/data/discord2.db`, migrated, a
 Voice is off until the four `LIVEKIT_*` variables are set. To develop voice on one PC:
 
 1. Download `livekit_<version>_windows_amd64.zip` from [LiveKit releases](https://github.com/livekit/livekit/releases) and extract `livekit-server.exe` anywhere (not into the repo).
-2. In `server/.env` set `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (letters/digits, ≥ 32 chars), `LIVEKIT_URL=http://127.0.0.1:7880`, and `LIVEKIT_PUBLIC_URL=ws://localhost:7880` (the host must match the desktop's `RENDERER_VITE_SERVER_URL` host so the CSP allows it).
+2. In `server/.env` set `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (letters/digits, ≥ 32 chars), `LIVEKIT_URL=http://127.0.0.1:7880`, and `LIVEKIT_PUBLIC_URL=ws://localhost:7880` (the host must match the desktop server profile's host: the CSP and the app's voice-address check only allow that host).
 3. Run LiveKit in its own terminal (it reads the credentials from `.env`; nothing secret goes on the command line):
 
    ```powershell
@@ -52,19 +52,19 @@ All settings are environment variables. Copy `.env.example` to `.env` (git-ignor
 | `HOST` | `127.0.0.1` | Loopback = only this PC can connect. Use a LAN IP / `0.0.0.0` **only on a trusted network**. |
 | `PORT` | `3001` | |
 | `DATABASE_URL` | `sqlite:./data/discord2.db` | `sqlite:<path>`. `postgres://…` is reserved for the future Postgres repository. |
-| `DEV_AUTH` | `true` (dev), `false` (production) | Enables password-less development identities (never for usernames that have a password). Turning it off invalidates every development session. |
+| `DEV_AUTH` | `true` (dev), `false` (production, and in Docker Compose) | Enables password-less development identities (never for usernames that have a password). Turning it off invalidates every development session. **Refused in production** unless `ALLOW_DEV_AUTH_IN_PRODUCTION=true` is also set. |
 | `SESSION_IDLE_DAYS` / `SESSION_MAX_DAYS` | `30` / `90` | Session idle timeout and absolute lifetime. |
 | `ARGON2_MEMORY_KIB` / `ARGON2_PASSES` / `ARGON2_PARALLELISM` | `65536` / `3` / `4` | Password hashing cost. Values below the OWASP minimum (19456 / 2 / 1) are refused. |
 | `ARGON2_MAX_CONCURRENT` | `2` | Hashes computed at once (each uses `ARGON2_MEMORY_KIB`); extra sign-ins queue, then get `503`. |
-| `CORS_ORIGINS` | *(empty)* | Extra allowed browser origins, comma-separated. |
+| `CORS_ORIGINS` | *(empty)* | Extra allowed browser origins, comma-separated. The desktop app's own origin `app://discord2` is always allowed (`ALLOW_APP_ORIGIN`). |
 | `ALLOW_LOCALHOST_ORIGINS` | `true` (dev), `false` (production) | Allows `http://localhost:*` (Electron dev server). |
-| `ALLOW_NULL_ORIGIN` | `true` | Allows the `null` origin sent by the packaged Electron app (`file://`). |
-| `TRUST_PROXY` | `false` | Set `true` only behind a reverse proxy you control. |
+| `ALLOW_NULL_ORIGIN` | `true` (dev), `false` (production) | Allows the `null` origin sent by desktop apps older than 1.1 (`file://`). Enable in production only while such apps still connect. |
+| `TRUST_PROXY` | `false` | Proxies whose `X-Forwarded-For` is believed: IPs, CIDRs or `loopback`/`linklocal`/`uniquelocal`. `true` is refused in production (`/0` always). Compose sets Caddy's fixed address `172.30.0.10`. |
 | `LOG_LEVEL` | `debug` (dev), `info` (prod) | Pino log level. |
 | `LIVEKIT_API_KEY` | *(empty)* | Voice: LiveKit API key. All four `LIVEKIT_*` must be set together, or none (voice disabled). |
 | `LIVEKIT_API_SECRET` | *(empty)* | Voice: ≥ 32 chars. **Server-side only — never put it in the desktop app.** |
 | `LIVEKIT_URL` | *(empty)* | Voice: `http(s)://` URL the backend uses for LiveKit's API (compose sets `http://livekit:7880`). |
-| `LIVEKIT_PUBLIC_URL` | *(empty)* | Voice: `ws(s)://` URL given to clients, e.g. `ws://192.168.68.65:7880`. |
+| `LIVEKIT_PUBLIC_URL` | *(empty)* | Voice: URL given to clients. `wss://` is required for a public host (e.g. `wss://myhome.duckdns.org`); `ws://` only for private addresses (e.g. `ws://192.168.68.65:7880`). |
 
 The server holds no secrets today. When real secrets arrive (database passwords, signing keys), they belong in the server's environment only — **never** in the desktop app.
 
@@ -288,7 +288,7 @@ docker compose ps                         # livekit becomes "healthy"
 curl http://127.0.0.1:3001/health
 ```
 
-By default all ports are published on **127.0.0.1 only**. To let other PCs on your trusted LAN connect, set `BIND_ADDRESS` (and `LIVEKIT_NODE_IP`) to the host's LAN IP in `.env`.
+By default the backend is published on **127.0.0.1 only**; set `BIND_ADDRESS` (and `LIVEKIT_NODE_IP`) to the host's LAN IP in `.env` so other PCs on your LAN can connect. Since Milestone 11, LiveKit uses **host networking**: its ports 7880/7881/7882 listen on the host's interfaces. Keep them off the router (only 7881/7882 are forwarded in public mode, never 7880), and see the firewall notes in [docs/milestone-11-project-connect.md](../docs/milestone-11-project-connect.md#jetson-production-checklist).
 
 Build an ARM64 image from a Windows/x64 machine (requires Docker Buildx + QEMU):
 
@@ -296,9 +296,9 @@ Build an ARM64 image from a Windows/x64 machine (requires Docker Buildx + QEMU):
 docker buildx build --platform linux/arm64 -t discord2-server:arm64 --load .
 ```
 
-> The images have not been built on this Windows development PC (Docker isn't installed here). The compose file was validated by parsing it with sample values, and the same LiveKit configuration was run live with the official Windows binary. Verify on the Jetson with the commands above.
+> The images have not been built on this Windows development PC (Docker isn't installed here). The Milestone 11 compose file was validated by parsing it and rendering the LiveKit configuration for both modes; the Caddyfile was validated with Caddy 2.11.7 and run locally. The new LiveKit configuration has **not** been run (Windows Smart App Control blocked the LiveKit binary on this PC). Verify on the Jetson with the commands above.
 
-Do **not** port-forward this server on your router. For remote friends, prefer a private overlay network (e.g. WireGuard/Tailscale) or a TLS reverse proxy once real authentication exists.
+**Public mode (Milestone 11):** `docker compose --profile public up -d` adds Caddy (free Let's Encrypt certificates) and switches LiveKit to host networking so it can offer both LAN and public addresses. Forward only 80/tcp, 443/tcp, 7881/tcp and 7882/udp. Never forward 22, 3001 or 7880. Setup, DuckDNS, backup and rollback: [docs/milestone-11-project-connect.md](../docs/milestone-11-project-connect.md).
 
 ## Migrating to PostgreSQL
 

@@ -1,0 +1,42 @@
+# Discord 2.0 — public HTTPS/WSS entry point (Milestone 11).
+# Used only with `docker compose --profile public up -d`. Free certificates from Let's Encrypt
+# (HTTP-01 challenge: the router must forward TCP 80 and 443 to the Jetson).
+#
+# One hostname serves everything:
+#   /rtc, /rtc/*   -> LiveKit signaling (WebSocket) on the host network, port 7880
+#   everything else -> Discord 2.0 backend (REST, /gateway WebSocket, attachments)
+# Media (voice/screen share) does NOT go through here: it uses ports 7881/TCP and 7882/UDP directly.
+#
+# No access log is configured on purpose: LiveKit join tokens travel in the /rtc query string.
+
+{
+	# Admin API only inside the container (never published).
+	admin localhost:2019
+}
+
+{$PUBLIC_HOSTNAME} {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Attachments: the backend allows 50 MB per upload request by default (UPLOAD_MAX_REQUEST_MB).
+	request_body {
+		max_size 64MB
+	}
+
+	@livekit path /rtc /rtc/*
+	handle @livekit {
+		reverse_proxy host.docker.internal:7880
+	}
+
+	handle {
+		reverse_proxy server:3001 {
+			# The backend trusts X-Forwarded-For only from this proxy's fixed address (TRUST_PROXY).
+			# Overwrite whatever the client sent with the real peer address.
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+}

@@ -8,7 +8,7 @@ import { applyEncoderFlags, setupEncoderFlagsIpc } from './encoderFlags'
 import { isAppUrl, isWebUrl } from './appUrl'
 import { setupCredentialStorage } from './credentials'
 import { setupSystemIdle } from './system'
-import { normalizeFileOrigin } from './origin'
+import { APP_INDEX_URL, registerAppScheme, serveAppScheme } from './appProtocol'
 
 // Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
 // Lets two clients run side by side on one PC for testing.
@@ -22,6 +22,8 @@ if (profile) {
 
 // Must run before 'ready' so Chromium's GPU process sees the features.
 applyEncoderFlags()
+// Must run before 'ready': the packaged renderer is served from app://discord2/.
+registerAppScheme()
 
 function createWindow(): void {
   // Create the browser window.
@@ -76,7 +78,7 @@ function createWindow(): void {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    void mainWindow.loadURL(APP_INDEX_URL)
   }
 }
 
@@ -100,7 +102,7 @@ app.whenReady().then(() => {
   setupEncoderFlagsIpc(isAppUrl)
   setupCredentialStorage()
   setupSystemIdle()
-  normalizeFileOrigin()
+  serveAppScheme()
 
   createWindow()
 

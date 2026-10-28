@@ -12,6 +12,9 @@ export interface AuthSuccess {
 
 interface AuthScreenProps {
   serverUrl: string
+  /** The approved servers built into this app (a picker is shown when there is more than one). */
+  servers?: { id: string; label: string; insecure: boolean }[]
+  onSelectServer?: (id: string) => void
   /** Why the user is here (e.g. session expired). */
   notice?: string | null
   onAuthenticated: (result: AuthSuccess) => void
@@ -77,7 +80,13 @@ function RecoveryCodes({
   )
 }
 
-function AuthScreen({ serverUrl, notice, onAuthenticated }: AuthScreenProps): React.JSX.Element {
+function AuthScreen({
+  serverUrl,
+  servers = [],
+  onSelectServer,
+  notice,
+  onAuthenticated
+}: AuthScreenProps): React.JSX.Element {
   const [view, setView] = useState<View>('login')
   const [check, setCheck] = useState<ServerCheck>({ state: 'checking' })
   const [checkAttempt, setCheckAttempt] = useState(0)
@@ -258,6 +267,25 @@ function AuthScreen({ serverUrl, notice, onAuthenticated }: AuthScreenProps): Re
         )}
 
         {notice && <p className="form-notice">{notice}</p>}
+        {servers.length > 1 && onSelectServer && (
+          <label className="setting-field server-picker" htmlFor={`${ids}-server`}>
+            <span className="setting-field-label">Server</span>
+            <select
+              id={`${ids}-server`}
+              className="text-input"
+              value={serverUrl}
+              disabled={submitting}
+              onChange={(e) => onSelectServer(e.target.value)}
+            >
+              {servers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                  {s.insecure ? ' (home network)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className={`server-check ${check.state}`}>
           <span className="server-check-dot" />
           <span className="server-check-url">{serverUrl}</span>

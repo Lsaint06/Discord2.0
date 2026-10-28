@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 import type { AppContext } from '../context.js'
 import { requireUser } from '../lib/auth.js'
+import { livekitUrlFor } from '../config.js'
 import { ApiError, tooManyRequests, unauthorized } from '../lib/errors.js'
+import { hostnameOf } from '../lib/network.js'
 import { visibleVoiceStates } from '../realtime.js'
 import { authorizeVoiceJoin, issueVoiceToken } from '../voice/access.js'
 import { rememberVoiceGrant } from '../voice/enforce.js'
@@ -36,7 +38,11 @@ export function registerVoiceRoutes(app: FastifyInstance, ctx: AppContext): void
       if (!limit.ok) throw tooManyRequests(limit.retryAfterMs)
 
       const { channel, permissions } = await authorizeVoiceJoin(ctx.access, user, request.params.channelId)
-      const grant = await issueVoiceToken(livekit, user, channel, permissions)
+      // Clients that reached us on a private address (LAN) get the LAN signaling URL; everyone
+      // else (through the TLS proxy) gets the public wss:// URL. The Host header only picks
+      // between two configured URLs, so a forged one can't point anyone elsewhere.
+      const url = livekitUrlFor(livekit, hostnameOf(request.headers.host))
+      const grant = await issueVoiceToken(livekit, user, channel, permissions, Date.now(), url)
       rememberVoiceGrant(ctx, user.id, channel.id, permissions)
       request.log.info({ user: user.username, room: grant.room }, 'voice token issued')
       return grant

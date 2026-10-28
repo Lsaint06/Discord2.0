@@ -14,7 +14,7 @@ const { app } = await buildApp(config, repo)
 
 if (seeded) app.log.info('Seeded a fresh database with starter servers')
 if (config.livekit) {
-  app.log.info({ livekit: config.livekit.publicUrl }, 'Voice enabled (LiveKit)')
+  app.log.info({ livekit: config.livekit.publicUrl, lan: config.livekit.lanUrl }, 'Voice enabled (LiveKit)')
 } else {
   app.log.info('Voice disabled: LIVEKIT_* variables are not set')
 }
@@ -33,6 +33,9 @@ if (config.devAuth) {
   if (report.legacyIdentities > 0) {
     app.log.info({ legacyIdentities: report.legacyIdentities }, 'development identities waiting to be claimed (admin: legacy list)')
   }
+}
+if (config.trustProxy) {
+  app.log.info({ trustProxy: config.trustProxy }, 'Client IPs are taken from X-Forwarded-For only when the request comes from these proxies')
 }
 if (!isLoopbackHost(config.host)) {
   app.log.warn(

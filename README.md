@@ -6,9 +6,14 @@ A self-hosted, Discord-inspired chat app for friends: an **Electron + React + Ty
 | --- | --- |
 | [`desktop/`](desktop/) | Electron desktop client |
 | [`server/`](server/) | Backend API + real-time gateway + Docker Compose (backend + LiveKit) ([server README](server/README.md)) |
-| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md), [profiles & presence](docs/milestone-8-identity.md), [sounds & interaction polish](docs/milestone-9-atmosphere.md), [friends & direct messages](docs/milestone-10-connections.md) and [remote access options](docs/remote-access-options.md) |
+| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md), [profiles & presence](docs/milestone-8-identity.md), [sounds & interaction polish](docs/milestone-9-atmosphere.md), [friends & direct messages](docs/milestone-10-connections.md), [secure remote access](docs/milestone-11-project-connect.md) and [remote access options](docs/remote-access-options.md) |
 
-**Status — Milestone 10 (Project Connections: friends, blocking, direct and group messages):**
+**Status — Milestone 11 (Project Connect: secure remote access), implemented and tested locally, not deployed:**
+- **Public mode for friends outside the LAN, all free:** DuckDNS name, Caddy with Let's Encrypt HTTPS/WSS, LiveKit offering both LAN and public addresses. No VPN app for friends. LAN-only stays the default.
+- **Hardening:** production refuses `DEV_AUTH=true`; client IPs trusted only from the proxy; the desktop app has its own origin (`app://discord2`) instead of `null`; refused WebSocket upgrades no longer leave sockets open.
+- **Desktop 1.1:** approved server profiles chosen at sign-in (https required on the internet), voice address checks. Details and the Phase 2 checklist: [docs/milestone-11-project-connect.md](docs/milestone-11-project-connect.md).
+
+**Previously — Milestone 10 (Project Connections: friends, blocking, direct and group messages):**
 - **Friends:** add people by exact username, accept/decline/cancel, remove. **Blocking** is silent and hides presence both ways.
 - **Direct messages and groups (3–10 people):** every Messaging 2.0 feature works in them. People added to a group later see only new messages. Privacy setting for DMs from server members. Not end-to-end encrypted.
 - **Server:** additive migration v5, `apiVersion: 4`. Details: [docs/milestone-10-connections.md](docs/milestone-10-connections.md).
@@ -54,13 +59,13 @@ Sign in with that username and password. To add people, open **Settings → Admi
 
 ### Pointing the app at another server
 
-The desktop app reads the backend URL from `RENDERER_VITE_SERVER_URL` at build time (default for `npm run dev`: `http://localhost:3001`, set in `desktop/.env.development`). To use a backend elsewhere, create `desktop/.env.development.local` (git-ignored):
+The desktop app's approved servers are fixed at build time in `RENDERER_VITE_SERVERS` (`Label|URL`, comma-separated; the first is the default, and more than one shows a picker at sign-in). The older single `RENDERER_VITE_SERVER_URL` still works (default for `npm run dev`: `http://localhost:3001`, set in `desktop/.env.development`). To use a backend elsewhere, create `desktop/.env.development.local` (git-ignored):
 
 ```dotenv
-RENDERER_VITE_SERVER_URL=http://192.168.1.50:3001
+RENDERER_VITE_SERVERS=Discord 2.0|https://myhome.duckdns.org,Home network|http://192.168.68.65:3001
 ```
 
-…or set it for one run: `$env:RENDERER_VITE_SERVER_URL='http://192.168.1.50:3001'; npm run dev`. For production builds put it in `desktop/.env.production.local`. The value is compiled into the app and also used to build its Content-Security-Policy, so the app can only talk to that one server. It is public — never put secrets in `RENDERER_VITE_*` variables.
+…or set it for one run: `$env:RENDERER_VITE_SERVERS='Home|http://192.168.1.50:3001'; npm run dev`. For production builds put it in `desktop/.env.production.local`. Internet servers must use `https://` (the build fails otherwise); `http://` is only accepted for private addresses. The list is compiled into the app and also builds its Content-Security-Policy, so the app can only talk to those servers, and a saved sign-in is only ever sent to the server it came from. It is public — never put secrets in `RENDERER_VITE_*` variables.
 
 If the backend runs on a different PC, start it with `HOST=0.0.0.0` (or the LAN IP) **on a trusted network only** — see [server/README.md](server/README.md#configuration).
 
