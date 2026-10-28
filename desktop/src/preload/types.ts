@@ -102,6 +102,13 @@ export interface D2DesktopApi {
      */
     getIdleState: (thresholdSeconds: number) => Promise<SystemIdleState>
   }
+  net: {
+    /**
+     * Chromium's error code (e.g. "ERR_CERT_DATE_INVALID", "ERR_NAME_NOT_RESOLVED") of the most
+     * recent failed request to this origin in the last two minutes, or null. Diagnostic only.
+     */
+    lastError: (origin: string) => Promise<string | null>
+  }
 }
 
 export type SystemIdleState = 'active' | 'idle' | 'locked' | 'unknown'

@@ -6,9 +6,13 @@ A self-hosted, Discord-inspired chat app for friends: an **Electron + React + Ty
 | --- | --- |
 | [`desktop/`](desktop/) | Electron desktop client |
 | [`server/`](server/) | Backend API + real-time gateway + Docker Compose (backend + LiveKit) ([server README](server/README.md)) |
-| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md), [profiles & presence](docs/milestone-8-identity.md), [sounds & interaction polish](docs/milestone-9-atmosphere.md), [friends & direct messages](docs/milestone-10-connections.md), [secure remote access](docs/milestone-11-project-connect.md) and [remote access options](docs/remote-access-options.md) |
+| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md), [profiles & presence](docs/milestone-8-identity.md), [sounds & interaction polish](docs/milestone-9-atmosphere.md), [friends & direct messages](docs/milestone-10-connections.md), [secure remote access](docs/milestone-11-project-connect.md), [public desktop client](docs/milestone-12-public-client.md) and [remote access options](docs/remote-access-options.md) |
 
-**Status — Milestone 11 (Project Connect: secure remote access), implemented and tested locally, not deployed:**
+**Status — Milestone 12 (public desktop client), implemented and tested locally, not committed or released:**
+- **Desktop 1.2:** two built-in servers, *Discord 2.0 — Internet* (`https://landhoev3.duckdns.org`, default for new installs) and *Discord 2.0 — Home Network* (`http://192.168.68.65:3001`); existing LAN sign-ins stay on Home Network.
+- **Clear connection errors** (certificate, DNS, offline, refused, timeout) without weakening certificate checks; Windows installer + zip builds; a proposed manual GitHub Actions build. Installers are **unsigned**: see [docs/milestone-12-public-client.md](docs/milestone-12-public-client.md).
+
+**Previously — Milestone 11 (Project Connect: secure remote access), now deployed in public mode:**
 - **Public mode for friends outside the LAN, all free:** DuckDNS name, Caddy with Let's Encrypt HTTPS/WSS, LiveKit offering both LAN and public addresses. No VPN app for friends. LAN-only stays the default.
 - **Hardening:** production refuses `DEV_AUTH=true`; client IPs trusted only from the proxy; the desktop app has its own origin (`app://discord2`) instead of `null`; refused WebSocket upgrades no longer leave sockets open.
 - **Desktop 1.1:** approved server profiles chosen at sign-in (https required on the internet), voice address checks. Details and the Phase 2 checklist: [docs/milestone-11-project-connect.md](docs/milestone-11-project-connect.md).

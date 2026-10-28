@@ -8,6 +8,7 @@ import { applyEncoderFlags, setupEncoderFlagsIpc } from './encoderFlags'
 import { isAppUrl, isWebUrl } from './appUrl'
 import { setupCredentialStorage } from './credentials'
 import { setupSystemIdle } from './system'
+import { setupNetDiagnostics } from './netDiagnostics'
 import { APP_INDEX_URL, registerAppScheme, serveAppScheme } from './appProtocol'
 
 // Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
@@ -102,6 +103,7 @@ app.whenReady().then(() => {
   setupEncoderFlagsIpc(isAppUrl)
   setupCredentialStorage()
   setupSystemIdle()
+  setupNetDiagnostics()
   serveAppScheme()
 
   createWindow()

@@ -1,0 +1,107 @@
+# Discord 2.0 — Windows desktop build (PROPOSAL, Milestone 12).
+#
+# Manual only: builds one exact commit and attaches the result to the workflow run as artifacts.
+# It never creates a release, never publishes, needs no secrets and no production credentials.
+# The installer it produces is UNSIGNED (see docs/milestone-12-public-client.md, "Distribution").
+#
+# Third-party actions are pinned to full commit SHAs (tags can be moved).
+name: Desktop Windows build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full 40-character commit SHA to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-windows-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      # Never pick up a signing certificate from the runner; this build is unsigned by design.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: desktop
+    steps:
+      - name: Require an exact commit
+        working-directory: .
+        env:
+          REF: ${{ inputs.ref }}
+        run: if ($env:REF -cnotmatch '^[0-9a-f]{40}$') { throw 'ref must be a full 40-character commit SHA' }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install (lockfile only)
+        run: npm ci
+
+      - name: Dependency audit (runtime dependencies, high and critical)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build (server profiles from the committed .env.production)
+        run: npm run build
+
+      - name: Check the compiled server profiles and CSP
+        run: |
+          $csp = [regex]::Match((Get-Content out/renderer/index.html -Raw), "connect-src[^`"]*").Value
+          Write-Output "CSP: $csp"
+          if ($csp -notmatch 'https://landhoev3\.duckdns\.org:\*' -or $csp -notmatch 'wss://landhoev3\.duckdns\.org:\*') { throw 'internet profile missing from the CSP' }
+          if ($csp -match 'http://landhoev3|ws://landhoev3') { throw 'unencrypted transport to the internet host' }
+
+      - name: Package (installer + zip, unsigned, not published)
+        run: npx electron-builder --win nsis zip --publish never
+
+      - name: Check the package contains no secrets or stray files
+        run: |
+          $t = Join-Path $env:RUNNER_TEMP 'asar'
+          npx @electron/asar extract dist/win-unpacked/resources/app.asar $t
+          $hits = Get-ChildItem $t -Recurse -File | Select-String -Pattern 'LIVEKIT_API_SECRET|DUCKDNS_TOKEN|api_secret|BEGIN [A-Z ]*PRIVATE KEY'
+          if ($hits) { $hits | ForEach-Object { $_.Path }; throw 'secret-like content in the package' }
+          $stray = Get-ChildItem $t -Recurse -File | Where-Object { $_.Name -match '^\.env|\.map$|\.db$' }
+          if ($stray) { $stray.FullName; throw 'unexpected files in the package' }
+          Write-Output ("package OK: {0} files, {1:N1} MB" -f (Get-ChildItem $t -Recurse -File).Count, ((Get-Item dist/win-unpacked/resources/app.asar).Length / 1MB))
+
+      - name: Checksums
+        run: |
+          Get-ChildItem dist -File | Where-Object { $_.Extension -in '.exe', '.zip' } |
+            ForEach-Object { '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } |
+            Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: discord2-windows-unsigned-${{ inputs.ref }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.zip
+            desktop/dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14

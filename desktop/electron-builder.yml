@@ -7,6 +7,9 @@ directories:
 files:
   - '!**/.vscode/*'
   - '!src/*'
+  # Previous build output must never end up inside the app (electron-builder only excludes the
+  # output folder of the current run).
+  - '!dist{,/**/*}'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
@@ -15,6 +18,12 @@ asarUnpack:
   - resources/**
 win:
   executableName: Discord2
+  # Installer for normal use; the zip is the unpacked app for testing (no installation).
+  target:
+    - nsis
+    - zip
+  # Used by the zip; the installer has its own name below.
+  artifactName: Discord2-${version}-win-${arch}.${ext}
 nsis:
   artifactName: Discord2-${version}-setup.${ext}
   shortcutName: ${productName}

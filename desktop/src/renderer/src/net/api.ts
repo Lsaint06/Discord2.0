@@ -156,7 +156,7 @@ export class ApiClient {
       const timedOut = err instanceof DOMException && err.name === 'TimeoutError'
       throw new ApiError(
         0,
-        'network_error',
+        timedOut ? 'timeout' : 'network_error',
         timedOut ? 'The server took too long to respond.' : 'Cannot reach the server.'
       )
     }

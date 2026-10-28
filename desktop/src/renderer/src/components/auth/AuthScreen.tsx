@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react'
 import { ApiClient, ApiError, type InviteInfo, type ServerMeta } from '../../net/api'
 import { LIMITS, type ApiAuthResult } from '../../net/protocol'
 import { storageInfo } from '../../net/session'
+import { describeConnectionFailure, type ServerOption } from '../../net/networkErrors'
 import { LogoIcon } from '../Icons'
 import PasswordInput from './PasswordInput'
 
@@ -25,12 +26,36 @@ type View = 'login' | 'register' | 'recover' | 'dev' | 'codes'
 type ServerCheck =
   { state: 'checking' } | { state: 'ok'; meta: ServerMeta } | { state: 'down'; error: string }
 
+/** Stable default, so `servers` can be an effect dependency without re-running it each render. */
+const NO_SERVERS: ServerOption[] = []
+
 const message = (err: unknown, fallback: string): string =>
   err instanceof ApiError
     ? err.code === 'rate_limited' && err.retryAfterMs
       ? `Too many attempts. Try again in ${Math.ceil(err.retryAfterMs / 1000)} seconds.`
       : err.message
     : fallback
+
+/**
+ * A plain-language reason when the server can't be reached at all (certificate, DNS, offline,
+ * refused, timeout), using Chromium's error code from the main process when available.
+ */
+async function connectionMessage(
+  err: unknown,
+  serverUrl: string,
+  servers: ServerOption[],
+  fallback: string
+): Promise<string> {
+  if (!(err instanceof ApiError && err.isNetwork)) return message(err, fallback)
+  let code: string | null = err.code === 'timeout' ? 'ERR_TIMED_OUT' : null
+  const lookup = window.d2?.net?.lastError
+  for (let i = 0; !code && lookup && i < 2; i++) {
+    // The main process records the failure asynchronously; give it a moment the second time.
+    if (i > 0) await new Promise((r) => setTimeout(r, 250))
+    code = await lookup(serverUrl).catch(() => null)
+  }
+  return describeConnectionFailure(code, serverUrl, servers)
+}
 
 function RecoveryCodes({
   codes,
@@ -82,7 +107,7 @@ function RecoveryCodes({
 
 function AuthScreen({
   serverUrl,
-  servers = [],
+  servers = NO_SERVERS,
   onSelectServer,
   notice,
   onAuthenticated
@@ -108,14 +133,15 @@ function AuthScreen({
     new ApiClient(serverUrl)
       .meta()
       .then((meta) => !cancelled && setCheck({ state: 'ok', meta }))
-      .catch((err: unknown) => {
-        if (!cancelled) setCheck({ state: 'down', error: message(err, 'Cannot reach the server.') })
+      .catch(async (err: unknown) => {
+        const text = await connectionMessage(err, serverUrl, servers, 'Cannot reach the server.')
+        if (!cancelled) setCheck({ state: 'down', error: text })
       })
     void storageInfo().then((s) => !cancelled && setDevice(s.device))
     return () => {
       cancelled = true
     }
-  }, [serverUrl, checkAttempt])
+  }, [serverUrl, checkAttempt, servers])
 
   const go = (next: View): void => {
     setView(next)
@@ -136,7 +162,7 @@ function AuthScreen({
     try {
       await fn()
     } catch (err) {
-      setError(message(err, fallback))
+      setError(await connectionMessage(err, serverUrl, servers, fallback))
     } finally {
       setSubmitting(false)
     }
@@ -280,7 +306,7 @@ function AuthScreen({
               {servers.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.label}
-                  {s.insecure ? ' (home network)' : ''}
+                  {s.insecure && !/home/i.test(s.label) ? ' (home network)' : ''}
                 </option>
               ))}
             </select>
@@ -308,8 +334,14 @@ function AuthScreen({
           )}
         </div>
         {check.state === 'down' && (
-          <p className="form-error">
-            {check.error} Is the backend running (<code>npm run dev</code> in <code>server/</code>)?
+          <p className="form-error" role="alert">
+            {check.error}
+            {import.meta.env.DEV && (
+              <>
+                {' '}
+                Is the backend running (<code>npm run dev</code> in <code>server/</code>)?
+              </>
+            )}
           </p>
         )}
         {check.state === 'ok' && !accountsSupported && (

@@ -73,6 +73,10 @@ const d2: D2DesktopApi = {
         'd2:idle-state',
         Math.round(Number(thresholdSeconds))
       ) as Promise<SystemIdleState>
+  },
+  net: {
+    lastError: (origin) =>
+      ipcRenderer.invoke('d2:net-last-error', String(origin)) as Promise<string | null>
   }
 }
 
