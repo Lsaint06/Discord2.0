@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: desktop
+appId: com.discord2.app
+productName: Discord 2.0
 directories:
   buildResources: build
 files:
@@ -12,9 +12,9 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: desktop
+  executableName: Discord2
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: Discord2-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always

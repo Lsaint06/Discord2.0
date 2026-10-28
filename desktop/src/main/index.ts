@@ -8,6 +8,7 @@ import { applyEncoderFlags, setupEncoderFlagsIpc } from './encoderFlags'
 import { isAppUrl, isWebUrl } from './appUrl'
 import { setupCredentialStorage } from './credentials'
 import { setupSystemIdle } from './system'
+import { normalizeFileOrigin } from './origin'
 
 // Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
 // Lets two clients run side by side on one PC for testing.
@@ -84,7 +85,8 @@ function createWindow(): void {
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
   // Set app user model id for windows
-  electronApp.setAppUserModelId('com.electron')
+  // Must match electron-builder's appId so Windows notifications show the app's name.
+  electronApp.setAppUserModelId('com.discord2.app')
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
@@ -98,6 +100,7 @@ app.whenReady().then(() => {
   setupEncoderFlagsIpc(isAppUrl)
   setupCredentialStorage()
   setupSystemIdle()
+  normalizeFileOrigin()
 
   createWindow()
 
