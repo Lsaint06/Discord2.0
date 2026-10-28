@@ -1,5 +1,6 @@
 import {
   CloseCodes,
+  type ApiConversation,
   type ApiMe,
   type ApiMessage,
   type ApiPreferences,
@@ -41,6 +42,12 @@ export interface GatewayHandlers {
     channelId: string | null
     streaming?: boolean
   }) => void
+  /** Your relationship with someone changed (type null = none). */
+  onRelationshipUpdate: (update: GatewayEvent<'relationship_update'>) => void
+  /** A conversation you belong to was created, changed or reopened. */
+  onConversationUpdate: (conversation: ApiConversation) => void
+  /** You left / were removed from a conversation, or closed it on another device. */
+  onConversationRemove: (removed: GatewayEvent<'conversation_remove'>) => void
 }
 
 const BACKOFF_BASE_MS = 1_000
@@ -205,6 +212,15 @@ export class GatewayClient {
         break
       case 'voice_state_update':
         this.handlers.onVoiceStateUpdate(frame.d)
+        break
+      case 'relationship_update':
+        this.handlers.onRelationshipUpdate(frame.d)
+        break
+      case 'conversation_update':
+        this.handlers.onConversationUpdate(frame.d)
+        break
+      case 'conversation_remove':
+        this.handlers.onConversationRemove(frame.d)
         break
     }
   }

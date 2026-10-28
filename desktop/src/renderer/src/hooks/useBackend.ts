@@ -12,6 +12,8 @@ import { GatewayClient, type GatewayStatus } from '../net/gateway'
 import {
   LIMITS,
   type ApiAttachment,
+  type ApiConversation,
+  type ApiConversationEvent,
   type ApiMe,
   type ApiMember,
   type ApiPreferences,
@@ -20,6 +22,7 @@ import {
   type ApiUser,
   type ApiVoiceToken,
   type ProfileImageKind,
+  type RelationshipType,
   DEFAULT_PREFERENCES
 } from '../net/protocol'
 import {
@@ -38,6 +41,7 @@ import {
 import { applyIncoming, applyReadPosition, type ReadState } from '../chat/unread'
 import { AttachmentCache } from '../chat/attachmentCache'
 import { parseProfileMediaKey } from '../lib/profileMedia'
+import { applyRelationship, bumpConversation, type Relationships } from '../chat/conversations'
 
 export interface ChannelState {
   messages: Message[]
@@ -63,6 +67,14 @@ interface Options {
   onIncomingMessage?: (message: Message) => void
   /** You were removed from a server (left, kicked or banned). */
   onServerRemoved?: (serverId: string, reason: 'left' | 'kicked' | 'banned') => void
+  /** Someone's relationship with you changed (e.g. a new incoming friend request). */
+  onRelationshipChanged?: (
+    userId: string,
+    type: RelationshipType | null,
+    previous: RelationshipType | null
+  ) => void
+  /** You left, were removed from, or closed a conversation (possibly on another device). */
+  onConversationRemoved?: (channelId: string, reason: 'left' | 'removed' | 'closed') => void
 }
 
 export interface SendInput {
@@ -171,10 +183,40 @@ export interface Backend {
   setPresence: (status: SelectableStatus) => Promise<string | null>
   fetchVoiceToken: (channelId: string) => Promise<ApiVoiceToken>
   retryInitialLoad: () => void
+  // ---- Friends and conversations (Milestone 10) ----
+  relationships: Relationships
+  /** Your open conversations by id (= channel id). */
+  conversations: Record<string, ApiConversation>
+  conversationsLoaded: boolean
+  /** False when the server predates Milestone 10 (no friends or conversations there). */
+  connectionsSupported: boolean
+  sendFriendRequest: (username: string) => Promise<{ error?: string; type?: 'friend' | 'outgoing' }>
+  acceptFriendRequest: (userId: string) => Promise<string | null>
+  /** Removes a friend, cancels your request or declines theirs. */
+  removeRelationship: (userId: string) => Promise<string | null>
+  setBlocked: (userId: string, blocked: boolean) => Promise<string | null>
+  setAllowServerDms: (allow: boolean) => Promise<string | null>
+  openDm: (userId: string) => Promise<{ conversation?: ApiConversation; error?: string }>
+  createGroup: (
+    userIds: string[],
+    name: string | null
+  ) => Promise<{ conversation?: ApiConversation; error?: string }>
+  renameGroup: (channelId: string, name: string | null) => Promise<string | null>
+  addGroupMember: (channelId: string, userId: string) => Promise<string | null>
+  removeGroupMember: (channelId: string, userId: string) => Promise<string | null>
+  leaveGroup: (channelId: string) => Promise<string | null>
+  closeConversation: (channelId: string) => Promise<string | null>
+  fetchConversationEvents: (channelId: string) => Promise<ApiConversationEvent[]>
 }
 
 export function useBackend(session: BackendSession, options: Options): Backend {
-  const { onSessionInvalid, onIncomingMessage, onServerRemoved } = options
+  const {
+    onSessionInvalid,
+    onIncomingMessage,
+    onServerRemoved,
+    onRelationshipChanged,
+    onConversationRemoved
+  } = options
 
   const [api] = useState(() => new ApiClient(session.httpUrl, session.token))
   const [attachments] = useState(() => new AttachmentCache((id) => api.fetchAttachment(id)))
@@ -203,6 +245,10 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   const [serversRevision, setServersRevision] = useState(0)
   const [voiceStates, setVoiceStates] = useState<Record<string, string>>({})
   const [voiceStreaming, setVoiceStreaming] = useState<Record<string, true>>({})
+  const [relationships, setRelationships] = useState<Relationships>({})
+  const [conversations, setConversations] = useState<Record<string, ApiConversation>>({})
+  const [conversationsLoaded, setConversationsLoaded] = useState(false)
+  const [connectionsSupported, setConnectionsSupported] = useState(true)
   const [gateway, setGateway] = useState<{ status: GatewayStatus; retryInMs?: number }>({
     status: 'connecting'
   })
@@ -220,6 +266,12 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   const onSessionInvalidRef = useRef(onSessionInvalid)
   const onIncomingRef = useRef(onIncomingMessage)
   const onServerRemovedRef = useRef(onServerRemoved)
+  const onRelationshipChangedRef = useRef(onRelationshipChanged)
+  const onConversationRemovedRef = useRef(onConversationRemoved)
+  const relationshipsRef = useRef(relationships)
+  const conversationsRef = useRef(conversations)
+  const serversRef = useRef(servers)
+  const usersRef = useRef(users)
   const membersRef = useRef(members)
   const ackTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
 
@@ -236,7 +288,27 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     onSessionInvalidRef.current = onSessionInvalid
     onIncomingRef.current = onIncomingMessage
     onServerRemovedRef.current = onServerRemoved
-  }, [onSessionInvalid, onIncomingMessage, onServerRemoved])
+    onRelationshipChangedRef.current = onRelationshipChanged
+    onConversationRemovedRef.current = onConversationRemoved
+  }, [
+    onSessionInvalid,
+    onIncomingMessage,
+    onServerRemoved,
+    onRelationshipChanged,
+    onConversationRemoved
+  ])
+  useEffect(() => {
+    relationshipsRef.current = relationships
+  }, [relationships])
+  useEffect(() => {
+    conversationsRef.current = conversations
+  }, [conversations])
+  useEffect(() => {
+    serversRef.current = servers
+  }, [servers])
+  useEffect(() => {
+    usersRef.current = users
+  }, [users])
   useEffect(() => {
     membersRef.current = members
   }, [members])
@@ -286,6 +358,23 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     }
   }, [api, handleAuthError])
 
+  const loadConnections = useCallback(async () => {
+    try {
+      const [rels, convs] = await Promise.all([api.relationships(), api.conversations()])
+      setRelationships(Object.fromEntries(rels.map((r) => [r.userId, r])))
+      setConversations(Object.fromEntries(convs.map((c) => [c.id, c])))
+      setConversationsLoaded(true)
+      setConnectionsSupported(true)
+    } catch (err) {
+      if (handleAuthError(err)) return
+      // A server older than Milestone 10 has no such routes: show that instead of loading forever.
+      if (err instanceof ApiError && err.status === 404) {
+        setConnectionsSupported(false)
+        setConversationsLoaded(true)
+      }
+    }
+  }, [api, handleAuthError])
+
   // Initial load (REST) and the realtime gateway.
   useEffect(() => {
     let cancelled = false
@@ -302,6 +391,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         setUsers(Object.fromEntries(userList.map((u) => [u.id, u])))
         setPhase('ready')
         void loadReadStates()
+        void loadConnections()
       })
       .catch((err: unknown) => {
         if (cancelled || handleAuthError(err)) return
@@ -328,6 +418,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         if (cancelled) return
         setServers(serverList)
         void loadReadStates()
+        void loadConnections()
         for (const [channelId, ch] of Object.entries(channelsRef.current)) {
           if (!ch.loaded || ch.hasNewer) continue
           const latest = (await api.messages(channelId, { limit: PAGE })).map(toMessage)
@@ -399,6 +490,12 @@ export function useBackend(session: BackendSession, options: Options): Backend {
           ...prev,
           [m.channelId]: applyIncoming(prev[m.channelId], m, meIdRef.current)
         }))
+        if (conversationsRef.current[m.channelId]) {
+          setConversations((prev) => bumpConversation(prev, m.channelId, m.id))
+        } else if (!serversRef.current.some((s) => s.channels.some((c) => c.id === m.channelId))) {
+          // A conversation we don't know yet (its update may have been missed): refetch the list.
+          void loadConnections()
+        }
         onIncomingRef.current?.(message)
       },
       onMessageUpdate: (edit) => {
@@ -474,6 +571,49 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         })
         setServersRevision((n) => n + 1)
         onServerRemovedRef.current?.(serverId, reason)
+      },
+      onRelationshipUpdate: ({ userId, type }) => {
+        const previous = relationshipsRef.current[userId]?.type ?? null
+        setRelationships((prev) => applyRelationship(prev, userId, type))
+        if (previous !== type) onRelationshipChangedRef.current?.(userId, type, previous)
+      },
+      onConversationUpdate: (conversation) => {
+        setConversations((prev) => ({ ...prev, [conversation.id]: conversation }))
+        // Members we haven't seen yet (e.g. someone just added to a group): load their profiles.
+        const unknown = conversation.memberIds.some((id) => !usersRef.current[id])
+        if (unknown) {
+          void api
+            .users()
+            .then((list) => {
+              if (cancelled) return
+              setUsers((prev) => ({ ...prev, ...Object.fromEntries(list.map((u) => [u.id, u])) }))
+            })
+            .catch(handleAuthError)
+        }
+      },
+      onConversationRemove: ({ channelId, reason }) => {
+        setConversations((prev) => {
+          if (!prev[channelId]) return prev
+          const next = { ...prev }
+          delete next[channelId]
+          return next
+        })
+        if (reason !== 'closed') {
+          // No access any more: drop the loaded history.
+          setChannels((prev) => {
+            if (!prev[channelId]) return prev
+            const next = { ...prev }
+            delete next[channelId]
+            return next
+          })
+          setReadStates((prev) => {
+            if (!prev[channelId]) return prev
+            const next = { ...prev }
+            delete next[channelId]
+            return next
+          })
+        }
+        onConversationRemovedRef.current?.(channelId, reason)
       }
     })
     client.setIdle(idleRef.current)
@@ -493,6 +633,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     applyMessages,
     updateMessages,
     loadReadStates,
+    loadConnections,
     handleAuthError,
     attachments
   ])
@@ -1105,6 +1246,175 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     }
   }, [api, handleAuthError])
 
+  // ---- Friends and conversations ----
+
+  /** Runs an action; resolves to an error message or null. */
+  const run = useCallback(
+    async (action: () => Promise<unknown>): Promise<string | null> => {
+      try {
+        await action()
+        return null
+      } catch (err) {
+        if (handleAuthError(err)) return 'Signed out'
+        return describeError(err)
+      }
+    },
+    [handleAuthError]
+  )
+
+  const putConversation = useCallback((conversation: ApiConversation) => {
+    setConversations((prev) => ({ ...prev, [conversation.id]: conversation }))
+  }, [])
+
+  const dropConversation = useCallback((channelId: string) => {
+    setConversations((prev) => {
+      if (!prev[channelId]) return prev
+      const next = { ...prev }
+      delete next[channelId]
+      return next
+    })
+  }, [])
+
+  const sendFriendRequest = useCallback(
+    async (username: string): Promise<{ error?: string; type?: 'friend' | 'outgoing' }> => {
+      try {
+        const result = await api.sendFriendRequest(username)
+        setRelationships((prev) => applyRelationship(prev, result.userId, result.type))
+        // Make sure the new person's name and avatar are known.
+        if (!usersRef.current[result.userId]) {
+          const list = await api.users()
+          setUsers((prev) => ({ ...prev, ...Object.fromEntries(list.map((u) => [u.id, u])) }))
+        }
+        return { type: result.type }
+      } catch (err) {
+        if (handleAuthError(err)) return { error: 'Signed out' }
+        return { error: describeError(err) }
+      }
+    },
+    [api, handleAuthError]
+  )
+
+  const acceptFriendRequest = useCallback(
+    (userId: string) =>
+      run(async () => {
+        await api.acceptFriendRequest(userId)
+        setRelationships((prev) => applyRelationship(prev, userId, 'friend'))
+      }),
+    [api, run]
+  )
+
+  const removeRelationship = useCallback(
+    (userId: string) =>
+      run(async () => {
+        await api.removeRelationship(userId)
+        setRelationships((prev) => applyRelationship(prev, userId, null))
+      }),
+    [api, run]
+  )
+
+  const setBlocked = useCallback(
+    (userId: string, blocked: boolean) =>
+      run(async () => {
+        await api.setBlocked(userId, blocked)
+        setRelationships((prev) => applyRelationship(prev, userId, blocked ? 'blocked' : null))
+      }),
+    [api, run]
+  )
+
+  const setAllowServerDms = useCallback(
+    (allow: boolean) => accountAction(() => api.setPrivacy(allow)),
+    [accountAction, api]
+  )
+
+  const openDm = useCallback(
+    async (userId: string): Promise<{ conversation?: ApiConversation; error?: string }> => {
+      try {
+        const conversation = await api.openDm(userId)
+        putConversation(conversation)
+        return { conversation }
+      } catch (err) {
+        if (handleAuthError(err)) return { error: 'Signed out' }
+        return { error: describeError(err) }
+      }
+    },
+    [api, handleAuthError, putConversation]
+  )
+
+  const createGroup = useCallback(
+    async (
+      userIds: string[],
+      name: string | null
+    ): Promise<{ conversation?: ApiConversation; error?: string }> => {
+      try {
+        const conversation = await api.createGroup(userIds, name)
+        putConversation(conversation)
+        return { conversation }
+      } catch (err) {
+        if (handleAuthError(err)) return { error: 'Signed out' }
+        return { error: describeError(err) }
+      }
+    },
+    [api, handleAuthError, putConversation]
+  )
+
+  const renameGroup = useCallback(
+    (channelId: string, name: string | null) =>
+      run(async () => putConversation(await api.renameGroup(channelId, name))),
+    [api, run, putConversation]
+  )
+
+  const addGroupMember = useCallback(
+    (channelId: string, userId: string) =>
+      run(async () => putConversation(await api.addGroupMember(channelId, userId))),
+    [api, run, putConversation]
+  )
+
+  const removeGroupMember = useCallback(
+    (channelId: string, userId: string) =>
+      run(async () => {
+        await api.removeGroupMember(channelId, userId)
+        setConversations((prev) => {
+          const c = prev[channelId]
+          if (!c) return prev
+          return {
+            ...prev,
+            [channelId]: { ...c, memberIds: c.memberIds.filter((id) => id !== userId) }
+          }
+        })
+      }),
+    [api, run]
+  )
+
+  const leaveGroup = useCallback(
+    (channelId: string) =>
+      run(async () => {
+        await api.leaveGroup(channelId)
+        dropConversation(channelId)
+      }),
+    [api, run, dropConversation]
+  )
+
+  const closeConversation = useCallback(
+    (channelId: string) =>
+      run(async () => {
+        await api.closeConversation(channelId)
+        dropConversation(channelId)
+      }),
+    [api, run, dropConversation]
+  )
+
+  const fetchConversationEvents = useCallback(
+    async (channelId: string) => {
+      try {
+        return await api.conversationEvents(channelId)
+      } catch (err) {
+        handleAuthError(err)
+        throw err
+      }
+    },
+    [api, handleAuthError]
+  )
+
   const unread = useMemo(
     () =>
       new Set(
@@ -1167,6 +1477,23 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     updateDisplayName,
     setPresence,
     fetchVoiceToken,
-    retryInitialLoad
+    retryInitialLoad,
+    relationships,
+    conversations,
+    conversationsLoaded,
+    connectionsSupported,
+    sendFriendRequest,
+    acceptFriendRequest,
+    removeRelationship,
+    setBlocked,
+    setAllowServerDms,
+    openDm,
+    createGroup,
+    renameGroup,
+    addGroupMember,
+    removeGroupMember,
+    leaveGroup,
+    closeConversation,
+    fetchConversationEvents
   }
 }

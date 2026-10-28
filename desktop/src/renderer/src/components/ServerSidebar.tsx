@@ -5,7 +5,12 @@ import { LogoIcon, PlusIcon } from './Icons'
 
 interface ServerSidebarProps {
   servers: Server[]
-  activeServerId: string
+  /** The server on screen; null while Home (friends and conversations) is open. */
+  activeServerId: string | null
+  homeActive: boolean
+  /** Pending friend requests + unread conversation messages. */
+  homeBadge: number
+  onSelectHome: () => void
   unreadServerIds: Set<string>
   onSelectServer: (id: string) => void
   onAddServer: () => void
@@ -19,6 +24,9 @@ interface Tooltip {
 function ServerSidebar({
   servers,
   activeServerId,
+  homeActive,
+  homeBadge,
+  onSelectHome,
   unreadServerIds,
   onSelectServer,
   onAddServer
@@ -34,13 +42,29 @@ function ServerSidebar({
   return (
     <nav className="server-sidebar" aria-label="Servers">
       <div
-        className="server-item brand"
-        onMouseEnter={showTooltip('Discord 2.0')}
-        onMouseLeave={hideTooltip}
+        className={`server-item brand${homeActive ? ' active' : ''}${homeBadge > 0 && !homeActive ? ' unread' : ''}`}
       >
-        <div className="server-icon brand-icon">
+        <span className="server-pill" />
+        <button
+          type="button"
+          className="server-icon brand-icon"
+          onClick={onSelectHome}
+          onMouseEnter={showTooltip('Direct Messages')}
+          onMouseLeave={hideTooltip}
+          onFocus={showTooltip('Direct Messages')}
+          onBlur={hideTooltip}
+          aria-label={
+            homeBadge > 0 ? `Direct Messages, ${homeBadge} notifications` : 'Direct Messages'
+          }
+          aria-current={homeActive ? 'page' : undefined}
+        >
           <LogoIcon size={28} />
-        </div>
+        </button>
+        {homeBadge > 0 && (
+          <span className="server-badge" aria-hidden="true">
+            {homeBadge >= 99 ? '99+' : homeBadge}
+          </span>
+        )}
       </div>
       <div className="server-separator" />
 

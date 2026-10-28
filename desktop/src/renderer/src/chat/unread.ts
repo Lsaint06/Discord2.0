@@ -116,10 +116,17 @@ export function notificationText(input: {
   showPreview: boolean
   /** The message mentions you (see chat/mentions.ts). */
   mention?: boolean
+  /** Set for direct (one-to-one) and group conversations instead of a server channel. */
+  conversation?: { kind: 'dm' } | { kind: 'group'; title: string }
 }): { title: string; body: string } {
-  const title = input.mention
-    ? `${input.authorName} mentioned you in #${input.channelName}`
-    : `${input.authorName} in #${input.channelName}`
+  const title =
+    input.conversation?.kind === 'dm'
+      ? input.authorName
+      : input.conversation?.kind === 'group'
+        ? `${input.authorName} in ${input.conversation.title}`
+        : input.mention
+          ? `${input.authorName} mentioned you in #${input.channelName}`
+          : `${input.authorName} in #${input.channelName}`
   if (!input.showPreview) return { title, body: 'New message' }
   const text = input.content.trim()
   const body =

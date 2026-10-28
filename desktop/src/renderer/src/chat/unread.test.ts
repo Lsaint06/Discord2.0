@@ -132,6 +132,28 @@ describe('notifications', () => {
       })
     ).toEqual({ title: 'Bob mentioned you in #general', body: 'New message' })
   })
+
+  it('titles direct and group conversations without a channel name', () => {
+    const base = {
+      authorName: 'Bob',
+      channelName: 'direct-message',
+      content: 'hi',
+      attachmentCount: 0,
+      showPreview: false,
+      mention: true
+    }
+    expect(notificationText({ ...base, conversation: { kind: 'dm' } })).toEqual({
+      title: 'Bob',
+      body: 'New message'
+    })
+    expect(
+      notificationText({ ...base, conversation: { kind: 'group', title: 'Road trip' } }).title
+    ).toBe('Bob in Road trip')
+    // Content stays hidden unless previews are on, as for channels.
+    expect(
+      notificationText({ ...base, showPreview: true, conversation: { kind: 'dm' } }).body
+    ).toBe('hi')
+  })
 })
 
 describe('scrolling', () => {

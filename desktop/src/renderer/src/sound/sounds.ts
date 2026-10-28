@@ -19,10 +19,12 @@ export type SoundEvent =
   | 'undeafen'
   | 'connect'
   | 'disconnect'
+  | 'friendRequest'
 
 export const SOUND_EVENTS: readonly SoundEvent[] = [
   'message',
   'mention',
+  'friendRequest',
   'voiceJoin',
   'voiceLeave',
   'connect',
@@ -47,7 +49,13 @@ export const SOUND_INFO: Record<SoundEvent, SoundInfo> = {
   },
   mention: {
     label: 'Mention',
-    description: 'Someone mentions you (@username, @display name or @everyone).',
+    description:
+      'Someone mentions you (@username, @display name or @everyone), or sends you a direct message.',
+    group: 'messages'
+  },
+  friendRequest: {
+    label: 'Friend request',
+    description: 'Someone sends you a friend request.',
     group: 'messages'
   },
   voiceJoin: {
@@ -401,6 +409,43 @@ export const RECIPES: Record<SoundEvent, SoundRecipe> = {
       }
     ],
     lowpass: 2600
+  },
+  // Friendly rising arpeggio (a major triad), softer than a mention.
+  friendRequest: {
+    notes: [
+      {
+        at: 0,
+        freq: D5,
+        dur: 0.16,
+        wave: 'sine',
+        gain: 0.8,
+        attack: 0.005,
+        decay: 0.06,
+        partials: BELL
+      },
+      {
+        at: 0.075,
+        freq: G5,
+        dur: 0.18,
+        wave: 'sine',
+        gain: 0.9,
+        attack: 0.005,
+        decay: 0.07,
+        partials: BELL
+      },
+      {
+        at: 0.15,
+        freq: B5,
+        dur: 0.4,
+        wave: 'sine',
+        gain: 1,
+        attack: 0.005,
+        decay: 0.13,
+        partials: BELL
+      }
+    ],
+    lowpass: 6000,
+    echo: [0.09, 0.1]
   }
 }
 

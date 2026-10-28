@@ -287,6 +287,50 @@ export function ShieldIcon(props: IconProps): React.JSX.Element {
   )
 }
 
+export function AtIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="3.75" />
+      <path d="M15.75 8.5v4.75a2.5 2.5 0 0 0 5 0V12a8.75 8.75 0 1 0-3.4 6.9" />
+    </Svg>
+  )
+}
+
+export function FriendsIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="8.5" cy="8" r="3.25" />
+      <circle cx="16.5" cy="9" r="2.6" />
+      <path d="M2.5 19.5c.5-3.3 2.9-5.2 6-5.2s5.5 1.9 6 5.2M15 14.4c.5-.1 1-.2 1.5-.2 2.6 0 4.5 1.6 5 4.3" />
+    </Svg>
+  )
+}
+
+export function ChatBubbleIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M5 4.5h14A1.5 1.5 0 0 1 20.5 6v9a1.5 1.5 0 0 1-1.5 1.5h-8.5L6 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V6A1.5 1.5 0 0 1 5 4.5z" />
+    </Svg>
+  )
+}
+
+export function BlockIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="m6 6 12 12" />
+    </Svg>
+  )
+}
+
+export function CheckIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="m5 12.5 4.5 4.5L19 7.5" />
+    </Svg>
+  )
+}
+
 export function LeaveIcon(props: IconProps): React.JSX.Element {
   return (
     <Svg {...props}>

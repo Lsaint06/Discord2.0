@@ -170,6 +170,11 @@ export function normalizeCustomStatusText(input: unknown): string | null {
   return optionalLine(input, LIMITS.customStatusMaxLength, 'Custom status', 'invalid_custom_status')
 }
 
+/** Group conversation name: null/empty means "show the members' names". */
+export function normalizeGroupName(input: unknown): string | null {
+  return optionalLine(input, LIMITS.groupNameMaxLength, 'Group name', 'invalid_name')
+}
+
 /** Bio: multi-line plain text (rendered as text, never HTML), limited length and lines. */
 export function normalizeBio(input: unknown): string | null {
   if (input === null || input === undefined) return null

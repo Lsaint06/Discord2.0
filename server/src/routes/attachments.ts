@@ -246,9 +246,11 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: AppContext):
         // Unsent uploads are visible to their uploader only.
         if (attachment.uploaderId !== user.id) throw notFound('Attachment not found')
       } else {
-        // Sent attachments follow the channel: member of the server and View Channel.
+        // Sent attachments follow the channel: member of the server and View Channel — or a
+        // conversation member who could see the message (not one sent before they joined).
         const access = await ctx.access.channel(user, attachment.channelId)
         if (!access || access.channelPermissions === 0) throw notFound('Attachment not found')
+        if (BigInt(attachment.messageId) <= BigInt(access.historyFrom)) throw notFound('Attachment not found')
       }
 
       const inline = attachment.kind === 'image' && request.query.download !== '1'

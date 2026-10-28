@@ -23,6 +23,7 @@ export interface SoundPreferences {
 export const DEFAULT_SOUND_EVENTS: Record<SoundEvent, boolean> = {
   message: true,
   mention: true,
+  friendRequest: true,
   voiceJoin: true,
   voiceLeave: true,
   connect: true,
@@ -125,6 +126,7 @@ export type GateDecision = { play: true; delayMs: number } | { play: false }
 const SPACING: Record<SoundEvent, number> = {
   message: 900,
   mention: 350,
+  friendRequest: 1000,
   voiceJoin: 250,
   voiceLeave: 250,
   connect: 400,

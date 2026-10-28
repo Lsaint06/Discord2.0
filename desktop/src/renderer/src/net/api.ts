@@ -6,6 +6,8 @@ import type {
   ApiBan,
   ApiChannel,
   ApiChannelOverride,
+  ApiConversation,
+  ApiConversationEvent,
   ApiErrorBody,
   ApiInvitePreview,
   ApiLegacyIdentity,
@@ -16,6 +18,7 @@ import type {
   ApiProfile,
   ApiReadState,
   ApiRegistrationInvite,
+  ApiRelationship,
   ApiRolePermissions,
   ApiSearchResult,
   ApiServer,
@@ -89,6 +92,8 @@ export interface ServerMeta {
   registration?: 'invite'
   /** Milestone 8+: profiles, presence preferences, profile images. */
   profiles?: boolean
+  /** Milestone 10+: friends, blocking, direct and group conversations. */
+  connections?: boolean
 }
 
 export interface SendMessageBody {
@@ -667,5 +672,76 @@ export class ApiClient {
   /** Short-lived LiveKit credentials for one voice channel (minted server-side). */
   voiceToken(channelId: string): Promise<ApiVoiceToken> {
     return this.request('POST', `/api/voice/channels/${encodeURIComponent(channelId)}/token`)
+  }
+
+  // ---- Friends and conversations ----
+
+  relationships(): Promise<ApiRelationship[]> {
+    return this.request('GET', '/api/relationships')
+  }
+
+  sendFriendRequest(username: string): Promise<{ userId: string; type: 'friend' | 'outgoing' }> {
+    return this.request('POST', '/api/relationships/requests', { username })
+  }
+
+  acceptFriendRequest(userId: string): Promise<unknown> {
+    return this.request('POST', `/api/relationships/${encodeURIComponent(userId)}/accept`)
+  }
+
+  /** Removes a friend, cancels your request or declines theirs. */
+  removeRelationship(userId: string): Promise<void> {
+    return this.request('DELETE', `/api/relationships/${encodeURIComponent(userId)}`)
+  }
+
+  setBlocked(userId: string, blocked: boolean): Promise<void> {
+    return this.request(
+      blocked ? 'PUT' : 'DELETE',
+      `/api/relationships/${encodeURIComponent(userId)}/block`
+    )
+  }
+
+  setPrivacy(allowServerDms: boolean): Promise<ApiMe> {
+    return this.request('PATCH', '/api/users/me/privacy', { allowServerDms })
+  }
+
+  conversations(): Promise<ApiConversation[]> {
+    return this.request('GET', '/api/conversations')
+  }
+
+  openDm(userId: string): Promise<ApiConversation> {
+    return this.request('POST', '/api/conversations/dm', { userId })
+  }
+
+  createGroup(userIds: string[], name: string | null): Promise<ApiConversation> {
+    return this.request('POST', '/api/conversations/group', { userIds, name })
+  }
+
+  renameGroup(channelId: string, name: string | null): Promise<ApiConversation> {
+    return this.request('PATCH', `/api/conversations/${encodeURIComponent(channelId)}`, { name })
+  }
+
+  addGroupMember(channelId: string, userId: string): Promise<ApiConversation> {
+    return this.request('POST', `/api/conversations/${encodeURIComponent(channelId)}/members`, {
+      userId
+    })
+  }
+
+  removeGroupMember(channelId: string, userId: string): Promise<void> {
+    return this.request(
+      'DELETE',
+      `/api/conversations/${encodeURIComponent(channelId)}/members/${encodeURIComponent(userId)}`
+    )
+  }
+
+  leaveGroup(channelId: string): Promise<void> {
+    return this.request('POST', `/api/conversations/${encodeURIComponent(channelId)}/leave`)
+  }
+
+  closeConversation(channelId: string): Promise<void> {
+    return this.request('POST', `/api/conversations/${encodeURIComponent(channelId)}/close`)
+  }
+
+  conversationEvents(channelId: string): Promise<ApiConversationEvent[]> {
+    return this.request('GET', `/api/conversations/${encodeURIComponent(channelId)}/events`)
   }
 }

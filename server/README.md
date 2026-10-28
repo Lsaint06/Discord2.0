@@ -93,12 +93,12 @@ All `/api/*` routes except `/api/meta` and `/api/dev/login` require `Authorizati
 | `GET /api/attachments/:attachmentId[?download=1]` | Download (authenticated; images inline, everything else as a download) |
 | `DELETE /api/attachments/:attachmentId` | Cancel an unsent upload |
 | `GET /api/read-states` · `PUT /api/channels/:channelId/read` `{ messageId }` | Unread state per channel; mark read (moves forward only). Broadcasts `read_state_update` to your own sessions |
-| `GET /api/search?q=&channelId=\|serverId=&authorId=&since=&until=&before=&limit=` | Full-text search (SQLite FTS5), newest first, `limit` ≤ 25, paginate with `nextBefore` |
+| `GET /api/search?q=&channelId=\|serverId=&authorId=&since=&until=&before=&limit=` | Full-text search (SQLite FTS5), newest first, `limit` ≤ 25, paginate with `nextBefore`. Without `channelId` it covers server channels only; pass a conversation's id to search inside it |
 | `POST /api/voice/channels/:channelId/token` | Voice: `{ url, token, room, identity, expiresAt }` for one voice channel (see below) |
 | `GET /api/voice/states` | Voice: who is in which voice channel `[{ userId, channelId }]` |
 | `POST /api/livekit/webhook` | LiveKit → backend only. Verified with LiveKit's signed `Authorization` header |
 
-Every channel and message route requires membership of the channel's server (otherwise **404**) and the matching permission (otherwise **403**): View Channel to read, Send Messages / Attach Files / Add Reactions to write, Pin Messages to pin, Manage Messages to delete other people's messages. Request bodies with unknown fields are rejected (`400`).
+Every channel and message route requires membership of the channel's server — or, for a conversation, membership of the conversation — (otherwise **404**) and the matching permission (otherwise **403**): View Channel to read, Send Messages / Attach Files / Add Reactions to write, Pin Messages to pin, Manage Messages to delete other people's messages. Request bodies with unknown fields are rejected (`400`).
 
 ### Profiles, status and preferences (Milestone 8)
 
@@ -109,9 +109,29 @@ Full design, image security and limits: [docs/milestone-8-identity.md](../docs/m
 | `PUT /api/users/me/status` `{ status?, customStatus?: { text?, emoji?, expiresInMs? } \| null }` | Status preference (synced across your devices) and custom status (1 min–7 days expiry, or none) |
 | `POST`/`DELETE /api/users/me/avatar` · `/api/users/me/banner` | Upload one image (multipart, ≤ 10 MB, PNG/JPEG/WebP/GIF by content) / remove. Re-encoded to metadata-free WebP |
 | `GET /api/profile-media/:id?size=full\|small` | Processed image; only for people who can see its owner |
-| `GET /api/users/:userId/profile` | `{ user, mutualServerIds }` (404 unless you share a server) |
+| `GET /api/users/:userId/profile` | `{ user, mutualServerIds, relationship }` (404 unless you can see the user; `relationship` is only ever `blocked` for the person who blocked) |
 | `GET`/`PATCH /api/users/me/preferences` | Synced appearance preferences (theme, accent, density, reduced motion, timestamps, idle timeout) |
 | `DELETE /api/admin/accounts/:userId/profile-media/:kind` | Instance administrators: remove a picture/banner (audited) |
+
+### Friends, blocking and conversations (Milestone 10)
+
+Full design, privacy rules and migration: [docs/milestone-10-connections.md](../docs/milestone-10-connections.md). A conversation's id is also a channel id, so its messages, attachments, reactions, pins, read state and search use the channel routes above (with a per-member history boundary).
+
+| Method & path | Description |
+| --- | --- |
+| `GET /api/relationships` | Your friends, incoming/outgoing requests and the people you blocked |
+| `POST /api/relationships/requests` `{ username }` | Friend request by exact username. Unknown, bot, disabled and blocking accounts all get the same `404 friend_request_failed`. A mutual request becomes a friendship at once |
+| `POST /api/relationships/:userId/accept` | Accept a pending request |
+| `DELETE /api/relationships/:userId` | Remove a friend, cancel your request or decline theirs |
+| `PUT`/`DELETE /api/relationships/:userId/block` | Block (also ends any friendship or request) / unblock. Never revealed to the blocked person |
+| `PATCH /api/users/me/privacy` `{ allowServerDms }` | Whether people you share a server with (not friends) may DM you |
+| `GET /api/conversations` | Your open conversations (`ApiConversation[]`, newest activity first) |
+| `POST /api/conversations/dm` `{ userId }` | Open the one DM with someone (created if needed; reopened if you closed it) |
+| `POST /api/conversations/group` `{ userIds, name? }` | New group with 2–9 of your friends (3–10 people in total) |
+| `PATCH /api/conversations/:id` `{ name }` | Rename a group (any member) |
+| `POST /api/conversations/:id/members` `{ userId }` · `DELETE …/members/:userId` | Add one of your friends (any member) · remove someone (owner only) |
+| `POST /api/conversations/:id/leave` · `POST …/close` | Leave a group · hide a conversation until its next message |
+| `GET /api/conversations/:id/events` | Membership history since you joined |
 
 ### Accounts and sessions (Milestone 7)
 
@@ -195,7 +215,7 @@ JSON frames `{ op, d }`. Types live in [`src/protocol.ts`](src/protocol.ts) (mir
 2. Client → `identify { token, idle? }` (token sent in a frame, never in the URL, so it can't leak into logs; `idle` = this device is already idle)
 3. Server → `ready { user, users, voiceStates }`
 4. Client → `heartbeat` every interval; server → `heartbeat_ack`. No traffic for 60 s ⇒ server closes the socket.
-5. Server pushes, only to users who can view the channel or server, `message_create`, `message_update`, `message_delete`, `reaction_update`, `pin_update`, `read_state_update` (only to that user's own sessions), `user_update` (profile + presence, to people who share a server; only when what they see changes), `me_update` (your account: status preference, profile — your own sessions), `preferences_update` (synced preferences — your own sessions), `server_create` (to the creator), `server_update` (membership, role or permission change — refetch), `server_remove` (kicked, banned, left or deleted), `voice_state_update { userId, channelId | null, streaming? }` (from LiveKit webhooks, reconciled with LiveKit every 30 s; `streaming: true` while the user is screen sharing).
+5. Server pushes, only to users who can view the channel or server, `message_create`, `message_update`, `message_delete`, `reaction_update`, `pin_update`, `read_state_update` (only to that user's own sessions), `user_update` (profile + presence, to people who share a server; only when what they see changes), `me_update` (your account: status preference, profile — your own sessions), `preferences_update` (synced preferences — your own sessions), `server_create` (to the creator), `server_update` (membership, role or permission change — refetch), `server_remove` (kicked, banned, left or deleted), `voice_state_update { userId, channelId | null, streaming? }` (from LiveKit webhooks, reconciled with LiveKit every 30 s; `streaming: true` while the user is screen sharing), `relationship_update { userId, type | null }` (your own sessions), `conversation_update` (a conversation you belong to was created, changed or reopened — each member gets their own view), `conversation_remove { channelId, reason }` (left, removed, or closed on another of your devices). Message events in a conversation go only to its current members, and events about one message skip members who joined after it.
 6. Client may send `set_idle { idle }` (automatic idle detection on this device) and `set_status { status: online|idle|dnd|invisible }` (saved on the account; `PUT /api/users/me/status` is preferred).
 
 Close codes: `4001` auth failed or session revoked/expired (don't reconnect), `4002` identify timeout, `4003` invalid frame, `4004` heartbeat timeout, `4008` rate limited, `4010` server shutdown.
@@ -236,6 +256,10 @@ Messages are **sent over REST** (clear status codes, validation, rate limiting) 
 | Gateway connections, per IP | 10 | 1 per 2 s |
 | Gateway frames, per connection | 20 | 2/s (excess ⇒ close `4008`) |
 | Voice tokens, per user | 10 | 1 per 3 s |
+| Friend requests, per user | 10 | 1/min |
+| Accept / decline / remove / block / unblock / privacy, per user | 30 | 1 per 2 s |
+| Opening DMs and creating groups, per user | 20 | 1 per 2 s |
+| Group changes (add, remove, rename, leave, close), per user | 20 | 1 per 2 s |
 
 - Browser requests from origins not on the allow-list are rejected with `403` (REST and WebSocket upgrade).
 - All SQL uses bound parameters; no query is built from user input.

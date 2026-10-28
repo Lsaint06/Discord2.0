@@ -27,12 +27,14 @@ import AppearanceSettings from './profile/AppearanceSettings'
 import ProfileCard, { CustomStatusText } from './profile/ProfileCard'
 import EncoderSettings from './EncoderSettings'
 import SoundSettings from './SoundSettings'
+import PrivacySettings, { type PrivacyProps } from './PrivacySettings'
 
 export type SectionId =
   | 'account'
   | 'profile'
   | 'security'
   | 'devices'
+  | 'privacy'
   | 'admin'
   | 'appearance'
   | 'voice'
@@ -46,6 +48,7 @@ const sections: { id: SectionId; label: string; adminOnly?: boolean }[] = [
   { id: 'profile', label: 'Profile' },
   { id: 'security', label: 'Security' },
   { id: 'devices', label: 'Devices' },
+  { id: 'privacy', label: 'Privacy & Safety' },
   { id: 'admin', label: 'Administration', adminOnly: true },
   { id: 'appearance', label: 'Appearance' },
   { id: 'voice', label: 'Voice & Audio' },
@@ -90,6 +93,7 @@ interface SettingsPanelProps {
   onToggleMute: () => void
   onToggleDeafen: () => void
   onClose: () => void
+  privacy: PrivacyProps
 }
 
 function SettingsPanel({
@@ -118,7 +122,8 @@ function SettingsPanel({
   onSignedOutEverywhere,
   onToggleMute,
   onToggleDeafen,
-  onClose
+  onClose,
+  privacy
 }: SettingsPanelProps): React.JSX.Element {
   const [section, setSection] = useState<SectionId>(initialSection)
   const [now] = useState(() => Date.now())
@@ -443,6 +448,7 @@ function SettingsPanel({
             <SecuritySection api={api} me={me} onSignedOutEverywhere={onSignedOutEverywhere} />
           )}
           {section === 'devices' && <DevicesSection api={api} />}
+          {section === 'privacy' && <PrivacySettings {...privacy} />}
           {section === 'admin' && me?.instanceAdmin && (
             <AdminSection api={api} servers={servers} meId={me?.id} />
           )}

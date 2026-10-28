@@ -2,12 +2,19 @@ import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import type { ChannelType } from '../protocol.js'
-import { sqliteMigrations } from './migrations.js'
+import { DIRECT_SERVER_ID, sqliteMigrations } from './migrations.js'
 import type {
+  AddMemberResult,
   AttachmentRecord,
   AuditRecord,
   BanRecord,
   ChannelRecord,
+  ConversationEventRecord,
+  ConversationKind,
+  ConversationMemberRecord,
+  ConversationRecord,
+  ConversationSummary,
+  FriendRequestResult,
   IntegrityReport,
   InviteAcceptResult,
   LegacyIdentityRecord,
@@ -25,6 +32,7 @@ import type {
   ReadStateRecord,
   RegistrationInviteRecord,
   RegistrationResult,
+  RelationshipType,
   Repository,
   SearchQuery,
   ServerInviteRecord,
@@ -52,6 +60,7 @@ function toUser(r: Row): UserRecord {
     createdAt: num(r.created_at),
     instanceAdmin: num(r.instance_admin ?? 0) === 1,
     disabledAt: r.disabled_at == null ? null : num(r.disabled_at),
+    allowServerDms: num(r.allow_server_dms ?? 1) === 1,
     bio: nullableStr(r.bio),
     pronouns: nullableStr(r.pronouns),
     accentColor: nullableStr(r.accent_color),
@@ -220,10 +229,65 @@ function toAttachment(r: Row): AttachmentRecord {
 const placeholders = (n: number): string => Array.from({ length: n }, () => '?').join(', ')
 const ID_CHUNK = 500
 
+function dmKey(a: string, b: string): string {
+  return a < b ? `${a}:${b}` : `${b}:${a}`
+}
+
+function toConversation(r: Row): ConversationRecord {
+  return {
+    channelId: str(r.channel_id),
+    kind: str(r.kind) as ConversationKind,
+    dmKey: r.dm_key == null ? null : str(r.dm_key),
+    name: r.name == null ? null : str(r.name),
+    ownerId: r.owner_id == null ? null : str(r.owner_id),
+    createdBy: r.created_by == null ? null : str(r.created_by),
+    createdAt: num(r.created_at)
+  }
+}
+
+function toConversationMember(r: Row): ConversationMemberRecord {
+  return {
+    channelId: str(r.channel_id),
+    userId: str(r.user_id),
+    joinedAt: num(r.joined_at),
+    historyFrom: String(num(r.history_from)),
+    closed: num(r.closed) === 1
+  }
+}
+
 function chunks<T>(items: T[], size = ID_CHUNK): T[][] {
   const out: T[][] = []
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
   return out
+}
+
+/**
+ * Who `viewerId` may see (names, avatars, presence subject to blocks): bots, themselves, people
+ * sharing a server, authors in their servers, friends, pending requests either way, people they
+ * blocked, current members of their conversations, and authors of conversation messages they
+ * can see (not people who only wrote before they joined). Returns [SQL condition on `u`, params].
+ */
+function visibleCondition(viewerId: string): [string, SQLInputValue[]] {
+  return [
+    `(u.is_bot = 1 OR u.id = ?
+      OR EXISTS (SELECT 1 FROM server_members a JOIN server_members b ON a.server_id = b.server_id
+                 WHERE a.user_id = ? AND b.user_id = u.id)
+      OR EXISTS (SELECT 1 FROM messages m
+                 JOIN channels c ON c.id = m.channel_id
+                 JOIN server_members sm ON sm.server_id = c.server_id AND sm.user_id = ?
+                 WHERE m.author_id = u.id)
+      OR EXISTS (SELECT 1 FROM friendships f
+                 WHERE (f.user_a = ? AND f.user_b = u.id) OR (f.user_b = ? AND f.user_a = u.id))
+      OR EXISTS (SELECT 1 FROM friend_requests r
+                 WHERE (r.from_user_id = ? AND r.to_user_id = u.id) OR (r.to_user_id = ? AND r.from_user_id = u.id))
+      OR EXISTS (SELECT 1 FROM user_blocks k WHERE k.blocker_id = ? AND k.blocked_id = u.id)
+      OR EXISTS (SELECT 1 FROM conversation_members a JOIN conversation_members b ON b.channel_id = a.channel_id
+                 WHERE a.user_id = ? AND b.user_id = u.id)
+      OR EXISTS (SELECT 1 FROM messages m JOIN conversation_members cm
+                   ON cm.channel_id = m.channel_id AND cm.user_id = ?
+                 WHERE m.author_id = u.id AND m.id > cm.history_from))`,
+    [viewerId, viewerId, viewerId, viewerId, viewerId, viewerId, viewerId, viewerId, viewerId, viewerId]
+  ]
 }
 
 /** All queries use bound parameters (`?`); no SQL is ever built from user input. */
@@ -409,21 +473,8 @@ export class SqliteRepository implements Repository {
   }
 
   async isUserVisibleTo(viewerId: string, userId: string) {
-    const r = this.get(
-      `SELECT 1 AS ok FROM users u
-       WHERE u.id = ? AND (
-         u.is_bot = 1 OR u.id = ?
-         OR EXISTS (SELECT 1 FROM server_members a JOIN server_members b ON a.server_id = b.server_id
-                    WHERE a.user_id = ? AND b.user_id = u.id)
-         OR EXISTS (SELECT 1 FROM messages m
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN server_members sm ON sm.server_id = c.server_id AND sm.user_id = ?
-                    WHERE m.author_id = u.id))`,
-      userId,
-      viewerId,
-      viewerId,
-      viewerId
-    )
+    const [condition, params] = visibleCondition(viewerId)
+    const r = this.get(`SELECT 1 AS ok FROM users u WHERE u.id = ? AND (${condition})`, userId, ...params)
     return Boolean(r)
   }
 
@@ -454,8 +505,465 @@ export class SqliteRepository implements Repository {
     )
   }
 
-  // ---- Accounts ----
+  // ---- Friends and blocks (Milestone 10) ----
 
+  async listRelationships(userId: string) {
+    const rows = this.all(
+      `SELECT CASE WHEN user_a = ? THEN user_b ELSE user_a END AS id, 'friend' AS type, created_at
+         FROM friendships WHERE user_a = ? OR user_b = ?
+       UNION ALL SELECT from_user_id, 'incoming', created_at FROM friend_requests WHERE to_user_id = ?
+       UNION ALL SELECT to_user_id, 'outgoing', created_at FROM friend_requests WHERE from_user_id = ?
+       UNION ALL SELECT blocked_id, 'blocked', created_at FROM user_blocks WHERE blocker_id = ?
+       ORDER BY 3 DESC`,
+      userId,
+      userId,
+      userId,
+      userId,
+      userId,
+      userId
+    )
+    return rows.map((r) => ({
+      userId: str(r.id),
+      type: str(r.type) as RelationshipType,
+      since: num(r.created_at)
+    }))
+  }
+
+  async areFriends(a: string, b: string) {
+    const [x, y] = a < b ? [a, b] : [b, a]
+    return Boolean(this.get('SELECT 1 AS ok FROM friendships WHERE user_a = ? AND user_b = ?', x, y))
+  }
+
+  async blockedEither(userId: string) {
+    const rows = this.all(
+      `SELECT blocked_id AS id FROM user_blocks WHERE blocker_id = ?
+       UNION SELECT blocker_id FROM user_blocks WHERE blocked_id = ?`,
+      userId,
+      userId
+    )
+    return new Set(rows.map((r) => str(r.id)))
+  }
+
+  async isBlockedEither(a: string, b: string) {
+    return Boolean(
+      this.get(
+        `SELECT 1 AS ok FROM user_blocks
+         WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)`,
+        a,
+        b,
+        b,
+        a
+      )
+    )
+  }
+
+  private friendshipExists(a: string, b: string): boolean {
+    const [x, y] = a < b ? [a, b] : [b, a]
+    return Boolean(this.get('SELECT 1 AS ok FROM friendships WHERE user_a = ? AND user_b = ?', x, y))
+  }
+
+  private insertFriendship(a: string, b: string, now: number): void {
+    const [x, y] = a < b ? [a, b] : [b, a]
+    this.run('INSERT OR IGNORE INTO friendships (user_a, user_b, created_at) VALUES (?, ?, ?)', x, y, now)
+    this.run(
+      `DELETE FROM friend_requests
+       WHERE (from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?)`,
+      a,
+      b,
+      b,
+      a
+    )
+  }
+
+  async sendFriendRequest(fromId: string, toId: string, now: number) {
+    let result: FriendRequestResult = 'requested'
+    // BEGIN IMMEDIATE serialises concurrent requests: two people asking each other at the same
+    // moment produce exactly one friendship.
+    this.transaction(() => {
+      const blocked = this.get(
+        `SELECT 1 AS ok FROM user_blocks
+         WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)`,
+        fromId,
+        toId,
+        toId,
+        fromId
+      )
+      if (blocked) {
+        result = 'blocked'
+        return
+      }
+      if (this.friendshipExists(fromId, toId)) {
+        result = 'already_friends'
+        return
+      }
+      const reverse = this.get(
+        'SELECT 1 AS ok FROM friend_requests WHERE from_user_id = ? AND to_user_id = ?',
+        toId,
+        fromId
+      )
+      if (reverse) {
+        this.insertFriendship(fromId, toId, now)
+        result = 'accepted'
+        return
+      }
+      const r = this.run(
+        'INSERT OR IGNORE INTO friend_requests (from_user_id, to_user_id, created_at) VALUES (?, ?, ?)',
+        fromId,
+        toId,
+        now
+      )
+      result = Number(r.changes) === 0 ? 'already_requested' : 'requested'
+    })
+    return result
+  }
+
+  async acceptFriendRequest(userId: string, fromId: string, now: number) {
+    let ok = false
+    this.transaction(() => {
+      const pending = this.get(
+        'SELECT 1 AS ok FROM friend_requests WHERE from_user_id = ? AND to_user_id = ?',
+        fromId,
+        userId
+      )
+      if (!pending) return
+      this.insertFriendship(userId, fromId, now)
+      ok = true
+    })
+    return ok
+  }
+
+  async removeRelationship(userId: string, otherId: string) {
+    let existed: 'friend' | 'outgoing' | 'incoming' | null = null
+    this.transaction(() => {
+      const [x, y] = userId < otherId ? [userId, otherId] : [otherId, userId]
+      if (Number(this.run('DELETE FROM friendships WHERE user_a = ? AND user_b = ?', x, y).changes) > 0) {
+        existed = 'friend'
+      }
+      if (
+        Number(
+          this.run('DELETE FROM friend_requests WHERE from_user_id = ? AND to_user_id = ?', userId, otherId).changes
+        ) > 0
+      ) {
+        existed ??= 'outgoing'
+      }
+      if (
+        Number(
+          this.run('DELETE FROM friend_requests WHERE from_user_id = ? AND to_user_id = ?', otherId, userId).changes
+        ) > 0
+      ) {
+        existed ??= 'incoming'
+      }
+    })
+    return existed
+  }
+
+  async blockUser(blockerId: string, blockedId: string, now: number) {
+    this.transaction(() => {
+      this.run(
+        'INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)',
+        blockerId,
+        blockedId,
+        now
+      )
+      const [x, y] = blockerId < blockedId ? [blockerId, blockedId] : [blockedId, blockerId]
+      this.run('DELETE FROM friendships WHERE user_a = ? AND user_b = ?', x, y)
+      this.run(
+        `DELETE FROM friend_requests
+         WHERE (from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?)`,
+        blockerId,
+        blockedId,
+        blockedId,
+        blockerId
+      )
+    })
+  }
+
+  async unblockUser(blockerId: string, blockedId: string) {
+    const r = this.run('DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?', blockerId, blockedId)
+    return Number(r.changes) > 0
+  }
+
+  async setAllowServerDms(userId: string, allow: boolean) {
+    this.run('UPDATE users SET allow_server_dms = ? WHERE id = ?', allow ? 1 : 0, userId)
+  }
+
+  async getAllowServerDms(userId: string) {
+    const r = this.get('SELECT allow_server_dms FROM users WHERE id = ?', userId)
+    return num(r?.allow_server_dms ?? 1) === 1
+  }
+
+  async shareServer(a: string, b: string) {
+    return Boolean(
+      this.get(
+        `SELECT 1 AS ok FROM server_members x JOIN server_members y ON x.server_id = y.server_id
+         WHERE x.user_id = ? AND y.user_id = ?`,
+        a,
+        b
+      )
+    )
+  }
+
+  // ---- Conversations (Milestone 10) ----
+
+  async getConversation(channelId: string) {
+    const r = this.get('SELECT * FROM conversations WHERE channel_id = ?', channelId)
+    return r ? toConversation(r) : undefined
+  }
+
+  async getConversationMember(channelId: string, userId: string) {
+    const r = this.get('SELECT * FROM conversation_members WHERE channel_id = ? AND user_id = ?', channelId, userId)
+    return r ? toConversationMember(r) : undefined
+  }
+
+  async listConversationMembers(channelId: string) {
+    return this.all(
+      'SELECT * FROM conversation_members WHERE channel_id = ? ORDER BY joined_at, user_id',
+      channelId
+    ).map(toConversationMember)
+  }
+
+  async listConversationsForUser(userId: string, includeClosed = false) {
+    const rows = this.all(
+      `SELECT c.*, m.joined_at AS m_joined_at, m.history_from AS m_history_from, m.closed AS m_closed,
+         (SELECT MAX(id) FROM messages x WHERE x.channel_id = c.channel_id AND x.id > m.history_from) AS last_id,
+         (SELECT group_concat(user_id) FROM
+            (SELECT user_id FROM conversation_members o WHERE o.channel_id = c.channel_id
+             ORDER BY o.joined_at, o.user_id)) AS member_ids
+       FROM conversations c JOIN conversation_members m ON m.channel_id = c.channel_id AND m.user_id = ?
+       WHERE ? = 1 OR m.closed = 0
+       ORDER BY COALESCE(last_id, 0) DESC, c.created_at DESC`,
+      userId,
+      includeClosed ? 1 : 0
+    )
+    return rows.map(
+      (r): ConversationSummary => ({
+        conversation: toConversation(r),
+        member: {
+          channelId: str(r.channel_id),
+          userId,
+          joinedAt: num(r.m_joined_at),
+          historyFrom: String(num(r.m_history_from)),
+          closed: num(r.m_closed) === 1
+        },
+        memberIds: r.member_ids == null ? [] : str(r.member_ids).split(','),
+        lastMessageId: r.last_id == null ? null : String(num(r.last_id))
+      })
+    )
+  }
+
+  async conversationChannelIds(userId: string) {
+    return this.all('SELECT channel_id FROM conversation_members WHERE user_id = ?', userId).map((r) =>
+      str(r.channel_id)
+    )
+  }
+
+  private maxMessageId(): number {
+    return num(this.get('SELECT COALESCE(MAX(id), 0) AS n FROM messages')?.n ?? 0)
+  }
+
+  private insertConversationChannel(channelId: string, kind: ConversationKind, now: number): void {
+    this.run(
+      'INSERT INTO channels (id, server_id, name, type, topic, category, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      channelId,
+      DIRECT_SERVER_ID,
+      kind === 'dm' ? 'direct-message' : 'group',
+      'text',
+      null,
+      kind === 'dm' ? 'Direct Messages' : 'Group Messages',
+      0,
+      now
+    )
+  }
+
+  /** Adds a member whose history starts at `floor`, with a matching read marker (so later messages count as unread). */
+  private insertMember(channelId: string, userId: string, now: number, floor: number): void {
+    this.run(
+      `INSERT INTO conversation_members (channel_id, user_id, joined_at, history_from, closed) VALUES (?, ?, ?, ?, 0)`,
+      channelId,
+      userId,
+      now,
+      floor
+    )
+    this.run(
+      `INSERT INTO read_states (user_id, channel_id, last_read_id, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (user_id, channel_id) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id),
+         updated_at = excluded.updated_at`,
+      userId,
+      channelId,
+      floor,
+      now
+    )
+  }
+
+  private logConversationEvent(
+    channelId: string,
+    at: number,
+    actorId: string | null,
+    action: string,
+    targetUserId: string | null,
+    detail: Record<string, unknown> | null
+  ): void {
+    this.run(
+      `INSERT INTO conversation_events (channel_id, at, actor_id, action, target_user_id, detail)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      channelId,
+      at,
+      actorId,
+      action,
+      targetUserId,
+      detail ? JSON.stringify(detail) : null
+    )
+  }
+
+  async findDm(a: string, b: string) {
+    const r = this.get('SELECT * FROM conversations WHERE dm_key = ?', dmKey(a, b))
+    return r ? toConversation(r) : undefined
+  }
+
+  async findOrCreateDm(openerId: string, otherId: string, now: number, newChannelId: string) {
+    let created = false
+    const key = dmKey(openerId, otherId)
+    // Serialised: two people opening the DM at the same moment get the same conversation.
+    this.transaction(() => {
+      if (this.get('SELECT 1 AS ok FROM conversations WHERE dm_key = ?', key)) return
+      this.insertConversationChannel(newChannelId, 'dm', now)
+      this.run(
+        `INSERT INTO conversations (channel_id, kind, dm_key, name, owner_id, created_by, created_at)
+         VALUES (?, 'dm', ?, NULL, NULL, ?, ?)`,
+        newChannelId,
+        key,
+        openerId,
+        now
+      )
+      // Both participants see the whole DM history (floor 0); nothing exists yet anyway.
+      this.insertMember(newChannelId, openerId, now, 0)
+      this.insertMember(newChannelId, otherId, now, 0)
+      created = true
+    })
+    const r = this.get('SELECT * FROM conversations WHERE dm_key = ?', key)
+    if (!r) throw new Error('DM creation failed')
+    return { conversation: toConversation(r), created }
+  }
+
+  async createGroup(creatorId: string, memberIds: string[], name: string | null, now: number, newChannelId: string) {
+    this.transaction(() => {
+      this.insertConversationChannel(newChannelId, 'group', now)
+      this.run(
+        `INSERT INTO conversations (channel_id, kind, dm_key, name, owner_id, created_by, created_at)
+         VALUES (?, 'group', NULL, ?, ?, ?, ?)`,
+        newChannelId,
+        name,
+        creatorId,
+        creatorId,
+        now
+      )
+      this.insertMember(newChannelId, creatorId, now, 0)
+      for (const id of memberIds) {
+        if (id !== creatorId) this.insertMember(newChannelId, id, now, 0)
+      }
+      this.logConversationEvent(newChannelId, now, creatorId, 'created', null, name ? { name } : null)
+    })
+    const r = this.get('SELECT * FROM conversations WHERE channel_id = ?', newChannelId)
+    if (!r) throw new Error('Group creation failed')
+    return toConversation(r)
+  }
+
+  async addConversationMember(channelId: string, actorId: string, userId: string, now: number, maxMembers: number) {
+    let result: AddMemberResult = 'added'
+    this.transaction(() => {
+      if (this.get('SELECT 1 AS ok FROM conversation_members WHERE channel_id = ? AND user_id = ?', channelId, userId)) {
+        result = 'exists'
+        return
+      }
+      const n = num(this.get('SELECT COUNT(*) AS n FROM conversation_members WHERE channel_id = ?', channelId)?.n ?? 0)
+      if (n >= maxMembers) {
+        result = 'full'
+        return
+      }
+      // New (or returning) members never see messages sent before they joined.
+      this.insertMember(channelId, userId, now, this.maxMessageId())
+      this.logConversationEvent(channelId, now, actorId, 'member_added', userId, null)
+    })
+    return result
+  }
+
+  async removeConversationMember(
+    channelId: string,
+    userId: string,
+    actorId: string,
+    action: 'left' | 'removed',
+    now: number
+  ) {
+    let removed = false
+    let ownerId: string | null = null
+    this.transaction(() => {
+      const r = this.run('DELETE FROM conversation_members WHERE channel_id = ? AND user_id = ?', channelId, userId)
+      removed = Number(r.changes) > 0
+      const conv = this.get('SELECT owner_id FROM conversations WHERE channel_id = ?', channelId)
+      ownerId = conv?.owner_id == null ? null : str(conv.owner_id)
+      if (!removed) return
+      // A former member's read marker would otherwise survive a later re-add with a lower floor.
+      this.run('DELETE FROM read_states WHERE user_id = ? AND channel_id = ?', userId, channelId)
+      this.logConversationEvent(channelId, now, actorId, action === 'left' ? 'member_left' : 'member_removed', userId, null)
+      if (ownerId === userId) {
+        const next = this.get(
+          'SELECT user_id FROM conversation_members WHERE channel_id = ? ORDER BY joined_at, user_id LIMIT 1',
+          channelId
+        )
+        ownerId = next ? str(next.user_id) : null
+        this.run('UPDATE conversations SET owner_id = ? WHERE channel_id = ?', ownerId, channelId)
+        if (ownerId) this.logConversationEvent(channelId, now, null, 'owner_changed', ownerId, null)
+      }
+    })
+    return { removed, ownerId }
+  }
+
+  async renameConversation(channelId: string, name: string | null, actorId: string, now: number) {
+    this.transaction(() => {
+      this.run('UPDATE conversations SET name = ? WHERE channel_id = ?', name, channelId)
+      this.logConversationEvent(channelId, now, actorId, 'renamed', null, { name })
+    })
+  }
+
+  async setConversationClosed(channelId: string, userId: string, closed: boolean) {
+    this.run(
+      'UPDATE conversation_members SET closed = ? WHERE channel_id = ? AND user_id = ?',
+      closed ? 1 : 0,
+      channelId,
+      userId
+    )
+  }
+
+  async reopenConversation(channelId: string) {
+    const rows = this.all(
+      'UPDATE conversation_members SET closed = 0 WHERE channel_id = ? AND closed = 1 RETURNING user_id',
+      channelId
+    )
+    return rows.map((r) => str(r.user_id))
+  }
+
+  async listConversationEvents(channelId: string, afterAt: number, limit: number) {
+    return this.all(
+      'SELECT * FROM conversation_events WHERE channel_id = ? AND at >= ? ORDER BY id DESC LIMIT ?',
+      channelId,
+      afterAt,
+      limit
+    )
+      .reverse()
+      .map(
+        (r): ConversationEventRecord => ({
+          id: String(num(r.id)),
+          channelId: str(r.channel_id),
+          at: num(r.at),
+          actorId: r.actor_id == null ? null : str(r.actor_id),
+          action: str(r.action),
+          targetUserId: r.target_user_id == null ? null : str(r.target_user_id),
+          detail: r.detail == null ? null : (JSON.parse(str(r.detail)) as Record<string, unknown>)
+        })
+      )
+  }
+
+  // ---- Accounts ----
   async setInstanceAdmin(userId: string, admin: boolean) {
     this.run('UPDATE users SET instance_admin = ? WHERE id = ?', admin ? 1 : 0, userId)
   }
@@ -503,20 +1011,31 @@ export class SqliteRepository implements Repository {
   }
 
   async listVisibleUsers(viewerId: string) {
+    const [condition, params] = visibleCondition(viewerId)
     return this.all(
-      `SELECT u.* FROM users u
-       WHERE u.is_bot = 1 OR u.id = ?
-          OR EXISTS (SELECT 1 FROM server_members a JOIN server_members b ON a.server_id = b.server_id
-                     WHERE a.user_id = ? AND b.user_id = u.id)
-          OR EXISTS (SELECT 1 FROM messages m
-                     JOIN channels c ON c.id = m.channel_id
-                     JOIN server_members sm ON sm.server_id = c.server_id AND sm.user_id = ?
-                     WHERE m.author_id = u.id)
-       ORDER BY u.display_name COLLATE NOCASE`,
-      viewerId,
-      viewerId,
-      viewerId
+      `SELECT u.* FROM users u WHERE ${condition} ORDER BY u.display_name COLLATE NOCASE`,
+      ...params
     ).map(toUser)
+  }
+
+  async presenceAudience(userId: string) {
+    // Shared servers, friends and current conversation partners — never blocked pairs.
+    const rows = this.all(
+      `SELECT b.user_id AS id FROM server_members a JOIN server_members b ON a.server_id = b.server_id
+         WHERE a.user_id = ?
+       UNION SELECT user_b FROM friendships WHERE user_a = ?
+       UNION SELECT user_a FROM friendships WHERE user_b = ?
+       UNION SELECT b.user_id FROM conversation_members a
+         JOIN conversation_members b ON b.channel_id = a.channel_id WHERE a.user_id = ?`,
+      userId,
+      userId,
+      userId,
+      userId
+    )
+    const blocked = await this.blockedEither(userId)
+    const out = new Set(rows.map((r) => str(r.id)).filter((id) => !blocked.has(id)))
+    out.add(userId)
+    return out
   }
 
   async usersSharingServers(userId: string) {
@@ -598,7 +1117,11 @@ export class SqliteRepository implements Repository {
         }
         user = input.newUser
         this.insertUser(user)
-        if (invite.serverId && this.get('SELECT 1 AS x FROM servers WHERE id = ?', invite.serverId)) {
+        if (
+          invite.serverId &&
+          invite.serverId !== DIRECT_SERVER_ID &&
+          this.get('SELECT 1 AS x FROM servers WHERE id = ?', invite.serverId)
+        ) {
           this.run(
             "INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
             invite.serverId,
@@ -865,6 +1388,8 @@ export class SqliteRepository implements Repository {
   // ---- Servers and membership ----
 
   async getServer(id: string) {
+    // The conversation container is not a server (see DIRECT_SERVER_ID).
+    if (id === DIRECT_SERVER_ID) return undefined
     const r = this.get('SELECT * FROM servers WHERE id = ?', id)
     return r && toServer(r)
   }
@@ -1349,7 +1874,7 @@ export class SqliteRepository implements Repository {
   }
 
   async integrityReport(): Promise<IntegrityReport> {
-    const n = (sql: string): number => num(this.get(sql)?.n ?? 0)
+    const n = (sql: string, ...params: SQLInputValue[]): number => num(this.get(sql, ...params)?.n ?? 0)
     return {
       users: n('SELECT COUNT(*) AS n FROM users'),
       accounts: n('SELECT COUNT(*) AS n FROM credentials'),
@@ -1364,8 +1889,9 @@ export class SqliteRepository implements Repository {
       readStates: n('SELECT COUNT(*) AS n FROM read_states'),
       memberships: n('SELECT COUNT(*) AS n FROM server_members'),
       serversWithoutOwner: this.all(
-        "SELECT id FROM servers s WHERE NOT EXISTS (SELECT 1 FROM server_members m WHERE m.server_id = s.id AND m.role = 'owner')"
+        "SELECT id FROM servers s WHERE s.id <> '@direct' AND NOT EXISTS (SELECT 1 FROM server_members m WHERE m.server_id = s.id AND m.role = 'owner')"
       ).map((r) => str(r.id)),
+      directContainerMembers: n('SELECT COUNT(*) AS n FROM server_members WHERE server_id = ?', DIRECT_SERVER_ID),
       orphans: {
         messagesWithoutAuthor: n(
           'SELECT COUNT(*) AS n FROM messages m WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = m.author_id)'
@@ -1389,15 +1915,20 @@ export class SqliteRepository implements Repository {
   }
 
   async countServers() {
-    return num(this.get('SELECT COUNT(*) AS n FROM servers')?.n ?? 0)
+    return num(this.get('SELECT COUNT(*) AS n FROM servers WHERE id <> ?', DIRECT_SERVER_ID)?.n ?? 0)
   }
 
   async listServers() {
-    return this.all('SELECT * FROM servers ORDER BY position, created_at').map(toServer)
+    return this.all('SELECT * FROM servers WHERE id <> ? ORDER BY position, created_at', DIRECT_SERVER_ID).map(
+      toServer
+    )
   }
 
   async listChannels() {
-    return this.all('SELECT * FROM channels ORDER BY server_id, position').map(toChannel)
+    // Server channels only; conversation channels are reached through conversation_members.
+    return this.all('SELECT * FROM channels WHERE server_id <> ? ORDER BY server_id, position', DIRECT_SERVER_ID).map(
+      toChannel
+    )
   }
 
   async getChannel(id: string) {
@@ -1441,41 +1972,48 @@ export class SqliteRepository implements Repository {
   }
 
   async listMessages(channelId: string, page: MessagePage) {
+    // History floor for conversation members who joined later (0 = everything).
+    const floor = Number(page.minId ?? 0)
     if (page.around !== undefined) {
       const half = Math.max(1, Math.floor(page.limit / 2))
       const olderAndSelf = this.all(
-        'SELECT * FROM messages WHERE channel_id = ? AND id <= ? ORDER BY id DESC LIMIT ?',
+        'SELECT * FROM messages WHERE channel_id = ? AND id <= ? AND id > ? ORDER BY id DESC LIMIT ?',
         channelId,
         Number(page.around),
+        floor,
         half + 1
       ).reverse()
       const newer = this.all(
-        'SELECT * FROM messages WHERE channel_id = ? AND id > ? ORDER BY id ASC LIMIT ?',
+        'SELECT * FROM messages WHERE channel_id = ? AND id > ? AND id > ? ORDER BY id ASC LIMIT ?',
         channelId,
         Number(page.around),
+        floor,
         Math.max(0, page.limit - olderAndSelf.length)
       )
       return [...olderAndSelf, ...newer].map(toMessage)
     }
     if (page.after !== undefined) {
       return this.all(
-        'SELECT * FROM messages WHERE channel_id = ? AND id > ? ORDER BY id ASC LIMIT ?',
+        'SELECT * FROM messages WHERE channel_id = ? AND id > ? AND id > ? ORDER BY id ASC LIMIT ?',
         channelId,
         Number(page.after),
+        floor,
         page.limit
       ).map(toMessage)
     }
     const rows =
       page.before !== undefined
         ? this.all(
-            'SELECT * FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?',
+            'SELECT * FROM messages WHERE channel_id = ? AND id < ? AND id > ? ORDER BY id DESC LIMIT ?',
             channelId,
             Number(page.before),
+            floor,
             page.limit
           )
         : this.all(
-            'SELECT * FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?',
+            'SELECT * FROM messages WHERE channel_id = ? AND id > ? ORDER BY id DESC LIMIT ?',
             channelId,
+            floor,
             page.limit
           )
     return rows.reverse().map(toMessage)
@@ -1871,6 +2409,10 @@ export class SqliteRepository implements Repository {
     if (q.before !== undefined) {
       where.push('m.id < ?')
       params.push(Number(q.before))
+    }
+    if (q.minId !== undefined) {
+      where.push('m.id > ?')
+      params.push(Number(q.minId))
     }
     const sql = q.match
       ? `SELECT m.* FROM messages_fts f JOIN messages m ON m.id = f.rowid

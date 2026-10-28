@@ -4,14 +4,20 @@ import { requireUser } from '../lib/auth.js'
 import { badRequest, notFound, tooManyRequests } from '../lib/errors.js'
 import { buildSearchMatch, parseCursor, parseDay } from '../lib/validation.js'
 import { LIMITS, type ApiReadState, type ApiSearchResult } from '../protocol.js'
-import { readableChannel } from './messages.js'
+import { afterFloor, readableChannel } from './messages.js'
 import { buildApiMessages } from './messageViews.js'
 
 export function registerReadStateRoutes(app: FastifyInstance, ctx: AppContext): void {
-  /** Read position + unread count for every readable text channel (missing ones start caught up). */
+  /**
+   * Read position + unread count for every readable text channel and every conversation the user
+   * belongs to (missing server channels start caught up; conversations start at the join point).
+   */
   app.get('/api/read-states', async (request): Promise<ApiReadState[]> => {
     const user = await requireUser(ctx, request)
-    const channelIds = await ctx.access.viewableChannelIds(user, undefined, 'text')
+    const channelIds = [
+      ...(await ctx.access.viewableChannelIds(user, undefined, 'text')),
+      ...(await ctx.access.conversationChannelIds(user))
+    ]
     return ctx.repo.readStates(user.id, channelIds, Date.now(), LIMITS.unreadCountCap)
   })
 
@@ -33,9 +39,11 @@ export function registerReadStateRoutes(app: FastifyInstance, ctx: AppContext): 
       const user = await requireUser(ctx, request)
       const limit = ctx.limiters.readAcksPerUser.take(user.id)
       if (!limit.ok) throw tooManyRequests(limit.retryAfterMs)
-      const { channel } = await readableChannel(ctx, user, request.params.channelId)
+      const { channel, historyFrom } = await readableChannel(ctx, user, request.params.channelId)
       const message = await ctx.repo.getMessage(request.body.messageId)
-      if (!message || message.channelId !== channel.id) throw notFound('Message not found')
+      if (!message || message.channelId !== channel.id || !afterFloor(message.id, historyFrom)) {
+        throw notFound('Message not found')
+      }
       const lastReadId = await ctx.repo.markRead(user.id, channel.id, message.id, Date.now())
       ctx.hub.sendToUser(user.id, { op: 'read_state_update', d: { channelId: channel.id, lastReadId } })
       return { channelId: channel.id, lastReadId }
@@ -93,9 +101,14 @@ export function registerSearchRoutes(app: FastifyInstance, ctx: AppContext): voi
       }
 
       let channelIds: string[]
+      let minId: string | undefined
       if (q.channelId) {
-        channelIds = [(await readableChannel(ctx, user, q.channelId)).channel.id]
+        const access = await readableChannel(ctx, user, q.channelId)
+        channelIds = [access.channel.id]
+        // Conversation members who joined later never find older messages.
+        minId = access.historyFrom === '0' ? undefined : access.historyFrom
       } else {
+        // Server-wide and global search cover server channels; a conversation is searched from inside it.
         if (q.serverId) await ctx.access.requireServer(user, q.serverId)
         channelIds = await ctx.access.viewableChannelIds(user, q.serverId, 'text')
       }
@@ -108,11 +121,12 @@ export function registerSearchRoutes(app: FastifyInstance, ctx: AppContext): voi
         since,
         until,
         before,
+        minId,
         limit: limit + 1
       })
       const page = records.slice(0, limit)
       return {
-        messages: await buildApiMessages(ctx.repo, page, user.id),
+        messages: await buildApiMessages(ctx.repo, page, user.id, undefined, minId ?? '0'),
         nextBefore: records.length > limit ? page[page.length - 1]!.id : null
       }
     }

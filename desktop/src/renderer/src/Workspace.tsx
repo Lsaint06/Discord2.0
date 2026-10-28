@@ -25,7 +25,25 @@ import { SoundService } from './sound/SoundService'
 import { messageSound, SeenMessages, type SoundPreferences } from './sound/soundPolicy'
 import { useVoiceSounds } from './sound/useVoiceSounds'
 import SoundProvider from './sound/SoundProvider'
-import type { ApiMember, ApiServer, ApiUser, ServerRole } from './net/protocol'
+import type {
+  ApiConversation,
+  ApiMember,
+  ApiServer,
+  ApiUser,
+  RelationshipType,
+  ServerRole
+} from './net/protocol'
+import {
+  HOME_ID,
+  canSend,
+  conversationTitle,
+  dmPartnerId,
+  pendingRequestCount
+} from './chat/conversations'
+import HomeSidebar from './components/home/HomeSidebar'
+import FriendsPage from './components/home/FriendsPage'
+import GroupDialog from './components/home/GroupDialog'
+import ConversationMembers from './components/home/ConversationMembers'
 import { Permissions } from './net/protocol'
 import { ROLE_COLORS, ROLE_LABELS, hasPermission } from './lib/permissions'
 import { useBackend, type BackendSession } from './hooks/useBackend'
@@ -36,12 +54,13 @@ import { notificationText, shouldNotify } from './chat/unread'
 import { pushRecent } from './chat/emoji'
 import ServerSidebar from './components/ServerSidebar'
 import ChannelSidebar, { type VoiceUserDetails } from './components/ChannelSidebar'
-import ChatPanel, { type JumpTarget } from './components/ChatPanel'
+import ChatPanel, { type ConversationInfo, type JumpTarget } from './components/ChatPanel'
 import MemberList from './components/MemberList'
 import UserPanel, { type VoiceConnection } from './components/UserPanel'
 import SettingsPanel, { type SectionId } from './components/SettingsPanel'
 import ProfilePopout from './components/profile/ProfilePopout'
 import ProfileModal from './components/profile/ProfileModal'
+import type { RelationshipHandlers } from './components/profile/RelationshipActions'
 import CustomStatusModal from './components/profile/CustomStatusModal'
 import CreateServerModal from './components/CreateServerModal'
 import ServerSettingsModal from './components/manage/ServerSettingsModal'
@@ -137,6 +156,11 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   const [notice, setNotice] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [viewerMode, setViewerMode] = useState<ViewerMode>('focus')
+  /** Home view: the open conversation (null = the Friends page). */
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+  const [groupDialog, setGroupDialog] = useState<
+    { mode: 'create' } | { mode: 'add'; channelId: string } | null
+  >(null)
 
   const handleSessionInvalid = useCallback(
     () =>
@@ -155,10 +179,28 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
       serverRemovedRef.current(serverId, reason),
     []
   )
+  const relationshipChangedRef = useRef<
+    (userId: string, type: RelationshipType | null, previous: RelationshipType | null) => void
+  >(() => undefined)
+  const onRelationshipChanged = useCallback(
+    (userId: string, type: RelationshipType | null, previous: RelationshipType | null) =>
+      relationshipChangedRef.current(userId, type, previous),
+    []
+  )
+  const conversationRemovedRef = useRef<
+    (channelId: string, reason: 'left' | 'removed' | 'closed') => void
+  >(() => undefined)
+  const onConversationRemoved = useCallback(
+    (channelId: string, reason: 'left' | 'removed' | 'closed') =>
+      conversationRemovedRef.current(channelId, reason),
+    []
+  )
   const backend = useBackend(session, {
     onSessionInvalid: handleSessionInvalid,
     onIncomingMessage,
-    onServerRemoved
+    onServerRemoved,
+    onRelationshipChanged,
+    onConversationRemoved
   })
 
   useEffect(() => {
@@ -302,7 +344,13 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     return backend.servers.map((s) => toUiServer(s, backend.members[s.id], userIds))
   }, [backend.servers, backend.users, backend.members])
 
-  const activeServer = servers.find((s) => s.id === activeServerId) ?? servers[0]
+  // Home (friends and conversations) is shown when chosen, or when you aren't in any server.
+  const homeActive = activeServerId === HOME_ID || servers.length === 0
+  const activeServer = homeActive
+    ? undefined
+    : (servers.find((s) => s.id === activeServerId) ?? servers[0])
+  const activeConversation: ApiConversation | undefined =
+    homeActive && activeConversationId ? backend.conversations[activeConversationId] : undefined
 
   // Real membership (with roles) for the member list of the server on screen.
   const { loadMembers } = backend
@@ -318,10 +366,12 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     : undefined
   const activeChannelId = activeChannel?.id
 
+  // The text channel or conversation on screen (notifications and sounds skip it while focused).
+  const viewChannelId = homeActive ? activeConversation?.id : activeChannelId
   const { focusChannel } = backend
   useEffect(() => {
-    if (backend.phase === 'ready' && activeChannelId) focusChannel(activeChannelId)
-  }, [backend.phase, activeChannelId, focusChannel])
+    if (backend.phase === 'ready' && viewChannelId) focusChannel(viewChannelId)
+  }, [backend.phase, viewChannelId, focusChannel])
 
   const roleColor = useCallback(
     (userId: string): string | undefined => {
@@ -451,6 +501,27 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     setActiveServerId(serverId)
   }
 
+  const selectHome = (): void => {
+    setActiveServerId(HOME_ID)
+  }
+
+  const openConversation = useCallback((channelId: string) => {
+    setActiveServerId(HOME_ID)
+    setActiveConversationId(channelId)
+    setViewerMode((mode) => (mode === 'focus' ? 'mini' : mode))
+  }, [])
+
+  /** Opens (or creates) the DM with someone and shows it. */
+  const messageUser = useCallback(
+    (userId: string) => {
+      void backend.openDm(userId).then((result) => {
+        if (result.conversation) openConversation(result.conversation.id)
+        else if (result.error) setNotice(result.error)
+      })
+    },
+    [backend, openConversation]
+  )
+
   const selectChannel = (channel: Channel): void => {
     if (!activeServer) return
     if (channel.type === 'voice') {
@@ -474,13 +545,23 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
   useEffect(() => {
     serversRef.current = servers
   }, [servers])
+  const conversationsRef = useRef(backend.conversations)
+  useEffect(() => {
+    conversationsRef.current = backend.conversations
+  }, [backend.conversations])
   const jumpTo = useCallback((channelId: string, messageId: string) => {
     const server = serversRef.current.find((s) =>
       s.categories.some((c) => c.channels.some((ch) => ch.id === channelId))
     )
-    if (!server) return
-    setActiveServerId(server.id)
-    setActiveChannelByServer((prev) => ({ ...prev, [server.id]: channelId }))
+    if (server) {
+      setActiveServerId(server.id)
+      setActiveChannelByServer((prev) => ({ ...prev, [server.id]: channelId }))
+    } else if (conversationsRef.current[channelId]) {
+      setActiveServerId(HOME_ID)
+      setActiveConversationId(channelId)
+    } else {
+      return
+    }
     setViewerMode((mode) => (mode === 'focus' ? 'mini' : mode))
     setJumpTarget((prev) => ({ channelId, messageId, seq: (prev?.seq ?? 0) + 1 }))
   }, [])
@@ -526,14 +607,16 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
       // Each message sounds/notifies at most once, however often it's delivered.
       if (!seenMessages.firstTime(m.id)) return
       const windowFocused = document.hasFocus()
-      const mentionsMe = mentionDetector.mentions(m.content)
+      const conversation = backend.conversations[m.channelId]
+      // A direct message is addressed to you, so it alerts like a mention.
+      const mentionsMe = mentionDetector.mentions(m.content) || conversation?.kind === 'dm'
       const wantedSound = messageSound(
         m,
         {
           meId: backend.me?.id,
           doNotDisturb: statusPreference === 'dnd',
           mutedChannels: settings.mutedChannels,
-          activeChannelId,
+          activeChannelId: viewChannelId,
           windowFocused,
           mentionsMe
         },
@@ -550,7 +633,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
           permission,
           meId: backend.me?.id,
           mutedChannels: settings.mutedChannels,
-          activeChannelId,
+          activeChannelId: viewChannelId,
           windowFocused
         })
       ) {
@@ -562,7 +645,15 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
         content: m.content,
         attachmentCount: m.attachments?.length ?? 0,
         showPreview: settings.notificationPreview,
-        mention: mentionsMe
+        mention: mentionsMe,
+        conversation: conversation
+          ? conversation.kind === 'dm'
+            ? { kind: 'dm' }
+            : {
+                kind: 'group',
+                title: conversationTitle(conversation, backend.users, backend.me?.id)
+              }
+          : undefined
       })
       const n = new Notification(title, {
         body,
@@ -627,6 +718,43 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     setActiveServerId(server.id)
     setCreateServerOpen(false)
   }
+
+  // Friend requests: a sound (and a desktop notification while the app isn't focused).
+  useEffect(() => {
+    relationshipChangedRef.current = (userId, type, previous) => {
+      const name = resolveUser(userId).name
+      if (type === 'incoming' && previous !== 'incoming') {
+        if (statusPreference === 'dnd') return
+        sound.play('friendRequest')
+        const permission =
+          typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+        if (settings.desktopNotifications && permission === 'granted' && !document.hasFocus()) {
+          const n = new Notification('Friend request', {
+            body: settings.notificationPreview
+              ? `${name} sent you a friend request.`
+              : 'You have a new friend request.',
+            silent: true,
+            tag: `friend-${userId}`
+          })
+          n.onclick = () => {
+            window.focus()
+            setActiveServerId(HOME_ID)
+            setActiveConversationId(null)
+          }
+        }
+      } else if (type === 'friend' && previous === 'outgoing') {
+        setNotice(`${name} accepted your friend request.`)
+      }
+    }
+  })
+
+  // You left, were removed from, or closed a conversation (maybe on another device).
+  useEffect(() => {
+    conversationRemovedRef.current = (channelId, reason) => {
+      if (activeConversationId === channelId) setActiveConversationId(null)
+      if (reason === 'removed') setNotice('You were removed from a group.')
+    }
+  })
 
   // Removed from a server (left, kicked, banned): leave its voice channel and say why.
   useEffect(() => {
@@ -725,7 +853,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     </SoundProvider>
   )
 
-  if (backend.phase !== 'ready' || !activeServer) {
+  if (backend.phase !== 'ready') {
     return withSound(
       <div className="app splash">
         <div className="splash-card">
@@ -736,24 +864,6 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
               <div className="splash-actions">
                 <button type="button" className="button primary" onClick={backend.retryInitialLoad}>
                   Try again
-                </button>
-                <button type="button" className="button secondary" onClick={signOut}>
-                  Sign out
-                </button>
-              </div>
-            </>
-          ) : backend.phase === 'ready' ? (
-            <>
-              <h2>You&rsquo;re not in any servers yet</h2>
-              <p>Ask a friend for an invite code, or create your own server.</p>
-              {notice && <p className="form-notice">{notice}</p>}
-              <div className="splash-actions">
-                <button
-                  type="button"
-                  className="button primary"
-                  onClick={() => setCreateServerOpen(true)}
-                >
-                  Join or create a server
                 </button>
                 <button type="button" className="button secondary" onClick={signOut}>
                   Sign out
@@ -779,97 +889,202 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
     )
   }
 
-  const channelState = activeChannel ? backend.channels[activeChannel.id] : undefined
+  const userPanel = (
+    <UserPanel
+      displayName={displayName}
+      avatarColor={backend.me?.avatarColor ?? DEFAULT_ACCENT}
+      avatarId={backend.me?.avatarId}
+      status={selfStatus}
+      statusPreference={statusPreference}
+      customStatus={selfCustomStatus}
+      onSetStatus={setStatus}
+      onEditCustomStatus={() => setCustomStatusOpen(true)}
+      onClearCustomStatus={() => void backend.setCustomStatus(null)}
+      onViewProfile={() => setProfileFor(selfId)}
+      onEditProfile={() => openSettings('profile')}
+      muted={muted}
+      deafened={deafened}
+      voice={voiceConnection}
+      onToggleMute={toggleMute}
+      onToggleDeafen={toggleDeafen}
+      onOpenSettings={() => openSettings('account')}
+      onDisconnect={() => void voice.session.leave()}
+      onRetryVoice={() => voice.session.retry()}
+      onOpenMicSettings={
+        window.d2 ? () => void window.d2?.media.openMicrophoneSettings() : undefined
+      }
+      onShareScreen={() => {
+        voice.session.dismissScreenShareMessage()
+        if (!canStream) {
+          setNotice('You don’t have permission to stream in this channel.')
+          return
+        }
+        setPickerOpen(true)
+      }}
+      onStopShare={() => void voice.session.stopScreenShare()}
+      onPreviewShare={() => {
+        setViewerMode('focus')
+        voice.session.watch(selfId)
+      }}
+      onChangeShareProfile={(profileId) => {
+        updateSettings({ screenShareProfile: profileId })
+        void voice.session.setScreenShareProfile(profileId)
+      }}
+      onDismissShareMessage={() => voice.session.dismissScreenShareMessage()}
+      onDismissDeviceNotice={() => voice.session.dismissDeviceNotice()}
+      onStartAudio={() => void voice.session.startAudio()}
+      shareStatus={
+        voice.state.screenShare.options ? (
+          <ShareHealthNote
+            session={voice.session}
+            profileId={voice.state.screenShare.options.profileId}
+          />
+        ) : undefined
+      }
+    />
+  )
+
+  // ---- Home: friends and conversations ----
+  const pendingRequests = pendingRequestCount(backend.relationships)
+  const homeBadge =
+    pendingRequests +
+    Object.keys(backend.conversations).reduce(
+      (sum, id) => sum + (id === viewChannelId ? 0 : (unreadCounts[id] ?? 0)),
+      0
+    )
+  const conversationChannel: Channel | undefined = activeConversation
+    ? {
+        id: activeConversation.id,
+        name: conversationTitle(activeConversation, backend.users, selfId),
+        type: 'text',
+        permissions: activeConversation.permissions
+      }
+    : undefined
+  const chatChannel = homeActive ? conversationChannel : activeChannel
+  const partnerId = activeConversation ? dmPartnerId(activeConversation, selfId) : undefined
+  const conversationInfo: ConversationInfo | undefined = activeConversation
+    ? {
+        kind: activeConversation.kind,
+        title: conversationChannel!.name,
+        label:
+          activeConversation.kind === 'dm'
+            ? `@${conversationChannel!.name}`
+            : conversationChannel!.name,
+        partner: partnerId ? resolveUser(partnerId) : undefined,
+        readOnlyReason: canSend(activeConversation)
+          ? undefined
+          : 'You can’t send messages to this person right now.'
+      }
+    : undefined
+
+  /** Friend / message / block actions on someone's profile (none for yourself or bots). */
+  function relationshipFor(
+    userId: string,
+    close: () => void
+  ): { type: RelationshipType | null; handlers: RelationshipHandlers } | undefined {
+    const user = backend.users[userId]
+    if (!user || user.bot || userId === selfId) return undefined
+    const report = (error: string | null): void => {
+      if (error) setNotice(error)
+    }
+    return {
+      type: backend.relationships[userId]?.type ?? null,
+      handlers: {
+        onMessage: () => {
+          close()
+          messageUser(userId)
+        },
+        onAddFriend: () =>
+          void backend
+            .sendFriendRequest(user.username)
+            .then((r) =>
+              setNotice(
+                r.error ??
+                  (r.type === 'friend'
+                    ? `You and ${user.displayName} are now friends.`
+                    : `Friend request sent to ${user.displayName}.`)
+              )
+            ),
+        onAccept: () => void backend.acceptFriendRequest(userId).then(report),
+        onRemove: () => void backend.removeRelationship(userId).then(report),
+        onBlock: () => void backend.setBlocked(userId, true).then(report),
+        onUnblock: () => void backend.setBlocked(userId, false).then(report)
+      }
+    }
+  }
+
+  /** Closes a DM (hidden until the next message) or leaves a group after confirming. */
+  function closeOrLeave(conversation: ApiConversation): void {
+    if (conversation.kind === 'group') {
+      const title = conversationTitle(conversation, backend.users, selfId)
+      if (
+        !window.confirm(`Leave ${title}? You won’t see its messages unless someone adds you back.`)
+      )
+        return
+      void backend.leaveGroup(conversation.id).then((error) => error && setNotice(error))
+    } else {
+      void backend.closeConversation(conversation.id).then((error) => error && setNotice(error))
+    }
+    if (activeConversationId === conversation.id) setActiveConversationId(null)
+  }
 
   return withSound(
     <ProfileMediaContext.Provider value={backend.profileMedia}>
       <div className="app">
         <ServerSidebar
           servers={servers}
-          activeServerId={activeServer.id}
+          activeServerId={activeServer?.id ?? null}
+          homeActive={homeActive}
+          homeBadge={homeBadge}
+          onSelectHome={selectHome}
           unreadServerIds={unreadServerIds}
           onSelectServer={selectServer}
           onAddServer={() => setCreateServerOpen(true)}
         />
 
-        <ChannelSidebar
-          server={activeServer}
-          activeChannelId={activeChannel?.id ?? ''}
-          unreadChannelIds={backend.unread}
-          unreadCounts={unreadCounts}
-          voiceChannelId={voiceChannelId}
-          selfId={selfId}
-          resolveUser={resolveUser}
-          voiceMembers={voiceMembers}
-          voiceDetails={voiceDetails}
-          getUserVolume={(userId) => settings.userVolumes[userId] ?? 100}
-          onUserVolumeChange={(userId, volume) =>
-            updateSettings({ userVolumes: { ...settings.userVolumes, [userId]: volume } })
-          }
-          isStreaming={isStreaming}
-          watchingId={watching}
-          onWatch={watchStream}
-          getStreamVolume={(userId) => settings.streamVolumes[userId] ?? 100}
-          onStreamVolumeChange={(userId, volume) =>
-            updateSettings({ streamVolumes: { ...settings.streamVolumes, [userId]: volume } })
-          }
-          onSelectChannel={selectChannel}
-          serverActions={serverActions(activeServer)}
-          footer={
-            <UserPanel
-              displayName={displayName}
-              avatarColor={backend.me?.avatarColor ?? DEFAULT_ACCENT}
-              avatarId={backend.me?.avatarId}
-              status={selfStatus}
-              statusPreference={statusPreference}
-              customStatus={selfCustomStatus}
-              onSetStatus={setStatus}
-              onEditCustomStatus={() => setCustomStatusOpen(true)}
-              onClearCustomStatus={() => void backend.setCustomStatus(null)}
-              onViewProfile={() => setProfileFor(selfId)}
-              onEditProfile={() => openSettings('profile')}
-              muted={muted}
-              deafened={deafened}
-              voice={voiceConnection}
-              onToggleMute={toggleMute}
-              onToggleDeafen={toggleDeafen}
-              onOpenSettings={() => openSettings('account')}
-              onDisconnect={() => void voice.session.leave()}
-              onRetryVoice={() => voice.session.retry()}
-              onOpenMicSettings={
-                window.d2 ? () => void window.d2?.media.openMicrophoneSettings() : undefined
-              }
-              onShareScreen={() => {
-                voice.session.dismissScreenShareMessage()
-                if (!canStream) {
-                  setNotice('You don’t have permission to stream in this channel.')
-                  return
-                }
-                setPickerOpen(true)
-              }}
-              onStopShare={() => void voice.session.stopScreenShare()}
-              onPreviewShare={() => {
-                setViewerMode('focus')
-                voice.session.watch(selfId)
-              }}
-              onChangeShareProfile={(profileId) => {
-                updateSettings({ screenShareProfile: profileId })
-                void voice.session.setScreenShareProfile(profileId)
-              }}
-              onDismissShareMessage={() => voice.session.dismissScreenShareMessage()}
-              onDismissDeviceNotice={() => voice.session.dismissDeviceNotice()}
-              onStartAudio={() => void voice.session.startAudio()}
-              shareStatus={
-                voice.state.screenShare.options ? (
-                  <ShareHealthNote
-                    session={voice.session}
-                    profileId={voice.state.screenShare.options.profileId}
-                  />
-                ) : undefined
-              }
-            />
-          }
-        />
+        {activeServer ? (
+          <ChannelSidebar
+            server={activeServer}
+            activeChannelId={activeChannel?.id ?? ''}
+            unreadChannelIds={backend.unread}
+            unreadCounts={unreadCounts}
+            voiceChannelId={voiceChannelId}
+            selfId={selfId}
+            resolveUser={resolveUser}
+            voiceMembers={voiceMembers}
+            voiceDetails={voiceDetails}
+            getUserVolume={(userId) => settings.userVolumes[userId] ?? 100}
+            onUserVolumeChange={(userId, volume) =>
+              updateSettings({ userVolumes: { ...settings.userVolumes, [userId]: volume } })
+            }
+            isStreaming={isStreaming}
+            watchingId={watching}
+            onWatch={watchStream}
+            getStreamVolume={(userId) => settings.streamVolumes[userId] ?? 100}
+            onStreamVolumeChange={(userId, volume) =>
+              updateSettings({ streamVolumes: { ...settings.streamVolumes, [userId]: volume } })
+            }
+            onSelectChannel={selectChannel}
+            serverActions={serverActions(activeServer)}
+            footer={userPanel}
+          />
+        ) : (
+          <HomeSidebar
+            conversations={backend.conversations}
+            loaded={backend.conversationsLoaded}
+            users={backend.users}
+            meId={selfId}
+            activeConversationId={activeConversation?.id ?? null}
+            unreadCounts={unreadCounts}
+            pendingRequests={pendingRequests}
+            resolveUser={resolveUser}
+            onOpenFriends={() => setActiveConversationId(null)}
+            onOpenConversation={openConversation}
+            onCloseConversation={closeOrLeave}
+            onCreateGroup={() => setGroupDialog({ mode: 'create' })}
+            footer={userPanel}
+          />
+        )}
 
         {watching && (
           // One viewer instance for both modes, so switching focus/mini never remounts the video.
@@ -899,12 +1114,14 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
           </main>
         )}
 
-        {watching && viewerMode === 'focus' ? null : activeChannel ? (
+        {watching && viewerMode === 'focus' ? null : chatChannel ? (
           <ChatPanel
-            channel={activeChannel}
-            serverId={activeServer.id}
-            state={channelState}
-            readState={backend.readStates[activeChannel.id]}
+            key={homeActive ? 'conversation' : 'channel'}
+            channel={chatChannel}
+            serverId={activeServer?.id ?? null}
+            conversation={homeActive ? conversationInfo : undefined}
+            state={backend.channels[chatChannel.id]}
+            readState={backend.readStates[chatChannel.id]}
             meId={selfId}
             banner={
               <ConnectionBanner
@@ -917,27 +1134,65 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             showMembers={showMembers}
             compactMode={backend.preferences.density === 'compact'}
             showTimestamps={backend.preferences.showTimestamps}
-            notificationsMuted={Boolean(settings.mutedChannels[activeChannel.id])}
-            pinsRevision={backend.pinsRevision[activeChannel.id] ?? 0}
+            notificationsMuted={Boolean(settings.mutedChannels[chatChannel.id])}
+            pinsRevision={backend.pinsRevision[chatChannel.id] ?? 0}
             recentEmoji={settings.recentEmoji}
             jumpTarget={jumpTarget}
-            users={userList}
+            users={
+              homeActive && activeConversation
+                ? userList.filter((u) => activeConversation.memberIds.includes(u.id))
+                : userList
+            }
             backend={backend}
             resolveUser={resolveUser}
             roleColor={roleColor}
             channelName={channelName}
             onToggleMembers={() => setShowMembers((v) => !v)}
-            onToggleNotificationsMuted={() => toggleChannelMute(activeChannel.id)}
+            onToggleNotificationsMuted={() => toggleChannelMute(chatChannel.id)}
             onEmojiUsed={useEmoji}
             onJumpTo={jumpTo}
             onOpenProfile={openProfile}
+          />
+        ) : homeActive ? (
+          <FriendsPage
+            relationships={backend.relationships}
+            users={backend.users}
+            loaded={backend.conversationsLoaded}
+            supported={backend.connectionsSupported}
+            resolveUser={resolveUser}
+            banner={
+              <ConnectionBanner
+                status={backend.gateway.status}
+                retryInMs={backend.gateway.retryInMs}
+              />
+            }
+            onMessage={messageUser}
+            onOpenProfile={openProfile}
+            onSendRequest={backend.sendFriendRequest}
+            onAccept={backend.acceptFriendRequest}
+            onRemove={backend.removeRelationship}
+            onUnblock={(userId) => backend.setBlocked(userId, false)}
           />
         ) : (
           <main className="chat-panel empty-state">This server has no text channels yet.</main>
         )}
 
-        {showMembers && activeChannel && !(watching && viewerMode === 'focus') && (
+        {showMembers && !(watching && viewerMode === 'focus') && activeServer && activeChannel && (
           <MemberList server={activeServer} resolveUser={resolveUser} onOpenProfile={openProfile} />
+        )}
+
+        {showMembers && !(watching && viewerMode === 'focus') && activeConversation && (
+          <ConversationMembers
+            key={activeConversation.id}
+            conversation={activeConversation}
+            meId={selfId}
+            resolveUser={resolveUser}
+            onOpenProfile={openProfile}
+            onAddPeople={() => setGroupDialog({ mode: 'add', channelId: activeConversation.id })}
+            onRename={(name) => backend.renameGroup(activeConversation.id, name)}
+            onRemove={(userId) => backend.removeGroupMember(activeConversation.id, userId)}
+            onLeave={() => closeOrLeave(activeConversation)}
+          />
         )}
 
         {pickerOpen && (
@@ -975,6 +1230,14 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             onToggleMute={toggleMute}
             onToggleDeafen={toggleDeafen}
             onClose={closeSettings}
+            privacy={{
+              allowServerDms: backend.me?.allowServerDms ?? true,
+              onAllowServerDmsChange: backend.setAllowServerDms,
+              blocked: Object.values(backend.relationships)
+                .filter((r) => r.type === 'blocked')
+                .map((r) => resolveUser(r.userId)),
+              onUnblock: (userId) => backend.setBlocked(userId, false)
+            }}
           />
         )}
 
@@ -1016,6 +1279,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             role={roleOf(popout.userId)}
             isSelf={popout.userId === selfId}
             selfCustomStatus={selfCustomStatus}
+            relationship={relationshipFor(popout.userId, closePopout)}
             onViewProfile={() => {
               setProfileFor(popout.userId)
               setPopout(null)
@@ -1033,6 +1297,7 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
             user={resolveUser(profileFor)}
             isSelf={profileFor === selfId}
             selfCustomStatus={selfCustomStatus}
+            relationship={relationshipFor(profileFor, closeProfileModal)}
             role={roleOf(profileFor)}
             servers={backend.servers}
             fetchProfile={backend.fetchProfile}
@@ -1045,6 +1310,34 @@ function Workspace({ session, onSignOut }: WorkspaceProps): React.JSX.Element {
               setActiveServerId(serverId)
             }}
             onClose={closeProfileModal}
+          />
+        )}
+
+        {groupDialog && (
+          <GroupDialog
+            mode={groupDialog.mode}
+            relationships={backend.relationships}
+            users={backend.users}
+            existingMemberIds={
+              groupDialog.mode === 'add'
+                ? (backend.conversations[groupDialog.channelId]?.memberIds ?? [])
+                : undefined
+            }
+            resolveUser={resolveUser}
+            onSubmit={async (userIds, name) => {
+              if (groupDialog.mode === 'create') {
+                const result = await backend.createGroup(userIds, name)
+                if (result.conversation) openConversation(result.conversation.id)
+                return result.error ?? null
+              }
+              // Added one at a time (each is checked and logged by the server).
+              for (const userId of userIds) {
+                const error = await backend.addGroupMember(groupDialog.channelId, userId)
+                if (error) return error
+              }
+              return null
+            }}
+            onClose={() => setGroupDialog(null)}
           />
         )}
 

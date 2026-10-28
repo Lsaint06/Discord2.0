@@ -32,7 +32,9 @@ export async function buildApiMessages(
   repo: Repository,
   records: MessageRecord[],
   viewerId: string,
-  nonce?: string
+  nonce?: string,
+  /** The viewer's history floor: reply parents at or below it are shown as unavailable. */
+  historyFrom = '0'
 ): Promise<ApiMessage[]> {
   if (records.length === 0) return []
   const ids = records.map((m) => m.id)
@@ -67,7 +69,8 @@ export async function buildApiMessages(
   return records.map((m) => {
     let replyTo: ApiMessageReference | null = null
     if (m.replyToId) {
-      const parent = parentsById.get(m.replyToId)
+      const found = parentsById.get(m.replyToId)
+      const parent = found && BigInt(found.id) > BigInt(historyFrom) ? found : undefined
       replyTo = parent
         ? {
             id: parent.id,
@@ -92,6 +95,11 @@ export async function buildApiMessages(
       ...(nonce ? { nonce } : {})
     }
   })
+}
+
+/** The same message as seen by someone whose history starts after its reply parent. */
+export function withHiddenReply(message: ApiMessage): ApiMessage {
+  return message.replyTo ? { ...message, replyTo: { id: message.replyTo.id, deleted: true } } : message
 }
 
 /** For broadcasts: the viewer-specific `me` flag must be false for everyone. */

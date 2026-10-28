@@ -6,7 +6,8 @@ import { CloseIcon } from '../Icons'
 import Markdown from './Markdown'
 
 interface PinsPanelProps {
-  channelName: string
+  /** Where the pins are, as shown to the user ("#general", "@Ana", a group name). */
+  label: string
   revision: number
   load: () => Promise<Message[]>
   resolveUser: (id: string) => User
@@ -59,7 +60,7 @@ function PinsPanel(props: PinsPanelProps): React.JSX.Element {
   return (
     <div ref={ref} className="pins-panel" role="dialog" aria-label="Pinned messages">
       <header>
-        <h3>Pinned in #{props.channelName}</h3>
+        <h3>Pinned in {props.label}</h3>
         <button
           type="button"
           className="icon-button small"

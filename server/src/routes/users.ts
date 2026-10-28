@@ -9,10 +9,13 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppContext): void 
     return toApiMe(ctx, user)
   })
 
-  /** People you can see: those sharing a server with you, authors in your servers, bots. */
+  /**
+   * People you can see: those sharing a server with you, authors in your servers, friends,
+   * pending requests, conversation partners and bots. Blocked pairs are shown without presence.
+   */
   app.get('/api/users', async (request) => {
     const user = await requireUser(ctx, request)
-    const users = await ctx.repo.listVisibleUsers(user.id)
-    return users.map((u) => ctx.hub.toApiUser(u))
+    const [users, blocked] = await Promise.all([ctx.repo.listVisibleUsers(user.id), ctx.repo.blockedEither(user.id)])
+    return users.map((u) => ctx.hub.apiUserFor(u, blocked))
   })
 }

@@ -39,8 +39,12 @@ interface ComposerProps {
   /** Lets ChatPanel push dropped files into the tray. */
   ref?: Ref<ComposerHandle>
   disabled?: boolean
+  /** Shown instead of the placeholder while sending isn't allowed. */
+  disabledReason?: string
   /** Attach Files permission (false hides uploads; the server enforces it too). */
   canAttach?: boolean
+  /** Who/where you're writing to ("#general", "@Ana", a group name). Defaults to the channel. */
+  targetLabel?: string
 }
 
 export interface ComposerHandle {
@@ -52,6 +56,7 @@ const nextKey = (): string => `u${Date.now().toString(36)}-${(keySeq++).toString
 
 function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
   const { channel, draft, onDraftChange } = props
+  const target = props.targetLabel ?? `#${channel.name}`
   const [uploads, dispatch] = useReducer(uploadsReducer, [])
   const [notice, setNotice] = useState<string | null>(null)
   const [emojiOpen, setEmojiOpen] = useState(false)
@@ -336,8 +341,12 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
           rows={1}
           value={draft}
           maxLength={MAX_LENGTH}
-          placeholder={props.disabled ? 'You can’t send messages here' : `Message #${channel.name}`}
-          aria-label={`Message #${channel.name}`}
+          placeholder={
+            props.disabled
+              ? (props.disabledReason ?? 'You can’t send messages here')
+              : `Message ${target}`
+          }
+          aria-label={`Message ${target}`}
           disabled={props.disabled}
           onChange={(e) => {
             onDraftChange(e.target.value)

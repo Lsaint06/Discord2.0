@@ -50,6 +50,8 @@ export interface ApiMe extends ApiUser {
   statusPreference: SelectableStatus
   /** Your custom status even while invisible (others don't see it then). */
   ownCustomStatus: ApiCustomStatus | null
+  /** Whether people you share a server with (but aren't friends with) may message you directly. */
+  allowServerDms: boolean
 }
 
 /** Full profile for the profile modal. */
@@ -57,6 +59,54 @@ export interface ApiProfile {
   user: ApiUser
   /** Servers you share with this user (ids of servers you are a member of). */
   mutualServerIds: string[]
+  /** Your relationship with this user (null = none). */
+  relationship: RelationshipType | null
+}
+
+// ---- Friends and conversations (Milestone 10) ----
+
+/**
+ * 'blocked' is only ever reported to the person who blocked. Someone who is blocked sees 'none'
+ * (no relationship) — the API never tells anyone they were blocked.
+ */
+export type RelationshipType = 'friend' | 'incoming' | 'outgoing' | 'blocked'
+
+export interface ApiRelationship {
+  userId: string
+  type: RelationshipType
+  /** When the friendship, request or block started (epoch ms). */
+  since: number
+}
+
+export type ConversationKind = 'dm' | 'group'
+
+/** A one-to-one or group conversation. Its id is also its channel id (messages, pins, reads). */
+export interface ApiConversation {
+  id: string
+  kind: ConversationKind
+  /** Group name (null = shown as the members' names). Always null for one-to-one conversations. */
+  name: string | null
+  /** Group owner (can remove members). Null for one-to-one conversations. */
+  ownerId: string | null
+  /** Current members, including you. */
+  memberIds: string[]
+  /** Newest message you can see (null = none yet). */
+  lastMessageId: string | null
+  createdAt: number
+  /** Your permission bits here (Permissions.*); a DM you can't send to has only viewChannel. */
+  permissions: number
+}
+
+export type ConversationEventAction = 'created' | 'member_added' | 'member_removed' | 'member_left' | 'owner_changed' | 'renamed'
+
+export interface ApiConversationEvent {
+  id: string
+  at: number
+  actorId: string | null
+  action: ConversationEventAction
+  targetUserId: string | null
+  /** For 'renamed' and 'created': the name. */
+  name?: string | null
 }
 
 export type ThemePreference = 'dark' | 'light' | 'system'
@@ -397,7 +447,11 @@ export const LIMITS = {
   bannerMinWidth: 300,
   bannerMinHeight: 120,
   idleTimeoutMinMinutes: 1,
-  idleTimeoutMaxMinutes: 120
+  idleTimeoutMaxMinutes: 120,
+  /** Group conversations: total members including the creator. */
+  groupMinMembers: 3,
+  groupMaxMembers: 10,
+  groupNameMaxLength: 100
 } as const
 
 /** Client → server gateway frames. */
@@ -449,6 +503,12 @@ export type GatewayServerFrame =
   | { op: 'server_remove'; d: { serverId: string; reason: 'left' | 'kicked' | 'banned' } }
   /** channelId null = the user left voice. `streaming` is included when share state changed. */
   | { op: 'voice_state_update'; d: { userId: string; channelId: string | null; streaming?: boolean } }
+  /** Your relationship with userId changed (type null = none). Sent to your own sessions. */
+  | { op: 'relationship_update'; d: { userId: string; type: RelationshipType | null } }
+  /** A conversation you belong to was created, changed or reopened. */
+  | { op: 'conversation_update'; d: ApiConversation }
+  /** You no longer belong to this conversation (left or removed), or closed it on another device. */
+  | { op: 'conversation_remove'; d: { channelId: string; reason: 'left' | 'removed' | 'closed' } }
 
 /** Custom WebSocket close codes (4000–4999 are application-defined). */
 export const CloseCodes = {

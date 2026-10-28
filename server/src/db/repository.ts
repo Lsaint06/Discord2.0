@@ -29,6 +29,8 @@ export interface UserRecord {
   customStatusText?: string | null
   customStatusEmoji?: string | null
   customStatusExpiresAt?: number | null
+  /** Milestone 10: whether people sharing a server (but not friends) may open a DM. */
+  allowServerDms?: boolean
 }
 
 export interface ProfilePatch {
@@ -185,6 +187,8 @@ export interface IntegrityReport {
   readStates: number
   memberships: number
   serversWithoutOwner: string[]
+  /** Must be 0: memberships of the private conversation container (see migration 5). */
+  directContainerMembers: number
   orphans: {
     messagesWithoutAuthor: number
     attachmentsWithoutUploader: number
@@ -232,6 +236,8 @@ export interface MessagePage {
   /** Return messages around this id (inclusive), half before and half after. */
   around?: string
   limit: number
+  /** History floor: only messages with a larger id (conversation members who joined later). */
+  minId?: string
 }
 
 export interface NewMessage {
@@ -292,7 +298,70 @@ export interface SearchQuery {
   /** Message id cursor (exclusive). */
   before?: string
   limit: number
+  /** History floor (exclusive): used when searching one conversation. */
+  minId?: string
 }
+
+// ---- Friends, blocks and conversations (Milestone 10) ----
+
+export type RelationshipType = 'friend' | 'incoming' | 'outgoing' | 'blocked'
+
+export interface RelationshipRecord {
+  userId: string
+  type: RelationshipType
+  since: number
+}
+
+export type FriendRequestResult =
+  | 'requested'
+  /** The other person had already asked: the two requests become a friendship. */
+  | 'accepted'
+  | 'already_requested'
+  | 'already_friends'
+  /** A block exists in either direction (callers must not reveal which). */
+  | 'blocked'
+
+export type ConversationKind = 'dm' | 'group'
+
+export interface ConversationRecord {
+  /** Same id as the conversation's channel. */
+  channelId: string
+  kind: ConversationKind
+  dmKey: string | null
+  name: string | null
+  ownerId: string | null
+  createdBy: string | null
+  createdAt: number
+}
+
+export interface ConversationMemberRecord {
+  channelId: string
+  userId: string
+  joinedAt: number
+  /** Newest message id when the member joined (they see only later messages). */
+  historyFrom: string
+  closed: boolean
+}
+
+export interface ConversationSummary {
+  conversation: ConversationRecord
+  /** The requesting user's membership. */
+  member: ConversationMemberRecord
+  memberIds: string[]
+  lastMessageId: string | null
+}
+
+export interface ConversationEventRecord {
+  id: string
+  channelId: string
+  at: number
+  actorId: string | null
+  action: string
+  targetUserId: string | null
+  detail: Record<string, unknown> | null
+}
+
+export type AddMemberResult = 'added' | 'exists' | 'full'
 
 export class RepositoryConflict extends Error {
   constructor(readonly reason: string) {
@@ -339,6 +408,71 @@ export interface Repository {
   mutualServerIds(userA: string, userB: string): Promise<string[]>
   /** Stored preferences JSON and its timestamp, or undefined if never saved. */
   getPreferences(userId: string): Promise<{ data: string; updatedAt: number } | undefined>
+
+  // ---- Friends and blocks (Milestone 10) ----
+  /** Friends, incoming/outgoing requests and people this user blocked. */
+  listRelationships(userId: string): Promise<RelationshipRecord[]>
+  areFriends(a: string, b: string): Promise<boolean>
+  /** Users with a block in either direction with userId. */
+  blockedEither(userId: string): Promise<Set<string>>
+  isBlockedEither(a: string, b: string): Promise<boolean>
+  /** Atomic: mutual requests become a friendship; blocked pairs are refused. */
+  sendFriendRequest(fromId: string, toId: string, now: number): Promise<FriendRequestResult>
+  /** Accepts `fromId`'s pending request to `userId`. False if there is none. */
+  acceptFriendRequest(userId: string, fromId: string, now: number): Promise<boolean>
+  /** Removes a friendship and any request between the two. Returns what existed. */
+  removeRelationship(userId: string, otherId: string): Promise<'friend' | 'outgoing' | 'incoming' | null>
+  /** Atomic: block, and end any friendship or request between the two. */
+  blockUser(blockerId: string, blockedId: string, now: number): Promise<void>
+  unblockUser(blockerId: string, blockedId: string): Promise<boolean>
+  setAllowServerDms(userId: string, allow: boolean): Promise<void>
+  getAllowServerDms(userId: string): Promise<boolean>
+  shareServer(a: string, b: string): Promise<boolean>
+
+  // ---- Conversations (Milestone 10) ----
+  getConversation(channelId: string): Promise<ConversationRecord | undefined>
+  getConversationMember(channelId: string, userId: string): Promise<ConversationMemberRecord | undefined>
+  listConversationMembers(channelId: string): Promise<ConversationMemberRecord[]>
+  /** The user's conversations (open ones unless includeClosed). */
+  listConversationsForUser(userId: string, includeClosed?: boolean): Promise<ConversationSummary[]>
+  /** Channel ids of every conversation the user is a member of. */
+  conversationChannelIds(userId: string): Promise<string[]>
+  /** Canonical one-to-one conversation for the pair (created once, even if both open at once). */
+  findOrCreateDm(
+    openerId: string,
+    otherId: string,
+    now: number,
+    newChannelId: string
+  ): Promise<{ conversation: ConversationRecord; created: boolean }>
+  findDm(a: string, b: string): Promise<ConversationRecord | undefined>
+  createGroup(
+    creatorId: string,
+    memberIds: string[],
+    name: string | null,
+    now: number,
+    newChannelId: string
+  ): Promise<ConversationRecord>
+  /** Atomic add with a size limit; the new member sees only messages from now on. */
+  addConversationMember(
+    channelId: string,
+    actorId: string,
+    userId: string,
+    now: number,
+    maxMembers: number
+  ): Promise<AddMemberResult>
+  /** Removes a member (left or removed). Hands ownership to the longest-standing member. */
+  removeConversationMember(
+    channelId: string,
+    userId: string,
+    actorId: string,
+    action: 'left' | 'removed',
+    now: number
+  ): Promise<{ removed: boolean; ownerId: string | null }>
+  renameConversation(channelId: string, name: string | null, actorId: string, now: number): Promise<void>
+  setConversationClosed(channelId: string, userId: string, closed: boolean): Promise<void>
+  /** Re-opens the conversation for every member who had closed it; returns their ids. */
+  reopenConversation(channelId: string): Promise<string[]>
+  listConversationEvents(channelId: string, afterAt: number, limit: number): Promise<ConversationEventRecord[]>
   savePreferences(userId: string, data: string, now: number): Promise<void>
 
   // ---- Accounts (Milestone 7) ----
@@ -353,6 +487,8 @@ export interface Repository {
   listVisibleUsers(viewerId: string): Promise<UserRecord[]>
   /** Everyone who shares at least one server with `userId` (including themself). */
   usersSharingServers(userId: string): Promise<Set<string>>
+  /** Who receives this user's presence: shared servers, friends, conversation partners; minus blocks. */
+  presenceAudience(userId: string): Promise<Set<string>>
   listLegacyIdentities(): Promise<LegacyIdentityRecord[]>
 
   /**

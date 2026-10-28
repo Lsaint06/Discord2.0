@@ -354,7 +354,14 @@ async function main(): Promise<number> {
         }
         console.log(JSON.stringify(report, null, 2))
         const orphanCount = Object.values(report.orphans).reduce((a, b) => a + b, 0)
-        const ok = report.integrityCheck === 'ok' && report.foreignKeyViolations === 0 && orphanCount === 0
+        const ok =
+          report.integrityCheck === 'ok' &&
+          report.foreignKeyViolations === 0 &&
+          orphanCount === 0 &&
+          report.directContainerMembers === 0
+        if (report.directContainerMembers > 0) {
+          console.log('\nSECURITY: someone is a member of the private conversation container. Restore a backup.')
+        }
         console.log(ok ? '\nOK: no integrity problems found.' : '\nPROBLEMS FOUND (see above).')
         if (report.serversWithoutOwner.length > 0) {
           console.log(`Note: ${report.serversWithoutOwner.length} server(s) have no owner. Use "create-admin --own-unowned-servers" or "set-owner".`)

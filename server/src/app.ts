@@ -19,11 +19,13 @@ import { expireCustomStatuses, publishVoiceChanges, toApiMe, visibleVoiceStates 
 import { registerAdminRoutes } from './routes/admin.js'
 import { cleanupAttachments, registerAttachmentRoutes } from './routes/attachments.js'
 import { registerAuthRoutes } from './routes/auth.js'
+import { registerConversationRoutes } from './routes/conversations.js'
 import { registerDevAuthRoutes } from './routes/devAuth.js'
 import { registerInviteRoutes } from './routes/invites.js'
 import { registerMemberRoutes } from './routes/members.js'
 import { registerMessageRoutes } from './routes/messages.js'
 import { registerReadStateRoutes, registerSearchRoutes } from './routes/readStates.js'
+import { registerRelationshipRoutes } from './routes/relationships.js'
 import { registerServerRoutes } from './routes/servers.js'
 import { cleanupProfileMedia, registerProfileRoutes } from './routes/profile.js'
 import { registerUserRoutes } from './routes/users.js'
@@ -119,7 +121,8 @@ export async function buildApp(
       presenceAudience: (userId) => access.presenceAudienceOf(userId),
       voiceStates: (user) => visibleVoiceStates(ctx, user),
       getUser: (id) => repo.getUser(id),
-      setStatusPreference: (userId, status) => repo.setStatusPreference(userId, status)
+      setStatusPreference: (userId, status) => repo.setStatusPreference(userId, status),
+      blockedEither: (userId) => repo.blockedEither(userId)
     },
     app.log,
     options.gateway
@@ -208,14 +211,16 @@ export async function buildApp(
 
   app.get('/api/meta', async () => ({
     name: 'Discord 2.0',
-    apiVersion: 3,
+    apiVersion: 4,
     devAuth: config.devAuth,
     voice: config.livekit !== null,
     // Real accounts; new ones only with an invitation from an administrator.
     accounts: true,
     registration: 'invite',
     // Milestone 8: profiles, profile images, synced status and preferences.
-    profiles: true
+    profiles: true,
+    // Milestone 10: friends, blocking, direct and group conversations.
+    connections: true
   }))
 
   app.get(
@@ -245,6 +250,8 @@ export async function buildApp(
   registerReadStateRoutes(app, ctx)
   registerSearchRoutes(app, ctx)
   registerVoiceRoutes(app, ctx)
+  registerRelationshipRoutes(app, ctx)
+  registerConversationRoutes(app, ctx)
 
   const cleanupMs = options.attachmentCleanupIntervalMs ?? 60 * 60_000
   let cleanupTimer: NodeJS.Timeout | null = null

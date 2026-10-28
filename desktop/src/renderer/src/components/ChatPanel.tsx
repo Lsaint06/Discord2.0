@@ -28,7 +28,8 @@ import { messageLink } from '../chat/markdown'
 import { createMentionDetector } from '../chat/mentions'
 import { anyDialogOpen } from '../lib/focusTrap'
 import { useDialog } from '../hooks/useDialog'
-import { BellIcon, HashIcon, MembersIcon, PinIcon, SearchIcon } from './Icons'
+import { AtIcon, BellIcon, FriendsIcon, HashIcon, MembersIcon, PinIcon, SearchIcon } from './Icons'
+import Avatar from './Avatar'
 import MessageItem, { type MessageActions } from './chat/MessageItem'
 import Composer, { type ComposerHandle } from './chat/Composer'
 import ContextMenu, { type MenuItem } from './chat/ContextMenu'
@@ -47,9 +48,24 @@ export interface JumpTarget {
   seq: number
 }
 
+/** Set when the chat panel shows a direct or group conversation instead of a server channel. */
+export interface ConversationInfo {
+  kind: 'dm' | 'group'
+  /** Partner's name, or the group's name. */
+  title: string
+  /** "@Ana" or the group name — used in placeholders, pins and search. */
+  label: string
+  /** The other person in a one-to-one conversation. */
+  partner?: User
+  /** Why you can't send here (shown in the composer), if you can't. */
+  readOnlyReason?: string
+}
+
 interface ChatPanelProps {
   channel: Channel
-  serverId: string
+  /** null for conversations. */
+  serverId: string | null
+  conversation?: ConversationInfo
   state: ChannelState | undefined
   readState: ReadState | undefined
   meId: string
@@ -96,7 +112,9 @@ function useWindowFocus(): boolean {
 const EMPTY: Message[] = []
 
 function ChatPanel(props: ChatPanelProps): React.JSX.Element {
-  const { channel, backend, meId } = props
+  const { channel, backend, meId, conversation } = props
+  const label = conversation ? conversation.label : `#${channel.name}`
+  const noun = conversation ? 'conversation' : 'channel'
   // What this user may do here (the server enforces it; this only hides controls).
   const perms = channel.permissions ?? ALL_PERMISSIONS
   const can = {
@@ -495,9 +513,23 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
     >
       <header className="chat-header">
         <div className="chat-header-title">
-          <HashIcon size={22} className="chat-header-hash" />
-          <h2>{channel.name}</h2>
-          {channel.topic && (
+          {conversation?.kind === 'dm' ? (
+            <AtIcon size={22} className="chat-header-hash" />
+          ) : conversation ? (
+            <FriendsIcon size={22} className="chat-header-hash" />
+          ) : (
+            <HashIcon size={22} className="chat-header-hash" />
+          )}
+          <h2 title={conversation ? conversation.title : channel.name}>
+            {conversation ? conversation.title : channel.name}
+          </h2>
+          {conversation?.partner && (
+            <>
+              <span className="chat-header-divider" />
+              <span className="chat-header-topic">@{conversation.partner.username}</span>
+            </>
+          )}
+          {!conversation && channel.topic && (
             <>
               <span className="chat-header-divider" />
               <span className="chat-header-topic" title={channel.topic}>
@@ -515,13 +547,13 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
             aria-pressed={props.notificationsMuted}
             aria-label={
               props.notificationsMuted
-                ? 'Unmute channel notifications'
-                : 'Mute channel notifications'
+                ? `Unmute ${noun} notifications`
+                : `Mute ${noun} notifications`
             }
             title={
               props.notificationsMuted
-                ? 'Notifications muted for this channel'
-                : 'Mute notifications for this channel'
+                ? `Notifications muted for this ${noun}`
+                : `Mute notifications for this ${noun}`
             }
           >
             <BellIcon size={22} />
@@ -539,7 +571,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
             </button>
             {pinsOpen && (
               <PinsPanel
-                channelName={channel.name}
+                label={label}
                 revision={props.pinsRevision}
                 load={() => backend.fetchPins(channel.id)}
                 resolveUser={props.resolveUser}
@@ -567,7 +599,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
             type="button"
             className={`chat-search-button${searchOpen ? ' active' : ''}`}
             onClick={() => setSearchOpen(true)}
-            aria-label={`Search #${channel.name} (Ctrl+F)`}
+            aria-label={`Search ${label} (Ctrl+F)`}
             title="Search (Ctrl+F)"
           >
             <span>Search</span>
@@ -638,7 +670,33 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
                 </div>
               )}
 
-              {loaded && !hasMore && (
+              {loaded && !hasMore && conversation && (
+                <div className="channel-welcome">
+                  {conversation.partner ? (
+                    <Avatar
+                      name={conversation.partner.name}
+                      color={conversation.partner.avatarColor}
+                      imageId={conversation.partner.avatarId}
+                      size={72}
+                    />
+                  ) : (
+                    <div className="channel-welcome-icon">
+                      <FriendsIcon size={42} />
+                    </div>
+                  )}
+                  <h3>{conversation.title}</h3>
+                  <p>
+                    {conversation.kind === 'dm'
+                      ? `This is the beginning of your direct message history with ${conversation.title}.`
+                      : `This is the beginning of the ${conversation.title} group. You see messages sent since you joined.`}
+                  </p>
+                  {messages.length === 0 && (
+                    <p className="channel-welcome-hint">No messages yet — say hi.</p>
+                  )}
+                </div>
+              )}
+
+              {loaded && !hasMore && !conversation && (
                 <div className="channel-welcome">
                   <div className="channel-welcome-icon">
                     <HashIcon size={42} />
@@ -760,7 +818,9 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
             onEmojiUsed={props.onEmojiUsed}
             onEditLast={() => lastOwn && setEditingId(lastOwn.id)}
             disabled={!can.send}
+            disabledReason={conversation?.readOnlyReason}
             canAttach={can.attach}
+            targetLabel={label}
             ref={composerRef}
           />
 
@@ -768,7 +828,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
             <div className="drop-overlay" aria-hidden="true">
               <div>
                 <strong>Drop to upload</strong>
-                <span>to #{channel.name} · up to 5 files</span>
+                <span>to {label} · up to 5 files</span>
               </div>
             </div>
           )}
@@ -778,6 +838,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
           <SearchPanel
             channel={channel}
             serverId={props.serverId}
+            label={label}
             initialQuery=""
             users={props.users}
             resolveUser={props.resolveUser}

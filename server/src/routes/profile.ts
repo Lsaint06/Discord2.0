@@ -484,9 +484,16 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
       if (!target || !(await ctx.repo.isUserVisibleTo(user.id, target.id))) {
         throw notFound('User not found')
       }
+      const self = target.id === user.id
+      const blocked = self ? new Set<string>() : await ctx.repo.blockedEither(user.id)
+      // Only your own block is reported; being blocked looks like having no relationship.
+      const relationship = self
+        ? null
+        : ((await ctx.repo.listRelationships(user.id)).find((r) => r.userId === target.id)?.type ?? null)
       return {
-        user: ctx.hub.toApiUser(target),
-        mutualServerIds: target.id === user.id ? [] : await ctx.repo.mutualServerIds(user.id, target.id)
+        user: ctx.hub.apiUserFor(target, blocked),
+        mutualServerIds: self ? [] : await ctx.repo.mutualServerIds(user.id, target.id),
+        relationship
       }
     }
   )

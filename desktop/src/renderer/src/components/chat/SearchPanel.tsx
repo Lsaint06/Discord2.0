@@ -9,7 +9,10 @@ import Markdown from './Markdown'
 
 interface SearchPanelProps {
   channel: Channel
-  serverId: string
+  /** null for conversations: only this conversation can be searched. */
+  serverId: string | null
+  /** How this channel is shown ("#general", "@Ana", a group name). */
+  label: string
   initialQuery: string
   users: User[]
   resolveUser: (id: string) => User
@@ -36,8 +39,8 @@ function SearchPanel(props: SearchPanelProps): React.JSX.Element {
 
   const params = (before?: string): SearchParams => ({
     q: query.trim() || undefined,
-    channelId: scope === 'channel' ? props.channel.id : undefined,
-    serverId: scope === 'server' ? props.serverId : undefined,
+    channelId: scope === 'channel' || !props.serverId ? props.channel.id : undefined,
+    serverId: scope === 'server' && props.serverId ? props.serverId : undefined,
     authorId: authorId || undefined,
     since: since || undefined,
     until: until || undefined,
@@ -83,7 +86,7 @@ function SearchPanel(props: SearchPanelProps): React.JSX.Element {
           type="search"
           className="text-input"
           autoFocus
-          placeholder={`Search ${scope === 'channel' ? `#${props.channel.name}` : 'this server'}`}
+          placeholder={`Search ${scope === 'channel' || !props.serverId ? props.label : 'this server'}`}
           value={query}
           maxLength={100}
           onChange={(e) => setQuery(e.target.value)}
@@ -102,15 +105,17 @@ function SearchPanel(props: SearchPanelProps): React.JSX.Element {
         </button>
       </header>
       <div className="search-filters">
-        <select
-          className="text-input"
-          value={scope}
-          onChange={(e) => setScope(e.target.value as 'channel' | 'server')}
-          aria-label="Where to search"
-        >
-          <option value="channel">This channel</option>
-          <option value="server">Whole server</option>
-        </select>
+        {props.serverId && (
+          <select
+            className="text-input"
+            value={scope}
+            onChange={(e) => setScope(e.target.value as 'channel' | 'server')}
+            aria-label="Where to search"
+          >
+            <option value="channel">This channel</option>
+            <option value="server">Whole server</option>
+          </select>
+        )}
         <select
           className="text-input"
           value={authorId}
@@ -168,7 +173,9 @@ function SearchPanel(props: SearchPanelProps): React.JSX.Element {
                   size={20}
                 />
                 <span className="search-result-author">{author.name}</span>
-                <span className="search-result-where">#{props.channelName(m.channelId)}</span>
+                <span className="search-result-where">
+                  {props.serverId ? `#${props.channelName(m.channelId)}` : props.label}
+                </span>
                 <time>{formatTimestamp(m.timestamp)}</time>
               </div>
               <div className="search-result-content">

@@ -13,9 +13,11 @@ import { ownCustomStatus } from './gateway.js'
 export async function publishToChannel(
   ctx: AppContext,
   channel: ChannelRecord,
-  frame: GatewayServerFrame
+  frame: GatewayServerFrame,
+  /** For events about one message: skip conversation members who can't see it (joined later). */
+  messageId?: string
 ): Promise<void> {
-  ctx.hub.sendToUsers(await ctx.access.channelViewers(channel), frame)
+  ctx.hub.sendToUsers(await ctx.access.channelViewers(channel, 0, messageId), frame)
 }
 
 /** Tells members (plus any extra users, e.g. someone just removed) to refetch a server. */
@@ -36,7 +38,8 @@ export async function toApiMe(ctx: AppContext, user: UserRecord): Promise<ApiMe>
     instanceAdmin: Boolean(user.instanceAdmin),
     hasPassword: withPassword.has(user.id),
     statusPreference: user.statusPreference ?? 'online',
-    ownCustomStatus: ownCustomStatus(user)
+    ownCustomStatus: ownCustomStatus(user),
+    allowServerDms: user.allowServerDms !== false
   }
 }
 

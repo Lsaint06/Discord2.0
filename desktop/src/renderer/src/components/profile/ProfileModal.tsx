@@ -1,3 +1,5 @@
+import RelationshipActions, { type RelationshipHandlers } from './RelationshipActions'
+import type { RelationshipType } from '../../net/protocol'
 import { useEffect, useState } from 'react'
 import { useDialog } from '../../hooks/useDialog'
 import type { User } from '../../types'
@@ -15,6 +17,8 @@ interface ProfileModalProps {
   onEditProfile: () => void
   onOpenServer: (serverId: string) => void
   onClose: () => void
+  /** Friend / message / block actions for other people (omitted for bots and yourself). */
+  relationship?: { type: RelationshipType | null; handlers: RelationshipHandlers }
 }
 
 /** Full profile: large banner and avatar, bio, account age and mutual servers. */
@@ -27,7 +31,8 @@ function ProfileModal({
   fetchProfile,
   onEditProfile,
   onOpenServer,
-  onClose
+  onClose,
+  relationship
 }: ProfileModalProps): React.JSX.Element {
   const [tab, setTab] = useState<'about' | 'servers'>('about')
   const [mutual, setMutual] = useState<{ userId: string; ids: string[] } | null>(null)
@@ -87,6 +92,14 @@ function ProfileModal({
                 Edit Profile
               </button>
             </div>
+          )}
+          {!isSelf && relationship && (
+            <RelationshipActions
+              name={user.name}
+              relationship={relationship.type}
+              handlers={relationship.handlers}
+              full
+            />
           )}
           {!isSelf && (
             <>

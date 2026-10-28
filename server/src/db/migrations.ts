@@ -332,5 +332,108 @@ export const sqliteMigrations: Migration[] = [
         updated_at INTEGER NOT NULL
       );
     `
+  },
+  {
+    // Milestone 10 (friends, blocks, direct and group conversations). Additive only.
+    // Conversations reuse the whole message stack (messages, attachments, reactions, pins,
+    // read states, search): each one is a row in `channels` under the reserved pseudo-server
+    // '@direct', which never has members — access to those channels is decided only by
+    // conversation_members (see access.ts). Nothing existing is copied or rewritten.
+    version: 5,
+    name: 'connections',
+    sql: `
+      -- Recipients may refuse DMs from people they only share a server with (friends always can).
+      ALTER TABLE users ADD COLUMN allow_server_dms INTEGER NOT NULL DEFAULT 1;
+
+      CREATE TABLE friend_requests (
+        from_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        to_user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at   INTEGER NOT NULL,
+        PRIMARY KEY (from_user_id, to_user_id),
+        CHECK (from_user_id <> to_user_id)
+      );
+      CREATE INDEX friend_requests_to_idx ON friend_requests(to_user_id);
+
+      -- One row per friendship, stored with user_a < user_b so a pair can exist only once.
+      CREATE TABLE friendships (
+        user_a     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_b     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (user_a, user_b),
+        CHECK (user_a < user_b)
+      );
+      CREATE INDEX friendships_b_idx ON friendships(user_b);
+
+      CREATE TABLE user_blocks (
+        blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (blocker_id, blocked_id),
+        CHECK (blocker_id <> blocked_id)
+      );
+      CREATE INDEX user_blocks_blocked_idx ON user_blocks(blocked_id);
+
+      -- Reserved container for conversation channels. Never has members or an owner and is
+      -- excluded from every server listing.
+      INSERT OR IGNORE INTO servers (id, name, color, owner_id, position, created_at)
+        VALUES ('@direct', 'Direct Messages', '#000000', NULL, -1, 0);
+
+      -- Security guard, enforced by SQLite itself so it also holds for older server versions
+      -- (a code-only rollback): nobody can ever become a member or owner of the container.
+      -- Older code that joins "every server" (development sign-in) or claims unowned servers
+      -- (create-admin --own-unowned-servers) is silently ignored for it instead of gaining
+      -- access to every private conversation.
+      DELETE FROM server_members WHERE server_id = '@direct';
+      CREATE TRIGGER direct_no_members_insert BEFORE INSERT ON server_members
+        WHEN NEW.server_id = '@direct' BEGIN SELECT RAISE(IGNORE); END;
+      CREATE TRIGGER direct_no_members_update BEFORE UPDATE OF server_id ON server_members
+        WHEN NEW.server_id = '@direct' BEGIN SELECT RAISE(IGNORE); END;
+      CREATE TRIGGER direct_no_owner BEFORE UPDATE OF owner_id ON servers
+        WHEN NEW.id = '@direct' AND NEW.owner_id IS NOT NULL BEGIN SELECT RAISE(IGNORE); END;
+      CREATE TRIGGER direct_no_invites BEFORE INSERT ON server_invites
+        WHEN NEW.server_id = '@direct' BEGIN SELECT RAISE(IGNORE); END;
+      CREATE TRIGGER direct_not_deleted BEFORE DELETE ON servers
+        WHEN OLD.id = '@direct' BEGIN SELECT RAISE(ABORT, 'the conversation container cannot be deleted'); END;
+
+      CREATE TABLE conversations (
+        channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL CHECK (kind IN ('dm', 'group')),
+        -- 'userA:userB' (sorted) for one-to-one conversations: one canonical DM per pair.
+        dm_key     TEXT UNIQUE,
+        name       TEXT,
+        owner_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at INTEGER NOT NULL,
+        CHECK ((kind = 'dm') = (dm_key IS NOT NULL))
+      );
+
+      -- Current members only (leaving or removal deletes the row). history_from is the newest
+      -- message id that existed when the member joined: they can see only later messages.
+      CREATE TABLE conversation_members (
+        channel_id   TEXT NOT NULL REFERENCES conversations(channel_id) ON DELETE CASCADE,
+        user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        joined_at    INTEGER NOT NULL,
+        history_from INTEGER NOT NULL DEFAULT 0,
+        -- Hidden from this member's list until the next message arrives.
+        closed       INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (channel_id, user_id)
+      );
+      CREATE INDEX conversation_members_user_idx ON conversation_members(user_id);
+
+      -- Membership history of group conversations (who added/removed/left, renames).
+      CREATE TABLE conversation_events (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id     TEXT NOT NULL REFERENCES conversations(channel_id) ON DELETE CASCADE,
+        at             INTEGER NOT NULL,
+        actor_id       TEXT REFERENCES users(id) ON DELETE SET NULL,
+        action         TEXT NOT NULL,
+        target_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        detail         TEXT
+      );
+      CREATE INDEX conversation_events_channel_idx ON conversation_events(channel_id, id);
+    `
   }
 ]
+
+/** Reserved pseudo-server that owns every conversation channel (see migration 5). */
+export const DIRECT_SERVER_ID = '@direct'

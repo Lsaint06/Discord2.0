@@ -55,6 +55,14 @@ export interface AppContext {
     /** Profile lookups (popouts) and profile image downloads. */
     profileReadsPerUser: TokenBucketLimiter
     voiceTokensPerUser: TokenBucketLimiter
+    /** Friend requests by username (also limits probing which usernames exist). */
+    friendRequestsPerUser: TokenBucketLimiter
+    /** Accept, decline, remove, block, unblock, privacy changes. */
+    relationshipsPerUser: TokenBucketLimiter
+    /** Opening DMs and creating groups. */
+    conversationsPerUser: TokenBucketLimiter
+    /** Adding/removing members, renaming, leaving. */
+    groupChangesPerUser: TokenBucketLimiter
   }
 }
 
@@ -89,6 +97,11 @@ export function createLimiters(): AppContext['limiters'] {
     // Opening popouts and loading avatars for a whole member list: generous.
     profileReadsPerUser: new TokenBucketLimiter(300, 20),
     // Joins, channel switches and reconnects: generous burst, ~1 per 3 s sustained.
-    voiceTokensPerUser: new TokenBucketLimiter(10, 1 / 3)
+    voiceTokensPerUser: new TokenBucketLimiter(10, 1 / 3),
+    // 10 requests, then one a minute.
+    friendRequestsPerUser: new TokenBucketLimiter(10, 1 / 60),
+    relationshipsPerUser: new TokenBucketLimiter(30, 0.5),
+    conversationsPerUser: new TokenBucketLimiter(20, 0.5),
+    groupChangesPerUser: new TokenBucketLimiter(20, 0.5)
   }
 }

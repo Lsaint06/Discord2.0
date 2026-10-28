@@ -3,10 +3,28 @@
  * "may this user do X here?". Every route, gateway broadcast, attachment download and LiveKit
  * grant goes through it. Non-members get "not found" (no probing of other servers' ids).
  */
-import type { ChannelRecord, Repository, ServerRecord, UserRecord } from './db/repository.js'
+import type {
+  ChannelRecord,
+  ConversationMemberRecord,
+  ConversationRecord,
+  Repository,
+  ServerRecord,
+  UserRecord
+} from './db/repository.js'
+import { DIRECT_SERVER_ID } from './db/migrations.js'
 import { forbidden, notFound } from './lib/errors.js'
 import { channelPermissions, has, rolePermissions } from './lib/permissions.js'
-import type { ServerRole } from './protocol.js'
+import { Permissions, type ServerRole } from './protocol.js'
+
+/** What members of a conversation may do: chat, attach, react and pin. Nobody moderates. */
+export const CONVERSATION_PERMISSIONS =
+  Permissions.viewChannel |
+  Permissions.sendMessages |
+  Permissions.attachFiles |
+  Permissions.addReactions |
+  Permissions.pinMessages
+
+export type DmBlockReason = 'blocked' | 'not_allowed' | 'unavailable'
 
 export interface ServerAccess {
   server: ServerRecord
@@ -15,10 +33,18 @@ export interface ServerAccess {
   permissions: number
 }
 
-export interface ChannelAccess extends ServerAccess {
+export interface ChannelAccess {
   channel: ChannelRecord
   /** Effective permissions in this channel (0 if it can't be viewed). */
   channelPermissions: number
+  /**
+   * History floor: the user sees only messages with a larger id. '0' for server channels;
+   * for conversation members who were added later, the newest message id when they joined.
+   */
+  historyFrom: string
+  /** Set for direct and group conversations (which have no server). */
+  conversation: ConversationRecord | null
+  member: ConversationMemberRecord | null
 }
 
 export interface VisibleServer extends ServerAccess {
@@ -42,15 +68,58 @@ export class AccessService {
   async channel(user: UserRecord, channelId: string): Promise<ChannelAccess | null> {
     const channel = await this.repo.getChannel(channelId)
     if (!channel) return null
+    // Conversations are authorized by conversation membership only — never by a server role.
+    if (channel.serverId === DIRECT_SERVER_ID) return this.conversationChannel(user, channel)
     const access = await this.server(user, channel.serverId)
     if (!access) return null
     const overrides = (await this.repo.overridesForChannels([channel.id])).get(channel.id) ?? []
     const configured = (await this.repo.getRolePermissions([channel.serverId])).get(channel.serverId) ?? {}
     return {
-      ...access,
       channel,
-      channelPermissions: channelPermissions(access.role, configured, overrides)
+      channelPermissions: channelPermissions(access.role, configured, overrides),
+      historyFrom: '0',
+      conversation: null,
+      member: null
     }
+  }
+
+  private async conversationChannel(user: UserRecord, channel: ChannelRecord): Promise<ChannelAccess | null> {
+    if (user.bot) return null
+    const [conversation, member] = await Promise.all([
+      this.repo.getConversation(channel.id),
+      this.repo.getConversationMember(channel.id, user.id)
+    ])
+    if (!conversation || !member) return null
+    let perms = CONVERSATION_PERMISSIONS
+    if (conversation.kind === 'dm') {
+      const otherId = await this.dmPartner(conversation, user.id)
+      // History stays readable, but nothing new can be posted while sending isn't allowed.
+      if (!otherId || (await this.dmBlockReason(user.id, otherId)) !== null) perms = Permissions.viewChannel
+    }
+    return { channel, channelPermissions: perms, historyFrom: member.historyFrom, conversation, member }
+  }
+
+  /** The other participant of a one-to-one conversation (from its canonical key). */
+  async dmPartner(conversation: ConversationRecord, userId: string): Promise<string | null> {
+    if (conversation.kind !== 'dm' || !conversation.dmKey) return null
+    const [a, b] = conversation.dmKey.split(':')
+    if (a === userId) return b ?? null
+    if (b === userId) return a ?? null
+    return null
+  }
+
+  /**
+   * Why senderId may not send a direct message to ecipientId right now, or null if they may:
+   * no block in either direction, and either friends or sharing a server with a recipient who
+   * accepts DMs from server members.
+   */
+  async dmBlockReason(senderId: string, recipientId: string): Promise<DmBlockReason | null> {
+    const recipient = await this.repo.getUser(recipientId)
+    if (!recipient || recipient.bot || recipient.disabledAt) return 'unavailable'
+    if (await this.repo.isBlockedEither(senderId, recipientId)) return 'blocked'
+    if (await this.repo.areFriends(senderId, recipientId)) return null
+    if (recipient.allowServerDms !== false && (await this.repo.shareServer(senderId, recipientId))) return null
+    return 'not_allowed'
   }
 
   /** Throws 404 unless the user is a member who can view the channel, 403 if `bits` are missing. */
@@ -109,6 +178,12 @@ export class AccessService {
     return out
   }
 
+  /** Ids of every conversation channel the user currently belongs to. */
+  async conversationChannelIds(user: UserRecord): Promise<string[]> {
+    if (user.bot) return []
+    return this.repo.conversationChannelIds(user.id)
+  }
+
   /** Ids of channels (optionally of one server) where the user has View Channel. */
   async viewableChannelIds(user: UserRecord, serverId?: string, type?: 'text' | 'voice'): Promise<string[]> {
     const servers = await this.visibleServers(user)
@@ -119,8 +194,18 @@ export class AccessService {
       .map((c) => c.channel.id)
   }
 
-  /** Everyone who can see a channel right now (recipients of its realtime events). */
-  async channelViewers(channel: ChannelRecord, bits = 0): Promise<Set<string>> {
+  /**
+   * Everyone who can see a channel right now (recipients of its realtime events). For events
+   * about one message, pass its id: conversation members who joined after it are excluded.
+   */
+  async channelViewers(channel: ChannelRecord, bits = 0, messageId?: string): Promise<Set<string>> {
+    if (channel.serverId === DIRECT_SERVER_ID) {
+      const members = await this.repo.listConversationMembers(channel.id)
+      const id = messageId === undefined ? null : BigInt(messageId)
+      return new Set(
+        members.filter((m) => id === null || BigInt(m.historyFrom) < id).map((m) => m.userId)
+      )
+    }
     const [members, configured, overrides] = await Promise.all([
       this.repo.listMembers(channel.serverId),
       this.repo.getRolePermissions([channel.serverId]),
@@ -142,6 +227,6 @@ export class AccessService {
 
   /** People who share at least one server with the user (and the user themself). */
   async presenceAudienceOf(userId: string): Promise<Set<string>> {
-    return this.repo.usersSharingServers(userId)
+    return this.repo.presenceAudience(userId)
   }
 }

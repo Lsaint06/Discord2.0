@@ -1,3 +1,5 @@
+import RelationshipActions, { type RelationshipHandlers } from './RelationshipActions'
+import type { RelationshipType } from '../../net/protocol'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { User } from '../../types'
 import type { ApiCustomStatus } from '../../net/protocol'
@@ -16,6 +18,8 @@ interface ProfilePopoutProps {
   onViewProfile: () => void
   onEditProfile: () => void
   onClose: () => void
+  /** Friend / message / block actions for other people (omitted for bots and yourself). */
+  relationship?: { type: RelationshipType | null; handlers: RelationshipHandlers }
 }
 
 /** Small profile card next to the clicked avatar or name. */
@@ -27,7 +31,8 @@ function ProfilePopout({
   selfCustomStatus,
   onViewProfile,
   onEditProfile,
-  onClose
+  onClose,
+  relationship
 }: ProfilePopoutProps): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
@@ -84,6 +89,13 @@ function ProfilePopout({
         role={role}
         customStatus={isSelf ? selfCustomStatus : undefined}
       >
+        {relationship && !isSelf && (
+          <RelationshipActions
+            name={user.name}
+            relationship={relationship.type}
+            handlers={relationship.handlers}
+          />
+        )}
         <div className="profile-card-actions">
           {isSelf && (
             <button type="button" className="button secondary small" onClick={onEditProfile}>

@@ -6,9 +6,14 @@ A self-hosted, Discord-inspired chat app for friends: an **Electron + React + Ty
 | --- | --- |
 | [`desktop/`](desktop/) | Electron desktop client |
 | [`server/`](server/) | Backend API + real-time gateway + Docker Compose (backend + LiveKit) ([server README](server/README.md)) |
-| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md), [profiles & presence](docs/milestone-8-identity.md), [sounds & interaction polish](docs/milestone-9-atmosphere.md) and [remote access options](docs/remote-access-options.md) |
+| [`docs/`](docs/) | Design notes, the [Jetson voice deployment guide](docs/voice-deployment-jetson.md), the [screen sharing guide](docs/screen-sharing-jetson.md), [screen sharing performance](docs/screen-sharing-performance.md), [Messaging 2.0](docs/messaging-2-jetson.md), [accounts & security](docs/milestone-7-security.md), [profiles & presence](docs/milestone-8-identity.md), [sounds & interaction polish](docs/milestone-9-atmosphere.md), [friends & direct messages](docs/milestone-10-connections.md) and [remote access options](docs/remote-access-options.md) |
 
-**Status — Milestone 9 (Project Atmosphere: sound and interaction polish):**
+**Status — Milestone 10 (Project Connections: friends, blocking, direct and group messages):**
+- **Friends:** add people by exact username, accept/decline/cancel, remove. **Blocking** is silent and hides presence both ways.
+- **Direct messages and groups (3–10 people):** every Messaging 2.0 feature works in them. People added to a group later see only new messages. Privacy setting for DMs from server members. Not end-to-end encrypted.
+- **Server:** additive migration v5, `apiVersion: 4`. Details: [docs/milestone-10-connections.md](docs/milestone-10-connections.md).
+
+**Previously — Milestone 9 (Project Atmosphere: sound and interaction polish):**
 - **Sounds:** an original, synthesized sound palette (messages, mentions, voice joins/leaves, connect/disconnect, mute/deafen) with a master switch, volume, per-sound toggles and previews in Settings → Sounds. Respects Do Not Disturb, muted channels and your own messages; never plays twice for the same message.
 - **Mentions:** `@username`, `@display name` (multi-word) and `@everyone` are detected by one shared rule for highlighting, notifications and sounds.
 - **Polish and accessibility:** keyboard-safe dialogs (focus stays inside, Escape closes, focus returns), consistent pressed/hover/focus states, smoother voice indicators, and a fixed "Allow all animations" / reduced-motion setting.
@@ -97,6 +102,15 @@ Architecture, limits, storage, backup/restore, rollback and the full two-PC chec
 - **Appearance:** Settings → Appearance (theme, accent, message display, timestamps, animations, idle timeout) follows your account to every PC; the chat font size is per PC.
 
 Details, security, migration, deployment and the two-PC checklist: [docs/milestone-8-identity.md](docs/milestone-8-identity.md).
+
+## Friends and direct messages (Milestone 10)
+
+- **Home:** click the logo at the top of the server column. **Friends** → *Add Friend* (exact username), *Pending* to accept or decline, *Blocked* to unblock.
+- **Message someone:** the chat-bubble button on the Friends page, or **Message** on their profile. The **+** next to *Direct Messages* creates a group from your friends. In a group, the members panel lets you rename it, add friends, remove people (owner) or leave.
+- **Privacy:** Settings → Privacy & Safety: allow or refuse DMs from people you only share a server with; your blocked list.
+- **Upgrade:** back up, then rebuild the server (migration v5 runs automatically). Database guards keep private conversations unreachable even if older server code is run against the upgraded database; restoring the backup remains the cleanest rollback. Update every PC's app together with the server.
+
+Rules, privacy model, migration, deployment, rollback and the two-PC checklist: [docs/milestone-10-connections.md](docs/milestone-10-connections.md).
 
 ## Sounds and accessibility (Milestone 9)
 

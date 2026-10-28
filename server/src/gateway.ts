@@ -59,6 +59,8 @@ export interface GatewayDeps {
   getUser: (id: string) => Promise<UserRecord | undefined>
   /** Persists the user's chosen status (synced across their devices); returns the updated user. */
   setStatusPreference: (userId: string, status: SelectableStatus) => Promise<UserRecord | undefined>
+  /** Users with a block in either direction (shown without presence). Optional for tests. */
+  blockedEither?: (userId: string) => Promise<Set<string>>
 }
 
 const DEFAULTS: GatewayOptions = {
@@ -137,6 +139,16 @@ export class GatewayHub {
       createdAt: user.createdAt,
       customStatus: this.customStatusOf(user)
     }
+  }
+
+  /** How someone with a block between you and them appears: no presence, no custom status. */
+  maskedApiUser(user: UserRecord): ApiUser {
+    return { ...this.toApiUser(user), status: 'offline', customStatus: null }
+  }
+
+  /** The user as seen by someone whose blocked set is `blocked`: masked if there is a block. */
+  apiUserFor(user: UserRecord, blocked: ReadonlySet<string>): ApiUser {
+    return blocked.has(user.id) ? this.maskedApiUser(user) : this.toApiUser(user)
   }
 
   isOnline(userId: string): boolean {
@@ -265,14 +277,15 @@ export class GatewayHub {
         conn.sessionExpiresAt = session.expiresAt
         conn.idle = d?.idle === true
         conn.identifying = false
-        const [me, users, voiceStates] = await Promise.all([
+        const [me, users, voiceStates, blocked] = await Promise.all([
           this.deps.me(user),
           this.deps.visibleUsers(user),
-          this.deps.voiceStates(user)
+          this.deps.voiceStates(user),
+          this.deps.blockedEither ? this.deps.blockedEither(user.id) : Promise.resolve(new Set<string>())
         ])
         this.send(conn, {
           op: 'ready',
-          d: { user: me, users: users.map((u) => this.toApiUser(u)), voiceStates }
+          d: { user: me, users: users.map((u) => this.apiUserFor(u, blocked)), voiceStates }
         })
         await this.publishPresenceIfChanged(user)
         this.log.info({ conn: conn.id, user: user.username, session: session.id }, 'gateway identified')
