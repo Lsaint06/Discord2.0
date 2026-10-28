@@ -1,18 +1,37 @@
-import { useEffect, useImperativeHandle, useReducer, useRef, useState, type Ref } from 'react'
+import {
+  useContext,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Ref
+} from 'react'
 import type { Channel, Message } from '../../types'
-import { LIMITS, type ApiAttachment } from '../../net/protocol'
-import { UploadAbortedError } from '../../net/api'
+import { LIMITS, type ApiAttachment, type ApiGif } from '../../net/protocol'
+import type { ApiClient, LargeFileSupport } from '../../net/api'
+import { expiryNote } from '../../chat/largeUpload'
+import { UploadContext } from '../../chat/uploadContext'
 import {
   UPLOAD_ACCEPT,
   filesFromTransfer,
   formatBytes,
   nameForPastedFile,
   planUploads,
-  uploadsReady,
-  uploadsReducer
+  uploadsReady
 } from '../../chat/uploads'
 import { CloseIcon, PlusIcon, SendIcon, SmileIcon } from '../Icons'
 import EmojiPicker from './EmojiPicker'
+import GifPicker from './GifPicker'
+import {
+  completeEmojiShortcode,
+  emojiName,
+  findEmojiQuery,
+  insertEmojiAt,
+  suggestEmoji,
+  type EmojiQuery
+} from '../../chat/emojiAutocomplete'
 
 const MAX_LENGTH = LIMITS.messageMaxLength
 
@@ -24,14 +43,6 @@ interface ComposerProps {
   replyAuthorName?: string
   onCancelReply: () => void
   onSend: (input: { content: string; attachments: ApiAttachment[] }) => void
-  upload: (
-    file: Blob,
-    filename: string,
-    onProgress: (fraction: number) => void,
-    signal: AbortSignal
-  ) => Promise<ApiAttachment>
-  deleteAttachment: (attachmentId: string) => void
-  describeError: (err: unknown) => string
   recentEmoji: string[]
   onEmojiUsed: (emoji: string) => void
   /** Up-arrow in an empty composer edits your last message. */
@@ -45,6 +56,12 @@ interface ComposerProps {
   canAttach?: boolean
   /** Who/where you're writing to ("#general", "@Ana", a group name). Defaults to the channel. */
   targetLabel?: string
+  /** GIF picker: the API client (the server proxies the provider); absent = no GIF button. */
+  gifApi?: ApiClient
+  /** Sends a GIF the picker returned (as its own message). */
+  onSendGif?: (gif: ApiGif) => void
+  /** The server accepts large files (chunked uploads up to `maxBytes`). */
+  largeFiles?: LargeFileSupport | null
 }
 
 export interface ComposerHandle {
@@ -57,23 +74,21 @@ const nextKey = (): string => `u${Date.now().toString(36)}-${(keySeq++).toString
 function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
   const { channel, draft, onDraftChange } = props
   const target = props.targetLabel ?? `#${channel.name}`
-  const [uploads, dispatch] = useReducer(uploadsReducer, [])
+  // Uploads belong to the workspace (they keep going when you switch channels); this box shows
+  // and sends the ones for its own channel.
+  const manager = useContext(UploadContext)
+  if (!manager) throw new Error('Composer needs an UploadContext')
+  const uploads = useSyncExternalStore(manager.subscribe, () => manager.tray(channel.id))
   const [notice, setNotice] = useState<string | null>(null)
   const [emojiOpen, setEmojiOpen] = useState(false)
+  const [gifOpen, setGifOpen] = useState(false)
+  // ":name" autocomplete (null = not typing an emoji name).
+  const [emojiQuery, setEmojiQuery] = useState<EmojiQuery | null>(null)
+  const [suggestIndex, setSuggestIndex] = useState(0)
+  const suggestions = emojiQuery && !props.disabled ? suggestEmoji(emojiQuery.query) : []
+  const ids = useId()
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  // Per upload: controller (to cancel), the stored attachment, local preview URL, source file.
-  const controllers = useRef(new Map<string, AbortController>())
-  const stored = useRef(new Map<string, ApiAttachment>())
-  const [previews, setPreviews] = useState<Record<string, string>>({})
-  const sources = useRef(new Map<string, File>())
-  const sentRef = useRef(false)
-  const uploadRef = useRef(props.upload)
-  const deleteRef = useRef(props.deleteAttachment)
-  useEffect(() => {
-    uploadRef.current = props.upload
-    deleteRef.current = props.deleteAttachment
-  }, [props.upload, props.deleteAttachment])
 
   const resize = (): void => {
     const el = inputRef.current
@@ -84,53 +99,16 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
 
   useEffect(() => {
     resize()
-    inputRef.current?.focus()
+    const el = inputRef.current
+    if (!el) return
+    el.focus()
+    // Continue a saved draft where it ends, not in front of it.
+    el.setSelectionRange(el.value.length, el.value.length)
   }, [channel.id])
 
   useEffect(() => {
     if (props.replyTo) inputRef.current?.focus()
   }, [props.replyTo])
-
-  // Leaving the channel (unmount): cancel running uploads and delete unsent ones.
-  useEffect(() => {
-    const ctrls = controllers.current
-    const done = stored.current
-    const sent = sentRef
-    return () => {
-      for (const c of ctrls.values()) c.abort()
-      if (!sent.current) for (const a of done.values()) deleteRef.current(a.id)
-    }
-  }, [])
-  useEffect(
-    () => () => {
-      for (const url of Object.values(previews)) URL.revokeObjectURL(url)
-    },
-    // Revoke whatever previews exist at unmount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
-  )
-
-  const start = (key: string, file: File, name: string): void => {
-    const controller = new AbortController()
-    controllers.current.set(key, controller)
-    uploadRef
-      .current(
-        file,
-        name,
-        (p) => dispatch({ type: 'progress', key, progress: p }),
-        controller.signal
-      )
-      .then((attachment) => {
-        controllers.current.delete(key)
-        stored.current.set(key, attachment)
-        dispatch({ type: 'done', key, attachmentId: attachment.id })
-      })
-      .catch((err: unknown) => {
-        controllers.current.delete(key)
-        if (err instanceof UploadAbortedError) return
-        dispatch({ type: 'error', key, error: props.describeError(err) })
-      })
-  }
 
   const addFiles = (files: File[]): void => {
     if (files.length === 0) return
@@ -146,50 +124,28 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
         type: source.type,
         source
       })),
-      nextKey
+      nextKey,
+      props.largeFiles?.maxBytes
     )
-    setNotice(rejected.length ? rejected.join(' · ') : null)
+    // Large files that will be deleted after a while: say so up front.
+    const large = props.largeFiles
+    const expiring = large
+      ? accepted
+          .map((a) => expiryNote(a.file.size, large.ephemeralThresholdBytes, large.ephemeralMs))
+          .find(Boolean)
+      : null
+    setNotice([...rejected, ...(expiring ? [expiring] : [])].join(' · ') || null)
     if (accepted.length === 0) return
-    dispatch({ type: 'add', items: accepted.map((a) => a.item) })
-    const newPreviews: Record<string, string> = {}
-    for (const { file, item } of accepted) {
-      sources.current.set(item.key, file.source)
-      if (item.isImage) newPreviews[item.key] = URL.createObjectURL(file.source)
-      start(item.key, file.source, item.name)
-    }
-    setPreviews((prev) => ({ ...prev, ...newPreviews }))
+    manager.add(
+      channel.id,
+      accepted.map(({ file, item }) => ({ source: file.source, item }))
+    )
   }
   // Latest addFiles for drag & drop (ChatPanel calls it through the ref handle).
   useImperativeHandle(ref, () => ({ addFiles }))
 
-  const remove = (key: string): void => {
-    controllers.current.get(key)?.abort()
-    controllers.current.delete(key)
-    const attachment = stored.current.get(key)
-    if (attachment) props.deleteAttachment(attachment.id)
-    stored.current.delete(key)
-    sources.current.delete(key)
-    const url = previews[key]
-    if (url) URL.revokeObjectURL(url)
-    setPreviews((prev) => {
-      const next = { ...prev }
-      delete next[key]
-      return next
-    })
-    dispatch({ type: 'remove', key })
-  }
-
-  const retry = (key: string): void => {
-    const item = uploads.find((u) => u.key === key)
-    const source = sources.current.get(key)
-    if (!item || !source) return
-    dispatch({ type: 'remove', key })
-    dispatch({
-      type: 'add',
-      items: [{ ...item, status: 'uploading', progress: 0, error: undefined }]
-    })
-    start(key, source, item.name)
-  }
+  const remove = (key: string): void => manager.remove(channel.id, key)
+  const retry = (key: string): void => manager.retry(channel.id, key)
 
   const ready = uploadsReady(uploads)
   const content = draft.trim()
@@ -197,15 +153,9 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
 
   const send = (): void => {
     if (!canSend) return
-    const attachments = uploads
-      .map((u) => stored.current.get(u.key))
-      .filter((a): a is ApiAttachment => Boolean(a))
+    const attachments = manager.take(channel.id)
+    if (!attachments) return
     props.onSend({ content, attachments })
-    for (const url of Object.values(previews)) URL.revokeObjectURL(url)
-    stored.current.clear()
-    sources.current.clear()
-    setPreviews({})
-    dispatch({ type: 'clear' })
     onDraftChange('')
     setEmojiOpen(false)
     setNotice(null)
@@ -225,6 +175,28 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
       el.setSelectionRange(caret, caret)
       resize()
     })
+  }
+
+  /** Moves the caret after React has applied the new draft. */
+  const placeCaret = (caret: number): void => {
+    requestAnimationFrame(() => {
+      const el = inputRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(caret, caret)
+      resize()
+    })
+  }
+
+  const applySuggestion = (emoji: string): void => {
+    const el = inputRef.current
+    if (!emojiQuery) return
+    const caret = el?.selectionStart ?? draft.length
+    const next = insertEmojiAt(draft, emojiQuery.start, caret, emoji, MAX_LENGTH)
+    onDraftChange(next.text)
+    props.onEmojiUsed(emoji)
+    setEmojiQuery(null)
+    placeCaret(next.caret)
   }
 
   const uploading = uploads.some((u) => u.status === 'uploading')
@@ -256,52 +228,55 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
 
       {uploads.length > 0 && (
         <ul className="upload-tray" aria-label="Attachments to send">
-          {uploads.map((u) => (
-            <li key={u.key} className={`upload-item ${u.status}`}>
-              <div className="upload-thumb">
-                {previews[u.key] ? (
-                  <img src={previews[u.key]} alt="" />
-                ) : (
-                  <span>{u.name.split('.').pop()?.toUpperCase()}</span>
+          {uploads.map((u) => {
+            const preview = manager.preview(u.key)
+            return (
+              <li key={u.key} className={`upload-item ${u.status}`}>
+                <div className="upload-thumb">
+                  {preview ? (
+                    <img src={preview} alt="" />
+                  ) : (
+                    <span>{u.name.split('.').pop()?.toUpperCase()}</span>
+                  )}
+                </div>
+                <span className="upload-name" title={u.name}>
+                  {u.name}
+                </span>
+                <span className="upload-meta">
+                  {u.status === 'error' ? (
+                    <span className="upload-error" role="alert">
+                      {u.error}
+                    </span>
+                  ) : u.status === 'uploading' ? (
+                    `${Math.round(u.progress * 100)}% · ${formatBytes(u.size)}`
+                  ) : (
+                    formatBytes(u.size)
+                  )}
+                </span>
+                {u.status === 'uploading' && (
+                  <progress max={1} value={u.progress} aria-label={`Uploading ${u.name}`} />
                 )}
-              </div>
-              <span className="upload-name" title={u.name}>
-                {u.name}
-              </span>
-              <span className="upload-meta">
-                {u.status === 'error' ? (
-                  <span className="upload-error" role="alert">
-                    {u.error}
-                  </span>
-                ) : u.status === 'uploading' ? (
-                  `${Math.round(u.progress * 100)}% · ${formatBytes(u.size)}`
-                ) : (
-                  formatBytes(u.size)
-                )}
-              </span>
-              {u.status === 'uploading' && (
-                <progress max={1} value={u.progress} aria-label={`Uploading ${u.name}`} />
-              )}
-              <div className="upload-actions">
-                {u.status === 'error' && (
-                  <button type="button" className="link-button" onClick={() => retry(u.key)}>
-                    Retry
+                <div className="upload-actions">
+                  {u.status === 'error' && (
+                    <button type="button" className="link-button" onClick={() => retry(u.key)}>
+                      Retry
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="icon-button small"
+                    onClick={() => remove(u.key)}
+                    aria-label={
+                      u.status === 'uploading' ? `Cancel upload of ${u.name}` : `Remove ${u.name}`
+                    }
+                    title={u.status === 'uploading' ? 'Cancel upload' : 'Remove'}
+                  >
+                    <CloseIcon size={14} />
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="icon-button small"
-                  onClick={() => remove(u.key)}
-                  aria-label={
-                    u.status === 'uploading' ? `Cancel upload of ${u.name}` : `Remove ${u.name}`
-                  }
-                  title={u.status === 'uploading' ? 'Cancel upload' : 'Remove'}
-                >
-                  <CloseIcon size={14} />
-                </button>
-              </div>
-            </li>
-          ))}
+                </div>
+              </li>
+            )
+          })}
         </ul>
       )}
 
@@ -349,9 +324,34 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
           aria-label={`Message ${target}`}
           disabled={props.disabled}
           onChange={(e) => {
-            onDraftChange(e.target.value)
+            const value = e.target.value
+            const caret = e.target.selectionStart ?? value.length
+            // ":name:" typed in full becomes the emoji right away.
+            const done = completeEmojiShortcode(value, caret, MAX_LENGTH)
+            if (done) {
+              onDraftChange(done.text)
+              props.onEmojiUsed(done.emoji)
+              setEmojiQuery(null)
+              placeCaret(done.caret)
+            } else {
+              onDraftChange(value)
+              setEmojiQuery(findEmojiQuery(value, caret))
+              setSuggestIndex(0)
+            }
             resize()
           }}
+          onSelect={(e) => {
+            const el = e.currentTarget
+            if (el.selectionStart !== el.selectionEnd) setEmojiQuery(null)
+          }}
+          onBlur={() => setEmojiQuery(null)}
+          aria-autocomplete="list"
+          aria-controls={suggestions.length ? `${ids}-emoji-suggest` : undefined}
+          aria-activedescendant={
+            suggestions.length
+              ? `${ids}-emoji-${Math.min(suggestIndex, suggestions.length - 1)}`
+              : undefined
+          }
           onPaste={(e) => {
             const files = filesFromTransfer(e.clipboardData)
             if (files.length > 0) {
@@ -360,26 +360,68 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
             }
           }}
           onKeyDown={(e) => {
+            const plain = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+            if (suggestions.length > 0 && !e.nativeEvent.isComposing) {
+              const current = Math.min(suggestIndex, suggestions.length - 1)
+              if (plain && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                e.preventDefault()
+                const step = e.key === 'ArrowDown' ? 1 : -1
+                setSuggestIndex((current + step + suggestions.length) % suggestions.length)
+                return
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault()
+                applySuggestion(suggestions[current]!.emoji)
+                return
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                setEmojiQuery(null)
+                return
+              }
+            }
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
               send()
             } else if (e.key === 'Escape') {
               if (emojiOpen) setEmojiOpen(false)
               else if (props.replyTo) props.onCancelReply()
-            } else if (e.key === 'ArrowUp' && draft.length === 0 && uploads.length === 0) {
+            } else if (plain && e.key === 'ArrowUp' && draft.length === 0 && uploads.length === 0) {
               e.preventDefault()
               props.onEditLast()
             }
           }}
         />
         <div className="composer-actions">
+          {props.gifApi && props.onSendGif && (
+            <button
+              type="button"
+              className={`icon-button gif-button${gifOpen ? ' selected' : ''}`}
+              onClick={() => {
+                setEmojiOpen(false)
+                setGifOpen((open) => !open)
+              }}
+              disabled={props.disabled}
+              aria-label="Send a GIF"
+              aria-expanded={gifOpen}
+              data-picker-toggle
+              title="GIF"
+            >
+              GIF
+            </button>
+          )}
           <button
             type="button"
             className={`icon-button${emojiOpen ? ' selected' : ''}`}
-            onClick={() => setEmojiOpen((open) => !open)}
+            onClick={() => {
+              setGifOpen(false)
+              setEmojiOpen((open) => !open)
+            }}
             aria-label="Insert emoji"
             aria-expanded={emojiOpen}
+            data-picker-toggle
             title="Emoji"
+            disabled={props.disabled}
           >
             <SmileIcon size={22} />
           </button>
@@ -404,14 +446,60 @@ function Composer({ ref, ...props }: ComposerProps): React.JSX.Element {
             recent={props.recentEmoji}
             onPick={insertEmoji}
             onClose={() => setEmojiOpen(false)}
+            onEscape={() => inputRef.current?.focus()}
           />
+        )}
+        {gifOpen && props.gifApi && props.onSendGif && (
+          <GifPicker
+            api={props.gifApi}
+            onPick={(gif) => {
+              setGifOpen(false)
+              props.onSendGif?.(gif)
+              inputRef.current?.focus()
+            }}
+            onClose={() => setGifOpen(false)}
+            onEscape={() => inputRef.current?.focus()}
+          />
+        )}
+        {suggestions.length > 0 && (
+          <ul
+            id={`${ids}-emoji-suggest`}
+            className="emoji-suggest"
+            role="listbox"
+            aria-label={`Emoji matching :${emojiQuery?.query ?? ''}`}
+          >
+            {suggestions.map((entry, i) => (
+              <li
+                key={entry.emoji}
+                id={`${ids}-emoji-${i}`}
+                role="option"
+                aria-selected={i === Math.min(suggestIndex, suggestions.length - 1)}
+                className={i === Math.min(suggestIndex, suggestions.length - 1) ? 'active' : ''}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  applySuggestion(entry.emoji)
+                }}
+              >
+                <span className="emoji-suggest-glyph" aria-hidden="true">
+                  {entry.emoji}
+                </span>
+                <span>:{emojiName(entry)}:</span>
+              </li>
+            ))}
+            <li className="emoji-suggest-hint" role="presentation">
+              <kbd>↑</kbd>
+              <kbd>↓</kbd> choose · <kbd>Enter</kbd>/<kbd>Tab</kbd> insert · <kbd>Esc</kbd> close
+            </li>
+          </ul>
         )}
       </div>
       <div className="composer-hint">
-        <span>
-          <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>↑</kbd> edit
-          last · paste or drop files to attach
-        </span>
+        {!props.disabled && (
+          <span>
+            <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>↑</kbd>{' '}
+            edit last · paste or drop files to attach
+          </span>
+        )}
         {draft.length > MAX_LENGTH - 200 && (
           <span className="composer-count">{MAX_LENGTH - draft.length}</span>
         )}

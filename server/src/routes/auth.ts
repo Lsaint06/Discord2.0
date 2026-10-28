@@ -13,7 +13,8 @@ import { createSession, requireAuth, toApiSession } from '../auth/sessions.js'
 import type { AppContext } from '../context.js'
 import type { UserRecord } from '../db/repository.js'
 import { ApiError, badRequest, notFound, tooManyRequests } from '../lib/errors.js'
-import { colorForName, normalizeDisplayName, normalizeUsername } from '../lib/validation.js'
+import { colorForName, normalizeDisplayName, normalizeEmail, normalizeUsername } from '../lib/validation.js'
+import { maskEmail } from '../mail/mailer.js'
 import { LIMITS, type ApiAuthResult, type ApiSession } from '../protocol.js'
 import { publishServerChanged, toApiMe } from '../realtime.js'
 import { disconnectUserFromVoice } from '../voice/enforce.js'
@@ -30,8 +31,23 @@ const accountDisabled = () =>
 // Raw limits are generous (normalization comes after); exact limits are enforced in code.
 const passwordField = { type: 'string', maxLength: LIMITS.passwordMaxLength * 4 } as const
 const usernameField = { type: 'string', maxLength: 64 } as const
+/** Username or email address. */
+const loginField = { type: 'string', maxLength: LIMITS.emailMaxLength + 2 } as const
 const deviceField = { type: 'string', maxLength: 128 } as const
 const codeField = { type: 'string', maxLength: 64 } as const
+
+/**
+ * The account a sign-in name refers to: an email address (contains "@") or a username.
+ * Anything malformed simply matches nobody.
+ */
+export async function findUserByLogin(ctx: AppContext, raw: unknown): Promise<UserRecord | undefined> {
+  try {
+    if (typeof raw === 'string' && raw.includes('@')) return await ctx.repo.findUserByEmail(normalizeEmail(raw))
+    return await ctx.repo.findUserByUsername(normalizeUsername(raw))
+  } catch {
+    return undefined
+  }
+}
 
 function take(limit: { take: (key: string) => { ok: boolean; retryAfterMs: number } }, key: string): void {
   const result = limit.take(key)
@@ -48,7 +64,7 @@ function newRecoveryCodes(): { codes: string[]; hashes: string[] } {
   return { codes, hashes }
 }
 
-async function hashPassword(ctx: AppContext, password: string): Promise<string> {
+export async function hashPassword(ctx: AppContext, password: string): Promise<string> {
   try {
     return await ctx.hasher.hash(password)
   } catch (err) {
@@ -57,7 +73,7 @@ async function hashPassword(ctx: AppContext, password: string): Promise<string> 
   }
 }
 
-async function authResult(
+export async function authResult(
   ctx: AppContext,
   user: UserRecord,
   request: FastifyRequest,
@@ -74,6 +90,10 @@ async function authResult(
 }
 
 export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void {
+  // Claim codes stay usable when registration is closed (they create no new account).
+  const registrationClosed = () =>
+    new ApiError(403, 'registration_closed', 'This server isn’t accepting new accounts right now.')
+
   // ---- Invitation details (before registering) ----
   app.post<{ Body: { code: string } }>(
     '/api/auth/invite-info',
@@ -89,6 +109,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
         canonical &&
         (await ctx.repo.findOpenRegistrationInvite(codeVerifier('register', canonical), Date.now()))
       if (!invite) throw invalidInvite()
+      if (invite.kind === 'register' && ctx.config.registration.mode === 'closed') throw registrationClosed()
       if (invite.kind === 'claim') {
         const target = invite.claimUserId ? await ctx.repo.getUser(invite.claimUserId) : undefined
         if (!target) throw invalidInvite()
@@ -129,6 +150,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
       // Validate the invitation before anything else (only invite holders learn about usernames).
       const invite = await ctx.repo.findOpenRegistrationInvite(codeHash, now)
       if (!invite) throw invalidInvite()
+      if (invite.kind === 'register' && ctx.config.registration.mode === 'closed') throw registrationClosed()
 
       let username: string
       let displayName: string | undefined
@@ -198,7 +220,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     }
   )
 
-  // ---- Sign in ----
+  // ---- Sign in (username, or the account's email address) ----
   app.post<{ Body: { username: string; password: string; device?: string } }>(
     '/api/auth/login',
     {
@@ -207,7 +229,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
           type: 'object',
           required: ['username', 'password'],
           additionalProperties: false,
-          properties: { username: usernameField, password: passwordField, device: deviceField }
+          properties: { username: loginField, password: passwordField, device: deviceField }
         }
       }
     },
@@ -216,12 +238,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
       take(ctx.limiters.loginPerAccount, accountKey(request.body.username))
       const password = normalizePassword(request.body.password)
 
-      let user: UserRecord | undefined
-      try {
-        user = await ctx.repo.findUserByUsername(normalizeUsername(request.body.username))
-      } catch {
-        user = undefined
-      }
+      const user = await findUserByLogin(ctx, request.body.username)
       const stored = user && !user.bot ? await ctx.repo.getPasswordHash(user.id) : undefined
 
       let ok = false
@@ -243,6 +260,15 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
         throw invalidCredentials()
       }
       if (user.disabledAt) throw accountDisabled()
+      // Correct password, but the address of a self-registered account isn't confirmed yet:
+      // the app continues with the code entry (resend is available there).
+      if (user.signupPending) {
+        throw new ApiError(
+          403,
+          'email_unverified',
+          `Confirm your email address first: enter the code we sent to ${maskEmail(user.email ?? '')}.`
+        )
+      }
       if (ctx.hasher.needsRehash(stored)) {
         await ctx.repo.setPasswordHash(user.id, await hashPassword(ctx, password), Date.now())
       }

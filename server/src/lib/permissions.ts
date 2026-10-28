@@ -17,7 +17,12 @@ export const MEMBER_DEFAULT =
   P.viewChannel | P.sendMessages | P.attachFiles | P.addReactions | P.connect | P.speak | P.stream
 
 export const MODERATOR_DEFAULT =
-  MEMBER_DEFAULT | P.manageMessages | P.pinMessages | P.createInvites | P.kickMembers
+  MEMBER_DEFAULT |
+  P.manageMessages |
+  P.pinMessages |
+  P.createInvites |
+  P.kickMembers |
+  P.moderateMembers
 
 export const ADMIN_DEFAULT =
   MODERATOR_DEFAULT |
@@ -87,6 +92,23 @@ export function channelPermissions(
 }
 
 export const has = (perms: number, bit: number): boolean => (perms & bit) === bit
+
+/** Whether a member's timeout is still running at `now`. */
+export const isTimedOut = (timeoutUntil: number | null | undefined, now = Date.now()): boolean =>
+  typeof timeoutUntil === 'number' && timeoutUntil > now
+
+/**
+ * A timed-out member keeps only View Channel: they can read, but not send, react, attach,
+ * join or speak in voice, stream, invite or moderate until the timeout ends. The owner can
+ * never be timed out (see canModerateMember), so this never applies to them.
+ */
+export function applyTimeout(
+  perms: number,
+  timeoutUntil: number | null | undefined,
+  now = Date.now()
+): number {
+  return isTimedOut(timeoutUntil, now) ? perms & P.viewChannel : perms
+}
 
 export const outranks = (actor: ServerRole, target: ServerRole): boolean =>
   ROLE_RANK[actor] > ROLE_RANK[target]

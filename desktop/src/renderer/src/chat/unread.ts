@@ -9,10 +9,42 @@ export interface ReadState {
   /** Unread messages from others (server count, then kept live from gateway events). */
   unreadCount: number
   lastMessageId: string | null
+  /**
+   * Unread messages that mention you (ids newer than lastReadId, oldest first). Found in real
+   * messages only: live ones, and the unread page fetched at start-up (see useBackend).
+   */
+  mentionIds?: string[]
 }
+
+/** Mention badges show "99+" beyond this; tracking more ids adds nothing. */
+export const MAX_TRACKED_MENTIONS = 100
 
 const newer = (a: string | null | undefined, b: string | null | undefined): boolean =>
   a != null && (b == null || Number(a) > Number(b))
+
+const keepNewer = (ids: string[] | undefined, lastReadId: string): string[] | undefined =>
+  ids && ids.filter((id) => newer(id, lastReadId))
+
+/** Unread mentions of you in this channel. */
+export function mentionCount(state: ReadState | undefined): number {
+  return state?.mentionIds?.length ?? 0
+}
+
+/** Adds mentions found by scanning unread messages (ignores read or duplicate ids). */
+export function withMentions(state: ReadState | undefined, ids: string[]): ReadState {
+  const base: ReadState = state ?? { lastReadId: null, unreadCount: 0, lastMessageId: null }
+  const merged = new Set(base.mentionIds ?? [])
+  for (const id of ids) if (newer(id, base.lastReadId)) merged.add(id)
+  if (merged.size === (base.mentionIds?.length ?? 0)) return base
+  const mentionIds = [...merged].sort((a, b) => Number(a) - Number(b)).slice(-MAX_TRACKED_MENTIONS)
+  return { ...base, mentionIds }
+}
+
+/** A mentioning message was deleted or edited so it no longer mentions you. */
+export function dropMention(state: ReadState | undefined, id: string): ReadState | undefined {
+  if (!state?.mentionIds?.includes(id)) return state
+  return { ...state, mentionIds: state.mentionIds.filter((m) => m !== id) }
+}
 
 /** Applies a read position (from our own ack or another session); never moves backwards. */
 export function applyReadPosition(
@@ -32,14 +64,15 @@ export function applyReadPosition(
         ).length
       : Math.max(1, base.unreadCount)
   }
-  return { ...base, lastReadId, unreadCount }
+  return { ...base, lastReadId, unreadCount, mentionIds: keepNewer(base.mentionIds, lastReadId) }
 }
 
-/** A new message arrived over the gateway. */
+/** A new message arrived over the gateway. `mentioned`: it mentions you (chat/mentions.ts). */
 export function applyIncoming(
   state: ReadState | undefined,
   message: { id: string; authorId: string },
-  meId: string | undefined
+  meId: string | undefined,
+  mentioned = false
 ): ReadState {
   const base: ReadState = state ?? { lastReadId: null, unreadCount: 0, lastMessageId: null }
   const lastMessageId = newer(message.id, base.lastMessageId) ? message.id : base.lastMessageId
@@ -48,7 +81,8 @@ export function applyIncoming(
     return { lastReadId: message.id, unreadCount: 0, lastMessageId }
   }
   if (!newer(message.id, base.lastReadId)) return { ...base, lastMessageId }
-  return { ...base, lastMessageId, unreadCount: base.unreadCount + 1 }
+  const next = { ...base, lastMessageId, unreadCount: base.unreadCount + 1 }
+  return mentioned ? withMentions(next, [message.id]) : next
 }
 
 /**
@@ -93,6 +127,10 @@ export interface NotifyContext {
   mutedChannels: Record<string, boolean>
   activeChannelId: string | undefined
   windowFocused: boolean
+  /** Only @mentions notify in this server (its default or your choice)… */
+  mentionsOnly?: boolean
+  /** …and this message mentions you (or is a DM). */
+  mentionsMe?: boolean
 }
 
 export function shouldNotify(
@@ -102,9 +140,21 @@ export function shouldNotify(
   if (!ctx.enabled || ctx.permission !== 'granted') return false
   if (message.authorId === ctx.meId) return false
   if (ctx.mutedChannels[message.channelId]) return false
+  if (ctx.mentionsOnly && !ctx.mentionsMe) return false
   // Already looking at that conversation.
   if (ctx.windowFocused && ctx.activeChannelId === message.channelId) return false
   return true
+}
+
+export type ServerNotificationChoice = 'default' | 'all' | 'mentions'
+
+/** The level that applies in a server: your choice, else the server's default, else all. */
+export function effectiveNotificationLevel(
+  choice: ServerNotificationChoice | undefined,
+  serverDefault: 'all' | 'mentions' | undefined
+): 'all' | 'mentions' {
+  if (choice === 'all' || choice === 'mentions') return choice
+  return serverDefault ?? 'all'
 }
 
 /** Notification text. Message content is only included when the user opted in. */

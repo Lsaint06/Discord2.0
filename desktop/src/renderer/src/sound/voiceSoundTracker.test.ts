@@ -123,3 +123,77 @@ describe('voice sounds', () => {
     expect(events.flat()).toEqual(['connect'])
   })
 })
+
+/** Like run(), with the identities (you included) sharing a screen at each step. */
+function runShares(steps: [number, VoiceStatus, string[], string[]][]): SoundEvent[][] {
+  let state: VoiceSoundState = INITIAL_VOICE_SOUND_STATE
+  return steps.map(([t, status, remoteIds, sharingIds]) => {
+    const result = trackVoiceSounds(state, { status, remoteIds, sharingIds }, t)
+    state = result.state
+    return result.events
+  })
+}
+
+describe('screen share sounds', () => {
+  it('plays start and stop for someone in the channel, and for yourself', () => {
+    const events = runShares([
+      [0, 'connecting', [], []],
+      [100, 'connected', ['bob'], []],
+      [AFTER + 100, 'connected', ['bob'], ['bob']],
+      [AFTER + 5000, 'connected', ['bob'], []],
+      [AFTER + 6000, 'connected', ['bob'], ['me']],
+      [AFTER + 9000, 'connected', ['bob'], []]
+    ])
+    expect(events).toEqual([
+      [],
+      ['connect'],
+      ['streamStart'],
+      ['streamStop'],
+      ['streamStart'],
+      ['streamStop']
+    ])
+  })
+
+  it('a share that is already running when you join or reconnect is silent', () => {
+    const events = runShares([
+      [0, 'connecting', [], []],
+      [100, 'connected', ['bob'], []],
+      [200, 'connected', ['bob'], ['bob']],
+      [AFTER + 500, 'connected', ['bob'], ['bob']],
+      [AFTER + 600, 'reconnecting', [], []],
+      [AFTER + 900, 'connected', ['bob'], ['bob']],
+      [AFTER + 1000, 'connected', ['bob'], ['bob']]
+    ])
+    expect(events.flat()).toEqual(['connect'])
+  })
+
+  it('a sharer who leaves plays only the leave sound; a joiner already sharing only the join sound', () => {
+    const events = runShares([
+      [0, 'connecting', [], []],
+      [100, 'connected', ['bob'], ['bob']],
+      [AFTER + 100, 'connected', [], []],
+      [AFTER + 2000, 'connected', ['carol'], ['carol']]
+    ])
+    expect(events).toEqual([[], ['connect'], ['voiceLeave'], ['voiceJoin']])
+  })
+
+  it('several shares changing at once play one sound each way', () => {
+    const events = runShares([
+      [0, 'connecting', [], []],
+      [100, 'connected', ['bob', 'carol'], []],
+      [AFTER + 100, 'connected', ['bob', 'carol'], ['bob', 'carol', 'me']],
+      [AFTER + 3000, 'connected', ['bob', 'carol'], ['me']]
+    ])
+    expect(events.slice(2)).toEqual([['streamStart'], ['streamStop']])
+  })
+
+  it('leaving voice while sharing plays only the disconnect sound', () => {
+    const events = runShares([
+      [0, 'connecting', [], []],
+      [100, 'connected', ['bob'], []],
+      [AFTER + 100, 'connected', ['bob'], ['me']],
+      [AFTER + 3000, 'idle', [], []]
+    ])
+    expect(events.slice(2)).toEqual([['streamStart'], ['disconnect']])
+  })
+})

@@ -90,6 +90,31 @@ export function normalizeUsername(input: unknown): string {
   return username
 }
 
+const EMAIL_LOCAL = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/
+const DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+const TLD = /^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/
+
+/**
+ * Practical email address check (RFC 5321 sizes, dot-atom local part, DNS host name with a real
+ * top-level domain; no quoted local parts or IP literals). Returns the canonical lower-case form,
+ * which is what uniqueness is decided on. Ownership is only proven by the emailed code.
+ */
+export function normalizeEmail(input: unknown): string {
+  const invalid = () => badRequest('Enter a valid email address, like name@example.com.', 'invalid_email')
+  if (typeof input !== 'string') throw invalid()
+  const value = input.normalize('NFC').trim().toLowerCase()
+  if (value.length < 6 || value.length > 254) throw invalid()
+  const at = value.lastIndexOf('@')
+  if (at < 1) throw invalid()
+  const local = value.slice(0, at)
+  const domain = value.slice(at + 1)
+  if (local.length > 64 || !EMAIL_LOCAL.test(local)) throw invalid()
+  const labels = domain.split('.')
+  if (labels.length < 2 || !labels.every((l) => DOMAIN_LABEL.test(l))) throw invalid()
+  if (!TLD.test(labels[labels.length - 1]!)) throw invalid()
+  return value
+}
+
 export function normalizeDisplayName(input: unknown): string {
   if (typeof input !== 'string') throw badRequest('displayName must be a string', 'invalid_name')
   const name = input.replace(CONTROL_CHARS, '').replace(BIDI_OVERRIDES, '').replace(/\s+/g, ' ').trim()
@@ -139,6 +164,37 @@ export function normalizeTopic(input: unknown): string | null {
     throw badRequest(`Topic must be at most ${LIMITS.channelTopicMaxLength} characters`, 'invalid_topic')
   }
   return topic || null
+}
+
+/** Channel category name: free text on one line (e.g. "Text Channels", "🎮 Games"). */
+export function normalizeCategoryName(input: unknown): string {
+  if (typeof input !== 'string') throw badRequest('category must be a string', 'invalid_category')
+  const name = input.replace(CONTROL_CHARS, '').replace(BIDI_OVERRIDES, '').replace(/\s+/g, ' ').trim()
+  if (name.length < 1 || name.length > LIMITS.categoryNameMaxLength) {
+    throw badRequest(`Category names must be 1-${LIMITS.categoryNameMaxLength} characters`, 'invalid_category')
+  }
+  return name
+}
+
+/** Server description: a few short lines (line breaks kept, runs of blank lines collapsed). */
+export function normalizeServerDescription(input: unknown): string | null {
+  if (input === null || input === undefined) return null
+  if (typeof input !== 'string') throw badRequest('description must be a string', 'invalid_description')
+  const text = input
+    .replace(/\r\n?/g, '\n')
+    .replace(CONTROL_CHARS, '')
+    .replace(BIDI_OVERRIDES, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  if (text.length > LIMITS.serverDescriptionMaxLength) {
+    throw badRequest(
+      `Descriptions must be at most ${LIMITS.serverDescriptionMaxLength} characters`,
+      'invalid_description'
+    )
+  }
+  return text || null
 }
 
 export function normalizeColor(input: unknown): string {

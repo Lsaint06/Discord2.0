@@ -13,6 +13,9 @@ const PARTICIPANT_DISCONNECTED = 3
  */
 export type VoiceAuthorizer = (identity: string, channelId: string) => Promise<number | null>
 
+/** A second check when someone connects (after authorization): e.g. the channel's user limit. */
+export type VoiceAdmission = (identity: string, channelId: string, permissions: number) => Promise<boolean>
+
 /**
  * Keeps the backend's voice presence in sync with LiveKit:
  * signed webhooks for low-latency updates, plus periodic reconciliation through the
@@ -23,6 +26,7 @@ export type VoiceAuthorizer = (identity: string, channelId: string) => Promise<n
 export class LiveKitBridge {
   private readonly receiver: WebhookReceiver
   private readonly rooms: RoomServiceClient
+  private readonly admit: VoiceAdmission
   private timer: NodeJS.Timeout | null = null
 
   constructor(
@@ -31,10 +35,11 @@ export class LiveKitBridge {
     private readonly authorize: VoiceAuthorizer,
     private readonly onChanges: (changes: VoiceStateChange[]) => void,
     private readonly log: FastifyBaseLogger,
-    rooms?: RoomServiceClient
+    options: { rooms?: RoomServiceClient; admit?: VoiceAdmission } = {}
   ) {
     this.receiver = new WebhookReceiver(config.apiKey, config.apiSecret)
-    this.rooms = rooms ?? new RoomServiceClient(config.apiUrl, config.apiKey, config.apiSecret)
+    this.rooms = options.rooms ?? new RoomServiceClient(config.apiUrl, config.apiKey, config.apiSecret)
+    this.admit = options.admit ?? (async () => true)
   }
 
   /** Verifies the webhook signature (throws if invalid) and applies the event. */
@@ -48,8 +53,11 @@ export class LiveKitBridge {
     switch (event.event) {
       case 'participant_joined':
         if (identity) {
-          if ((await this.authorize(identity, channelId)) === null) {
+          const permissions = await this.authorize(identity, channelId)
+          if (permissions === null) {
             await this.kick(channelId, identity, 'not authorized on join')
+          } else if (!(await this.admit(identity, channelId, permissions))) {
+            await this.kick(channelId, identity, 'channel full on join')
           } else {
             changes = this.store.join(identity, channelId)
           }

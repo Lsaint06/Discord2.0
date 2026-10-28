@@ -20,9 +20,15 @@ export const ALLOWED_UPLOAD_EXTS = [
   'json',
   'zip',
   '7z',
+  'rar',
   'docx',
   'xlsx',
-  'pptx'
+  'pptx',
+  // Milestone 13: videos (offered as downloads).
+  'mp4',
+  'mov',
+  'mkv',
+  'webm'
 ]
 
 /** Value for <input type="file" accept>. */
@@ -55,15 +61,25 @@ export function extensionOf(name: string): string {
 
 export const isImageName = (name: string): boolean => IMAGE_EXTS.includes(extensionOf(name))
 
-const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
+const mb = (bytes: number): string =>
+  bytes >= 1024 * 1024 * 1024
+    ? `${Math.round((bytes / (1024 * 1024 * 1024)) * 10) / 10} GB`
+    : `${Math.round(bytes / (1024 * 1024))} MB`
 
-/** Why a file can't be uploaded, or null if it looks acceptable. */
-export function validateFile(file: FileLike): string | null {
+/**
+ * Why a file can't be uploaded, or null if it looks acceptable. With `largeMaxBytes` (the
+ * server accepts large files), anything up to that size is fine: bigger than a normal upload
+ * goes through the chunked large-file path.
+ */
+export function validateFile(file: FileLike, largeMaxBytes?: number): string | null {
   const ext = extensionOf(file.name)
   if (!ALLOWED_UPLOAD_EXTS.includes(ext)) {
     return ext ? `.${ext} files aren’t allowed` : 'Files need an extension (e.g. .png, .pdf)'
   }
   if (file.size === 0) return 'This file is empty'
+  if (largeMaxBytes) {
+    return file.size > largeMaxBytes ? `Files can be at most ${mb(largeMaxBytes)}` : null
+  }
   const limit = isImageName(file.name) ? UPLOAD_LIMITS.maxImageBytes : UPLOAD_LIMITS.maxFileBytes
   if (file.size > limit) {
     return `${isImageName(file.name) ? 'Images' : 'Files'} can be at most ${mb(limit)}`
@@ -113,13 +129,15 @@ export function uploadsReducer(state: UploadItem[], action: UploadAction): Uploa
 export function planUploads<F extends FileLike>(
   current: UploadItem[],
   files: F[],
-  makeKey: () => string
+  makeKey: () => string,
+  /** The server's large-file ceiling, when it accepts large files. */
+  largeMaxBytes?: number
 ): { accepted: { file: F; item: UploadItem }[]; rejected: string[] } {
   const accepted: { file: F; item: UploadItem }[] = []
   const rejected: string[] = []
   let slots = UPLOAD_LIMITS.maxFiles - current.length
   for (const file of files) {
-    const problem = validateFile(file)
+    const problem = validateFile(file, largeMaxBytes)
     if (problem) {
       rejected.push(`${file.name}: ${problem}`)
       continue

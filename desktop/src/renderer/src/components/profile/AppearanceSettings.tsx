@@ -9,6 +9,8 @@ import {
 } from '../../net/protocol'
 import { accentChoices, DEFAULT_ACCENT } from '../../data/defaults'
 import { Field, Toggle } from '../SettingsControls'
+import AppScaleControl from './AppScaleControl'
+import type { ContrastPreference } from '../../hooks/useAppearance'
 
 interface AppearanceSettingsProps {
   preferences: ApiPreferences
@@ -16,7 +18,15 @@ interface AppearanceSettingsProps {
   onChange: (patch: PreferencesPatch) => Promise<string | null>
   fontSize: number
   onFontSizeChange: (size: number) => void
+  contrast: ContrastPreference
+  onContrastChange: (contrast: ContrastPreference) => void
 }
+
+const CONTRAST: { id: ContrastPreference; label: string }[] = [
+  { id: 'system', label: 'Sync with computer' },
+  { id: 'on', label: 'Increase contrast' },
+  { id: 'off', label: 'Standard contrast' }
+]
 
 const THEMES: { id: ThemePreference; label: string }[] = [
   { id: 'dark', label: 'Dark' },
@@ -44,7 +54,9 @@ function AppearanceSettings({
   loaded,
   onChange,
   fontSize,
-  onFontSizeChange
+  onFontSizeChange,
+  contrast,
+  onContrastChange
 }: AppearanceSettingsProps): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const change = (patch: PreferencesPatch): void => {
@@ -190,6 +202,23 @@ function AppearanceSettings({
 
       <div className="settings-subsection">
         <h3>This device only</h3>
+        <AppScaleControl />
+        <Field label="Contrast">
+          <select
+            className="text-input"
+            value={contrast}
+            onChange={(e) => onContrastChange(e.target.value as ContrastPreference)}
+          >
+            {CONTRAST.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+          <p className="setting-description">
+            Increase contrast makes secondary text, timestamps and borders easier to read.
+          </p>
+        </Field>
         <Field label={`Chat Font Size — ${fontSize}px`}>
           <input
             className="slider"

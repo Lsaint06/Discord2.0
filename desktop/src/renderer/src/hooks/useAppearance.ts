@@ -26,12 +26,16 @@ function useMediaQuery(query: string): boolean {
  */
 export function useAppearance(
   preferences: Pick<ApiPreferences, 'theme' | 'accentColor' | 'density' | 'reducedMotion'>,
-  chatFontSize: number
+  chatFontSize: number,
+  /** This device's contrast choice; 'system' follows the OS high-contrast setting. */
+  contrast: ContrastPreference = 'system'
 ): ResolvedTheme {
   const systemLight = useMediaQuery('(prefers-color-scheme: light)')
   const systemReduced = useMediaQuery('(prefers-reduced-motion: reduce)')
+  const systemMoreContrast = useMediaQuery('(prefers-contrast: more)')
   const theme = resolveTheme(preferences.theme, systemLight)
   const reduced = resolveReducedMotion(preferences.reducedMotion, systemReduced)
+  const moreContrast = contrast === 'on' || (contrast === 'system' && systemMoreContrast)
   const accent = preferences.accentColor ?? DEFAULT_ACCENT
 
   useEffect(() => {
@@ -39,10 +43,11 @@ export function useAppearance(
     root.dataset.theme = theme
     root.dataset.density = preferences.density
     root.dataset.reducedMotion = reduced ? 'on' : 'off'
+    root.dataset.contrast = moreContrast ? 'more' : 'normal'
     root.style.setProperty('--accent', accent)
     root.style.setProperty('--accent-contrast', readableOn(accent))
     root.style.setProperty('--chat-font-size', `${chatFontSize}px`)
-  }, [theme, reduced, accent, preferences.density, chatFontSize])
+  }, [theme, reduced, moreContrast, accent, preferences.density, chatFontSize])
 
   // Back to the defaults when signed out (the sign-in screen uses the default look).
   useEffect(
@@ -51,6 +56,7 @@ export function useAppearance(
       delete root.dataset.theme
       delete root.dataset.density
       delete root.dataset.reducedMotion
+      delete root.dataset.contrast
       for (const name of ['--accent', '--accent-contrast', '--chat-font-size']) {
         root.style.removeProperty(name)
       }
@@ -59,4 +65,12 @@ export function useAppearance(
   )
 
   return theme
+}
+
+export type ContrastPreference = 'system' | 'on' | 'off'
+
+/** Whether animations should be reduced (your preference, or the OS setting for 'system'). */
+export function useReducedMotion(preference: ApiPreferences['reducedMotion']): boolean {
+  const systemReduced = useMediaQuery('(prefers-reduced-motion: reduce)')
+  return resolveReducedMotion(preference, systemReduced)
 }

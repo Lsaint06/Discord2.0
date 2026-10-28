@@ -20,6 +20,8 @@ export type SoundEvent =
   | 'connect'
   | 'disconnect'
   | 'friendRequest'
+  | 'streamStart'
+  | 'streamStop'
 
 export const SOUND_EVENTS: readonly SoundEvent[] = [
   'message',
@@ -29,6 +31,8 @@ export const SOUND_EVENTS: readonly SoundEvent[] = [
   'voiceLeave',
   'connect',
   'disconnect',
+  'streamStart',
+  'streamStop',
   'mute',
   'unmute',
   'deafen',
@@ -76,6 +80,16 @@ export const SOUND_INFO: Record<SoundEvent, SoundInfo> = {
   disconnect: {
     label: 'You disconnect',
     description: 'You leave voice, or the connection is lost.',
+    group: 'voice'
+  },
+  streamStart: {
+    label: 'Screen share starts',
+    description: 'You or someone in your voice channel starts sharing their screen.',
+    group: 'voice'
+  },
+  streamStop: {
+    label: 'Screen share ends',
+    description: 'A screen share in your voice channel stops (not when the person leaves).',
     group: 'voice'
   },
   mute: { label: 'Mute', description: 'You mute your microphone.', group: 'controls' },
@@ -446,6 +460,61 @@ export const RECIPES: Record<SoundEvent, SoundRecipe> = {
     ],
     lowpass: 6000,
     echo: [0.09, 0.1]
+  },
+  // "Going live": a warm upward glide topped with a short bell sparkle.
+  streamStart: {
+    notes: [
+      {
+        at: 0,
+        freq: C5,
+        toFreq: G5,
+        dur: 0.22,
+        wave: 'triangle',
+        gain: 0.8,
+        attack: 0.01,
+        decay: 0.09,
+        partials: WARM
+      },
+      {
+        at: 0.16,
+        freq: E6,
+        dur: 0.36,
+        wave: 'sine',
+        gain: 0.75,
+        attack: 0.004,
+        decay: 0.12,
+        partials: BELL
+      }
+    ],
+    lowpass: 6500,
+    echo: [0.08, 0.12]
+  },
+  // Stream ended: the same body, gliding down, softer and without the sparkle.
+  streamStop: {
+    notes: [
+      {
+        at: 0,
+        freq: G5,
+        toFreq: C5,
+        dur: 0.26,
+        wave: 'triangle',
+        gain: 0.85,
+        attack: 0.01,
+        decay: 0.1,
+        partials: WARM
+      },
+      {
+        at: 0.12,
+        freq: E4,
+        dur: 0.3,
+        wave: 'sine',
+        gain: 0.5,
+        attack: 0.01,
+        decay: 0.1,
+        partials: WARM
+      }
+    ],
+    lowpass: 4500
   }
 }
 

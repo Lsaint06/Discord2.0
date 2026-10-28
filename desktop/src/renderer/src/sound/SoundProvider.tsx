@@ -1,7 +1,8 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import type { SoundService } from './SoundService'
 import type { SoundPreferences } from './soundPolicy'
 import { SoundContext } from './soundContext'
+import { listCustomSounds, loadCustomSoundData } from './customSounds'
 
 interface SoundProviderProps {
   service: SoundService
@@ -21,6 +22,34 @@ function SoundProvider({
   useEffect(() => {
     service.setPreferences(preferences)
   }, [service, preferences])
+
+  // Your own sounds that the settings use: loaded from this PC's library once, then kept by the
+  // service (a deleted or broken file simply falls back to the built-in sound).
+  const registered = useRef(new Set<string>())
+  const customIds = Object.values(preferences.custom ?? {})
+    .filter((id): id is string => typeof id === 'string')
+    .sort()
+    .join(',')
+  useEffect(() => {
+    const wanted = customIds ? customIds.split(',') : []
+    const missing = wanted.filter((id) => !registered.current.has(id))
+    if (missing.length === 0) return
+    let cancelled = false
+    void listCustomSounds()
+      .then(async (library) => {
+        for (const id of missing) {
+          const meta = library.find((m) => m.id === id)
+          const data = meta ? await loadCustomSoundData(id) : null
+          if (cancelled || !meta || !data) continue
+          service.setCustomSound(id, { data, gain: meta.gain })
+          registered.current.add(id)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [service, customIds])
 
   useEffect(() => {
     service.setOutputDevice(outputDeviceId)

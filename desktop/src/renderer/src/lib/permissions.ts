@@ -96,9 +96,15 @@ export const PERMISSION_INFO: {
     channel: false
   },
   {
+    name: 'moderateMembers',
+    label: 'Time out members',
+    description: 'Make members below their role read-only for a while.',
+    channel: false
+  },
+  {
     name: 'manageChannels',
     label: 'Manage channels',
-    description: 'Create, rename and delete channels; channel permissions.',
+    description: 'Create, rename, reorder and delete channels; channel permissions.',
     channel: false
   },
   {
@@ -110,7 +116,7 @@ export const PERMISSION_INFO: {
   {
     name: 'manageServer',
     label: 'Manage server',
-    description: 'Rename the server and view its audit log.',
+    description: 'Rename the server, change its icon and description, view its audit log.',
     channel: false
   }
 ]

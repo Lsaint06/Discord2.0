@@ -10,6 +10,9 @@ import { setupCredentialStorage } from './credentials'
 import { setupSystemIdle } from './system'
 import { setupNetDiagnostics } from './netDiagnostics'
 import { APP_INDEX_URL, registerAppScheme, serveAppScheme } from './appProtocol'
+import { attachUiZoom, loadUiZoom, setupUiZoomIpc } from './uiZoom'
+import { setupGlobalShortcuts } from './shortcuts'
+import { setupDownloads } from './downloads'
 
 // Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
 // Lets two clients run side by side on one PC for testing.
@@ -61,6 +64,8 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  attachUiZoom(mainWindow.webContents)
+
   // Links in messages open in the system browser, but only plain web URLs.
   mainWindow.webContents.setWindowOpenHandler((details) => {
     if (isWebUrl(details.url)) void shell.openExternal(details.url)
@@ -104,6 +109,10 @@ app.whenReady().then(() => {
   setupCredentialStorage()
   setupSystemIdle()
   setupNetDiagnostics()
+  loadUiZoom()
+  setupUiZoomIpc(isAppUrl)
+  setupGlobalShortcuts(isAppUrl)
+  setupDownloads(isAppUrl)
   serveAppScheme()
 
   createWindow()

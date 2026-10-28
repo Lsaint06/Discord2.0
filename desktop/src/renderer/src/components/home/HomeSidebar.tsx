@@ -12,10 +12,13 @@ interface HomeSidebarProps {
   meId: string
   /** null = the Friends page. */
   activeConversationId: string | null
+  /** The Daily Word game is open (instead of Friends or a conversation). */
+  gameActive?: boolean
   unreadCounts: Record<string, number>
   pendingRequests: number
   resolveUser: (id: string) => User
   onOpenFriends: () => void
+  onOpenGame?: () => void
   onOpenConversation: (id: string) => void
   onCloseConversation: (conversation: ApiConversation) => void
   onCreateGroup: () => void
@@ -50,9 +53,11 @@ function HomeSidebar(props: HomeSidebarProps): React.JSX.Element {
       <div className="channel-scroller">
         <button
           type="button"
-          className={`channel-item home-nav${props.activeConversationId === null ? ' active' : ''}`}
+          className={`channel-item home-nav${props.activeConversationId === null && !props.gameActive ? ' active' : ''}`}
           onClick={props.onOpenFriends}
-          aria-current={props.activeConversationId === null ? 'page' : undefined}
+          aria-current={
+            props.activeConversationId === null && !props.gameActive ? 'page' : undefined
+          }
         >
           <FriendsIcon size={20} className="channel-icon" />
           <span className="channel-name">Friends</span>
@@ -65,6 +70,19 @@ function HomeSidebar(props: HomeSidebarProps): React.JSX.Element {
             </span>
           )}
         </button>
+        {props.onOpenGame && (
+          <button
+            type="button"
+            className={`channel-item home-nav${props.gameActive ? ' active' : ''}`}
+            onClick={props.onOpenGame}
+            aria-current={props.gameActive ? 'page' : undefined}
+          >
+            <span className="channel-icon word-game-icon" aria-hidden="true">
+              W
+            </span>
+            <span className="channel-name">Daily Word</span>
+          </button>
+        )}
 
         <div className="home-section-header">
           <span>Direct Messages</span>

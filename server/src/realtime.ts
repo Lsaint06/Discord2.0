@@ -39,7 +39,9 @@ export async function toApiMe(ctx: AppContext, user: UserRecord): Promise<ApiMe>
     hasPassword: withPassword.has(user.id),
     statusPreference: user.statusPreference ?? 'online',
     ownCustomStatus: ownCustomStatus(user),
-    allowServerDms: user.allowServerDms !== false
+    allowServerDms: user.allowServerDms !== false,
+    email: user.email ?? null,
+    emailVerified: Boolean(user.email && user.emailVerifiedAt)
   }
 }
 

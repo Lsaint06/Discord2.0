@@ -4,7 +4,7 @@
  * person's profile (except an instance administrator removing an inappropriate image).
  */
 import type { MultipartFile } from '@fastify/multipart'
-import type { FastifyBaseLogger, FastifyInstance } from 'fastify'
+import type { FastifyBaseLogger, FastifyInstance, FastifyRequest } from 'fastify'
 import type { AppContext } from '../context.js'
 import type { CustomStatusRecord, ProfileMediaRecord } from '../db/repository.js'
 import { FileTooLargeError } from '../attachments/store.js'
@@ -91,7 +91,7 @@ export function parsePreferences(stored: { data: string; updatedAt: number } | u
   }
 }
 
-function imageError(err: ProfileImageError): ApiError {
+export function imageError(err: ProfileImageError): ApiError {
   switch (err.code) {
     case 'unsupported_type':
       return unsupportedType(err.message)
@@ -104,6 +104,59 @@ function imageError(err: ProfileImageError): ApiError {
     default:
       return badRequest(err.message, 'image_unreadable')
   }
+}
+
+/**
+ * Receives the first file of a multipart image upload into a temp file (other parts are
+ * drained). The caller processes it and must discard `tmpPath` afterwards.
+ */
+export async function receiveImageUpload(
+  ctx: AppContext,
+  request: FastifyRequest
+): Promise<{ tmpPath: string; head: Buffer }> {
+  if (!request.isMultipart()) throw badRequest('Expected multipart/form-data', 'not_multipart')
+  if (ctx.attachments.freeBytes() < ctx.config.attachments.minFreeDiskBytes) {
+    throw insufficientStorage('The server is low on disk space. Uploads are paused.')
+  }
+  let received: { tmpPath: string; head: Buffer } | null = null
+  let failure: unknown = null
+  try {
+    for await (const part of request.parts()) {
+      if (part.type !== 'file') continue
+      const file = part as MultipartFile
+      if (received || failure) {
+        file.file.resume() // only the first file counts; drain the rest
+        continue
+      }
+      try {
+        const got = await ctx.attachments.receive(file.file, LIMITS.profileImageMaxBytes)
+        if (file.file.truncated || got.size === 0) {
+          await ctx.attachments.discard(got.tmpPath)
+          failure = got.size === 0 ? badRequest('The file is empty', 'empty_file') : null
+          failure ??= payloadTooLarge(
+            `Images can be at most ${LIMITS.profileImageMaxBytes / MB} MB.`,
+            'file_too_large'
+          )
+        } else {
+          received = { tmpPath: got.tmpPath, head: got.head }
+        }
+      } catch (err) {
+        failure =
+          err instanceof FileTooLargeError
+            ? payloadTooLarge(`Images can be at most ${LIMITS.profileImageMaxBytes / MB} MB.`, 'file_too_large')
+            : err
+        if (!file.file.destroyed) file.file.resume()
+      }
+    }
+  } catch (err) {
+    failure ??= err
+  }
+  if (failure) {
+    if (received) await ctx.attachments.discard(received.tmpPath)
+    throw failure
+  }
+  if (!received) throw badRequest('No image was uploaded', 'no_file')
+  return received
 }
 
 export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -298,49 +351,7 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
       const user = await requireUser(ctx, request)
       const limit = ctx.limiters.profileMediaPerUser.take(user.id)
       if (!limit.ok) throw tooManyRequests(limit.retryAfterMs)
-      if (!request.isMultipart()) throw badRequest('Expected multipart/form-data', 'not_multipart')
-      if (ctx.attachments.freeBytes() < ctx.config.attachments.minFreeDiskBytes) {
-        throw insufficientStorage('The server is low on disk space. Uploads are paused.')
-      }
-
-      let received: { tmpPath: string; head: Buffer } | null = null
-      let failure: unknown = null
-      try {
-        for await (const part of request.parts()) {
-          if (part.type !== 'file') continue
-          const file = part as MultipartFile
-          if (received || failure) {
-            file.file.resume() // only the first file counts; drain the rest
-            continue
-          }
-          try {
-            const got = await ctx.attachments.receive(file.file, LIMITS.profileImageMaxBytes)
-            if (file.file.truncated || got.size === 0) {
-              await ctx.attachments.discard(got.tmpPath)
-              failure = got.size === 0 ? badRequest('The file is empty', 'empty_file') : null
-              failure ??= payloadTooLarge(
-                `Images can be at most ${LIMITS.profileImageMaxBytes / MB} MB.`,
-                'file_too_large'
-              )
-            } else {
-              received = { tmpPath: got.tmpPath, head: got.head }
-            }
-          } catch (err) {
-            failure =
-              err instanceof FileTooLargeError
-                ? payloadTooLarge(`Images can be at most ${LIMITS.profileImageMaxBytes / MB} MB.`, 'file_too_large')
-                : err
-            if (!file.file.destroyed) file.file.resume()
-          }
-        }
-      } catch (err) {
-        failure ??= err
-      }
-      if (failure) {
-        if (received) await ctx.attachments.discard(received.tmpPath)
-        throw failure
-      }
-      if (!received) throw badRequest('No image was uploaded', 'no_file')
+      const received = await receiveImageUpload(ctx, request)
 
       let image
       try {

@@ -1,4 +1,6 @@
 import type { SoundEvent } from './sound/sounds'
+import type { SoundGroup } from './sound/soundPolicy'
+import type { Keybinds } from './lib/keybinds'
 import type {
   ScreenCodec,
   ScreenContentHint,
@@ -46,6 +48,8 @@ export interface Channel {
   voiceUsers?: string[]
   /** Your effective permissions in this channel (from the server). */
   permissions?: number
+  /** Voice channels: most people at once (0/undefined = no limit). */
+  userLimit?: number
 }
 
 export interface ChannelCategory {
@@ -63,6 +67,8 @@ export interface Role {
 export interface ServerMember {
   userId: string
   roleId?: string
+  /** Timed out until (epoch ms). */
+  timeoutUntil?: number | null
 }
 
 export interface Server {
@@ -76,6 +82,11 @@ export interface Server {
   role?: ServerRole
   permissions?: number
   ownerId?: string | null
+  description?: string | null
+  iconId?: string | null
+  defaultNotifications?: 'all' | 'mentions'
+  /** You are timed out here until this time (epoch ms). */
+  timeoutUntil?: number | null
 }
 
 export interface Message {
@@ -106,6 +117,12 @@ export type InputMode = 'voice-activity' | 'push-to-talk'
 export interface UserSettings {
   /** Chat font size in px (depends on this device's screen). */
   fontSize: number
+  /** Channel / conversation sidebar width in px (this device; see lib/sidebarWidth.ts). */
+  sidebarWidth: number
+  /** Stronger text and border contrast on this device; 'system' follows the OS setting. */
+  contrast: 'system' | 'on' | 'off'
+  /** Your keyboard shortcut changes (this device; see lib/keybinds.ts). */
+  keybinds: Keybinds
   /** Microphone gain, percent (0–200). */
   inputVolume: number
   /** Master playback volume, percent (0–200). */
@@ -144,6 +161,8 @@ export interface UserSettings {
   notificationPreview: boolean
   /** Channels whose desktop notifications are muted. */
   mutedChannels: Record<string, boolean>
+  /** Your notification level per server (missing = the server's default). */
+  serverNotifications: Record<string, 'all' | 'mentions'>
   recentEmoji: string[]
   /** Global switch for sound effects (this device). */
   soundEffects: boolean
@@ -151,4 +170,10 @@ export interface UserSettings {
   soundVolume: number
   /** Per-event sound toggles. */
   soundEvents: Record<SoundEvent, boolean>
+  /** Per-category volume, percent (missing = 100). */
+  soundCategoryVolumes: Partial<Record<SoundGroup, number>>
+  /** Per-event volume, percent (missing = 100). */
+  soundEventVolumes: Partial<Record<SoundEvent, number>>
+  /** Your own sound per event (custom sound library id; missing = built-in). */
+  soundCustom: Partial<Record<SoundEvent, string>>
 }

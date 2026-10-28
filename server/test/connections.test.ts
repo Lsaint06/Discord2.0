@@ -258,7 +258,7 @@ after(async () => {
 describe('conversation container stays hidden', () => {
   test('the server advertises the feature', async () => {
     const meta = (await (await fetch(`${s.base}/api/meta`)).json()) as { apiVersion: number; connections: boolean }
-    assert.equal(meta.apiVersion, 4)
+    assert.ok(meta.apiVersion >= 4)
     assert.equal(meta.connections, true)
   })
 

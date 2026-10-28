@@ -1,7 +1,21 @@
 import { useState } from 'react'
 import type { Server } from '../types'
 import { initials } from '../lib/format'
+import { useServerIcon } from '../lib/profileMedia'
 import { LogoIcon, PlusIcon } from './Icons'
+
+/** The server's picture if it has one (and it loaded), otherwise its initials. */
+export function ServerGlyph({
+  server,
+  size = 'small'
+}: {
+  server: Pick<Server, 'name' | 'iconId'>
+  size?: 'small' | 'full'
+}): React.JSX.Element {
+  const { url } = useServerIcon(server.iconId, size)
+  if (url) return <img className="server-icon-image" src={url} alt="" draggable={false} />
+  return <>{initials(server.name)}</>
+}
 
 interface ServerSidebarProps {
   servers: Server[]
@@ -12,6 +26,8 @@ interface ServerSidebarProps {
   homeBadge: number
   onSelectHome: () => void
   unreadServerIds: Set<string>
+  /** Unread mentions of you per server (red badge on the icon). */
+  mentionsByServer?: Record<string, number>
   onSelectServer: (id: string) => void
   onAddServer: () => void
 }
@@ -28,6 +44,7 @@ function ServerSidebar({
   homeBadge,
   onSelectHome,
   unreadServerIds,
+  mentionsByServer,
   onSelectServer,
   onAddServer
 }: ServerSidebarProps): React.JSX.Element {
@@ -72,6 +89,7 @@ function ServerSidebar({
         {servers.map((server) => {
           const active = server.id === activeServerId
           const unread = !active && unreadServerIds.has(server.id)
+          const mentions = active ? 0 : (mentionsByServer?.[server.id] ?? 0)
           return (
             <div
               key={server.id}
@@ -87,11 +105,20 @@ function ServerSidebar({
                 onMouseLeave={hideTooltip}
                 onFocus={showTooltip(server.name)}
                 onBlur={hideTooltip}
-                aria-label={server.name}
+                aria-label={
+                  mentions > 0
+                    ? `${server.name}, ${mentions} unread mention${mentions === 1 ? '' : 's'}`
+                    : server.name
+                }
                 aria-current={active ? 'page' : undefined}
               >
-                {initials(server.name)}
+                <ServerGlyph server={server} />
               </button>
+              {mentions > 0 && (
+                <span className="server-badge" aria-hidden="true">
+                  {mentions >= 99 ? '99+' : mentions}
+                </span>
+              )}
             </div>
           )
         })}

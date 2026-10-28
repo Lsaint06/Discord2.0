@@ -7,6 +7,7 @@ import type { Config } from './config.js'
 import type { Repository } from './db/repository.js'
 import type { GatewayHub } from './gateway.js'
 import { TokenBucketLimiter } from './lib/rateLimit.js'
+import type { MailOutbox } from './mail/mailer.js'
 import type { LiveKitBridge } from './voice/livekitBridge.js'
 import type { VoiceStateStore } from './voice/voiceStates.js'
 
@@ -17,9 +18,13 @@ export interface AppContext {
   attachments: AttachmentStore
   /** Processed avatars and banners (inside the attachments directory / data volume). */
   profileMedia: ProfileMediaStore
+  /** Processed server icons (same format as avatars; their own folder and sweep). */
+  serverIcons: ProfileMediaStore
   access: AccessService
   audit: AuditLog
   hasher: PasswordHasher
+  /** Outgoing email (verification and reset codes); `available` is false without a transport. */
+  mail: MailOutbox
   voice: {
     store: VoiceStateStore
     /** null when voice (LiveKit) is not configured. */
@@ -34,6 +39,15 @@ export interface AppContext {
     registerPerIp: TokenBucketLimiter
     recoverPerIp: TokenBucketLimiter
     recoverPerAccount: TokenBucketLimiter
+    /** Email self-registration attempts (Milestone 13). */
+    signupPerIp: TokenBucketLimiter
+    /** Emails to one address (codes and notices), keyed by the address even if unknown. */
+    emailsPerAddress: TokenBucketLimiter
+    /** Every email the server sends (key 'all'): a cap if something goes wrong. */
+    emailsGlobal: TokenBucketLimiter
+    /** Code checks (verification, password reset by email). */
+    emailCodesPerIp: TokenBucketLimiter
+    emailCodesPerAddress: TokenBucketLimiter
     accountPerUser: TokenBucketLimiter
     adminPerUser: TokenBucketLimiter
     invitesPerUser: TokenBucketLimiter
@@ -63,6 +77,12 @@ export interface AppContext {
     conversationsPerUser: TokenBucketLimiter
     /** Adding/removing members, renaming, leaving. */
     groupChangesPerUser: TokenBucketLimiter
+    /** GIF picker searches and trending pages. */
+    gifSearchPerUser: TokenBucketLimiter
+    /** GIF media through the proxy (a grid loads many at once). */
+    gifMediaPerUser: TokenBucketLimiter
+    /** Chunks of large uploads (16 MB each). */
+    uploadChunksPerUser: TokenBucketLimiter
   }
 }
 
@@ -76,6 +96,14 @@ export function createLimiters(): AppContext['limiters'] {
     registerPerIp: new TokenBucketLimiter(5, 1 / 60),
     recoverPerIp: new TokenBucketLimiter(5, 1 / 60),
     recoverPerAccount: new TokenBucketLimiter(5, 1 / 300),
+    // 5 sign-ups, then one every 10 minutes, from one IP address.
+    signupPerIp: new TokenBucketLimiter(5, 1 / 600),
+    // 3 emails, then one every 5 minutes, to any one address.
+    emailsPerAddress: new TokenBucketLimiter(3, 1 / 300),
+    // 200 emails, then about one every 18 s for the whole server.
+    emailsGlobal: new TokenBucketLimiter(200, 200 / 3600),
+    emailCodesPerIp: new TokenBucketLimiter(20, 1 / 30),
+    emailCodesPerAddress: new TokenBucketLimiter(10, 1 / 60),
     // Password change, recovery code regeneration, session management.
     accountPerUser: new TokenBucketLimiter(10, 1 / 30),
     adminPerUser: new TokenBucketLimiter(30, 0.5),
@@ -102,6 +130,11 @@ export function createLimiters(): AppContext['limiters'] {
     friendRequestsPerUser: new TokenBucketLimiter(10, 1 / 60),
     relationshipsPerUser: new TokenBucketLimiter(30, 0.5),
     conversationsPerUser: new TokenBucketLimiter(20, 0.5),
-    groupChangesPerUser: new TokenBucketLimiter(20, 0.5)
+    groupChangesPerUser: new TokenBucketLimiter(20, 0.5),
+    // Typing in the picker is debounced by the app; ~1 search per second sustained.
+    gifSearchPerUser: new TokenBucketLimiter(20, 1),
+    gifMediaPerUser: new TokenBucketLimiter(200, 20),
+    // 16 MB chunks: 5 GB is ~320 requests; this allows a fast LAN upload at full speed.
+    uploadChunksPerUser: new TokenBucketLimiter(60, 10)
   }
 }

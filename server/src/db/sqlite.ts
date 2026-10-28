@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
@@ -14,6 +15,9 @@ import type {
   ConversationMemberRecord,
   ConversationRecord,
   ConversationSummary,
+  EmailCodePurpose,
+  EmailCodeRecord,
+  EmailSignupResult,
   FriendRequestResult,
   IntegrityReport,
   InviteAcceptResult,
@@ -35,11 +39,14 @@ import type {
   RelationshipType,
   Repository,
   SearchQuery,
+  ServerIconRecord,
   ServerInviteRecord,
   ServerRecord,
   SessionKind,
   SessionRecord,
-  UserRecord
+  UploadSessionRecord,
+  UserRecord,
+  ChannelPlacement
 } from './repository.js'
 import type { ConfigurableRole, ProfileImageKind, SelectableStatus, ServerRole } from '../protocol.js'
 import type { Override } from '../lib/permissions.js'
@@ -69,8 +76,32 @@ function toUser(r: Row): UserRecord {
     statusPreference: toSelectableStatus(r.status_preference),
     customStatusText: nullableStr(r.custom_status_text),
     customStatusEmoji: nullableStr(r.custom_status_emoji),
-    customStatusExpiresAt: nullableNum(r.custom_status_expires_at)
+    customStatusExpiresAt: nullableNum(r.custom_status_expires_at),
+    email: nullableStr(r.email),
+    emailVerifiedAt: nullableNum(r.email_verified_at),
+    signupPending: num(r.signup_pending ?? 0) === 1
   }
+}
+
+function toEmailCode(r: Row): EmailCodeRecord {
+  return {
+    id: str(r.id),
+    userId: str(r.user_id),
+    purpose: str(r.purpose) === 'reset' ? 'reset' : 'verify',
+    email: str(r.email),
+    codeHash: str(r.code_hash),
+    createdAt: num(r.created_at),
+    expiresAt: num(r.expires_at),
+    attempts: num(r.attempts),
+    usedAt: nullableNum(r.used_at)
+  }
+}
+
+/** Constant-time comparison of two hex verifiers. */
+function sameHash(a: string, b: string): boolean {
+  const x = Buffer.from(a, 'utf8')
+  const y = Buffer.from(b, 'utf8')
+  return x.length === y.length && timingSafeEqual(x, y)
 }
 
 const SELECTABLE_STATUSES: readonly SelectableStatus[] = ['online', 'idle', 'dnd', 'invisible']
@@ -132,7 +163,8 @@ function toMember(r: Row): MemberRecord {
     serverId: str(r.server_id),
     userId: str(r.user_id),
     role: str(r.role) as ServerRole,
-    joinedAt: num(r.joined_at)
+    joinedAt: num(r.joined_at),
+    timeoutUntil: r.timeout_until == null ? null : num(r.timeout_until)
   }
 }
 
@@ -178,7 +210,10 @@ function toServer(r: Row): ServerRecord {
     color: str(r.color),
     ownerId: r.owner_id == null ? null : str(r.owner_id),
     position: num(r.position),
-    createdAt: num(r.created_at)
+    createdAt: num(r.created_at),
+    description: r.description == null ? null : str(r.description),
+    iconId: r.icon_id == null ? null : str(r.icon_id),
+    defaultNotifications: r.default_notifications === 'mentions' ? 'mentions' : 'all'
   }
 }
 
@@ -191,6 +226,18 @@ function toChannel(r: Row): ChannelRecord {
     topic: r.topic == null ? null : str(r.topic),
     category: str(r.category),
     position: num(r.position),
+    createdAt: num(r.created_at),
+    userLimit: r.user_limit == null ? 0 : num(r.user_limit)
+  }
+}
+
+function toServerIcon(r: Row): ServerIconRecord {
+  return {
+    id: str(r.id),
+    serverId: str(r.server_id),
+    createdBy: nullableStr(r.created_by),
+    size: num(r.size),
+    sha256: str(r.sha256),
     createdAt: num(r.created_at)
   }
 }
@@ -221,7 +268,25 @@ function toAttachment(r: Row): AttachmentRecord {
     height: r.height == null ? null : num(r.height),
     sha256: str(r.sha256),
     position: num(r.position),
-    createdAt: num(r.created_at)
+    createdAt: num(r.created_at),
+    expiresAt: r.expires_at == null ? null : num(r.expires_at),
+    expiredAt: r.expired_at == null ? null : num(r.expired_at)
+  }
+}
+
+function toUploadSession(r: Row): UploadSessionRecord {
+  return {
+    id: str(r.id),
+    userId: str(r.user_id),
+    channelId: str(r.channel_id),
+    filename: str(r.filename),
+    contentType: str(r.content_type),
+    kind: str(r.kind) === 'image' ? 'image' : 'file',
+    size: num(r.size),
+    received: num(r.received),
+    ephemeral: num(r.ephemeral) === 1,
+    createdAt: num(r.created_at),
+    updatedAt: num(r.updated_at)
   }
 }
 
@@ -374,7 +439,9 @@ export class SqliteRepository implements Repository {
 
   private insertUser(user: UserRecord): void {
     this.run(
-      'INSERT INTO users (id, username, display_name, avatar_color, is_bot, created_at, instance_admin, disabled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      `INSERT INTO users (id, username, display_name, avatar_color, is_bot, created_at, instance_admin, disabled_at,
+         email, email_verified_at, signup_pending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       user.id,
       user.username,
       user.displayName,
@@ -382,7 +449,10 @@ export class SqliteRepository implements Repository {
       user.bot ? 1 : 0,
       user.createdAt,
       user.instanceAdmin ? 1 : 0,
-      user.disabledAt ?? null
+      user.disabledAt ?? null,
+      user.email ?? null,
+      user.emailVerifiedAt ?? null,
+      user.signupPending ? 1 : 0
     )
   }
 
@@ -1322,6 +1392,185 @@ export class SqliteRepository implements Repository {
     })
   }
 
+  // ---- Email accounts (Milestone 13) ----
+
+  async findUserByEmail(email: string) {
+    const r = this.get('SELECT * FROM users WHERE email = ?', email)
+    return r && toUser(r)
+  }
+
+  async registerWithEmail(input: {
+    newUser: UserRecord
+    email: string
+    passwordHash: string
+    code: EmailCodeRecord
+  }): Promise<EmailSignupResult> {
+    let result: EmailSignupResult = { ok: false, reason: 'username_taken' }
+    this.transaction(() => {
+      // Username first: usernames are public anyway, addresses are not (see routes/email.ts).
+      const sameName = this.get('SELECT * FROM users WHERE username = ?', input.newUser.username)
+      if (sameName) {
+        // The same person trying again (same username and address, still unconfirmed): the
+        // new password replaces the old one and a fresh code goes out. Activation needs both
+        // the code (inbox) and this password, so a stranger can't take over the sign-up.
+        const pending = toUser(sameName)
+        if (pending.signupPending && pending.email === input.email) {
+          this.run(
+            'UPDATE credentials SET password_hash = ?, updated_at = ? WHERE user_id = ?',
+            input.passwordHash,
+            input.code.createdAt,
+            pending.id
+          )
+          this.insertEmailCode({ ...input.code, userId: pending.id })
+          result = { ok: true, user: pending }
+        }
+        return
+      }
+      // An unconfirmed sign-up never proved it owns its address, so a newer sign-up replaces
+      // it. Only the inbox owner can confirm either one, so this never hands an address to
+      // the wrong person — and nobody can hold someone else's address hostage for a day.
+      this.run('DELETE FROM users WHERE email = ? AND signup_pending = 1', input.email)
+      const existing = this.get('SELECT * FROM users WHERE email = ?', input.email)
+      if (existing) {
+        result = { ok: false, reason: 'email_taken', existing: toUser(existing) }
+        return
+      }
+      const user: UserRecord = {
+        ...input.newUser,
+        email: input.email,
+        emailVerifiedAt: null,
+        signupPending: true
+      }
+      this.insertUser(user)
+      this.run(
+        'INSERT INTO credentials (user_id, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)',
+        user.id,
+        input.passwordHash,
+        user.createdAt,
+        user.createdAt
+      )
+      this.insertEmailCode({ ...input.code, userId: user.id })
+      result = { ok: true, user }
+    })
+    return result
+  }
+
+  private insertEmailCode(c: EmailCodeRecord): void {
+    this.run(
+      'UPDATE email_codes SET used_at = ? WHERE user_id = ? AND purpose = ? AND used_at IS NULL',
+      c.createdAt,
+      c.userId,
+      c.purpose
+    )
+    this.run(
+      `INSERT INTO email_codes (id, user_id, purpose, email, code_hash, created_at, expires_at, attempts, used_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)`,
+      c.id,
+      c.userId,
+      c.purpose,
+      c.email,
+      c.codeHash,
+      c.createdAt,
+      c.expiresAt
+    )
+  }
+
+  async putEmailCode(code: EmailCodeRecord) {
+    this.transaction(() => this.insertEmailCode(code))
+  }
+
+  async getOpenEmailCode(userId: string, purpose: EmailCodePurpose, now: number) {
+    const r = this.get(
+      'SELECT * FROM email_codes WHERE user_id = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?',
+      userId,
+      purpose,
+      now
+    )
+    return r && toEmailCode(r)
+  }
+
+  async consumeEmailCode(input: {
+    userId: string
+    purpose: EmailCodePurpose
+    codeHash: string
+    now: number
+    maxAttempts: number
+    peek?: boolean
+  }): Promise<EmailCodeRecord | null> {
+    let out: EmailCodeRecord | null = null
+    this.transaction(() => {
+      const r = this.get(
+        `SELECT * FROM email_codes
+         WHERE user_id = ? AND purpose = ? AND used_at IS NULL AND expires_at > ? AND attempts < ?`,
+        input.userId,
+        input.purpose,
+        input.now,
+        input.maxAttempts
+      )
+      if (!r) return
+      const code = toEmailCode(r)
+      if (!sameHash(code.codeHash, input.codeHash)) {
+        this.run('UPDATE email_codes SET attempts = attempts + 1 WHERE id = ?', code.id)
+        return
+      }
+      if (input.peek) {
+        out = code
+        return
+      }
+      // Single use: a concurrent redemption sees changes = 0.
+      const used = this.run(
+        'UPDATE email_codes SET used_at = ? WHERE id = ? AND used_at IS NULL',
+        input.now,
+        code.id
+      )
+      if (Number(used.changes) === 1) out = { ...code, usedAt: input.now }
+    })
+    return out
+  }
+
+  async confirmEmail(userId: string, email: string, now: number, autoJoinServerId: string | null) {
+    let result: 'ok' | 'email_taken' = 'ok'
+    this.transaction(() => {
+      // Whoever just proved they own the address takes it from an unconfirmed sign-up.
+      this.run('DELETE FROM users WHERE email = ? AND id <> ? AND signup_pending = 1', email, userId)
+      if (this.get('SELECT 1 AS x FROM users WHERE email = ? AND id <> ?', email, userId)) {
+        result = 'email_taken'
+        return
+      }
+      const before = this.get('SELECT signup_pending FROM users WHERE id = ?', userId)
+      if (!before) return
+      this.run(
+        'UPDATE users SET email = ?, email_verified_at = ?, signup_pending = 0 WHERE id = ?',
+        email,
+        now,
+        userId
+      )
+      const wasPending = num(before.signup_pending) === 1
+      if (
+        wasPending &&
+        autoJoinServerId &&
+        autoJoinServerId !== DIRECT_SERVER_ID &&
+        this.get('SELECT 1 AS x FROM servers WHERE id = ?', autoJoinServerId) &&
+        !this.get('SELECT 1 AS x FROM server_bans WHERE server_id = ? AND user_id = ?', autoJoinServerId, userId)
+      ) {
+        this.run(
+          "INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
+          autoJoinServerId,
+          userId,
+          now
+        )
+      }
+    })
+    return result
+  }
+
+  async removeEmail(userId: string) {
+    this.transaction(() => {
+      this.run('UPDATE users SET email = NULL, email_verified_at = NULL WHERE id = ? AND signup_pending = 0', userId)
+      this.run('UPDATE email_codes SET used_at = ? WHERE user_id = ? AND used_at IS NULL', Date.now(), userId)
+    })
+  }
+
   async usePasswordReset(codeHash: string, userId: string, now: number) {
     const r = this.run(
       'UPDATE password_resets SET used_at = ? WHERE code_hash = ? AND user_id = ? AND used_at IS NULL AND expires_at > ?',
@@ -1394,10 +1643,92 @@ export class SqliteRepository implements Repository {
     return r && toServer(r)
   }
 
-  async updateServer(id: string, patch: Partial<Pick<ServerRecord, 'name' | 'color'>>) {
-    if (patch.name !== undefined) this.run('UPDATE servers SET name = ? WHERE id = ?', patch.name, id)
-    if (patch.color !== undefined) this.run('UPDATE servers SET color = ? WHERE id = ?', patch.color, id)
+  async updateServer(
+    id: string,
+    patch: Partial<Pick<ServerRecord, 'name' | 'color' | 'description' | 'defaultNotifications'>>
+  ) {
+    this.transaction(() => {
+      if (patch.name !== undefined) this.run('UPDATE servers SET name = ? WHERE id = ?', patch.name, id)
+      if (patch.color !== undefined) this.run('UPDATE servers SET color = ? WHERE id = ?', patch.color, id)
+      if (patch.description !== undefined) {
+        this.run('UPDATE servers SET description = ? WHERE id = ?', patch.description, id)
+      }
+      if (patch.defaultNotifications !== undefined) {
+        this.run('UPDATE servers SET default_notifications = ? WHERE id = ?', patch.defaultNotifications, id)
+      }
+    })
     return this.getServer(id)
+  }
+
+  async replaceServerIcon(serverId: string, icon: ServerIconRecord | null) {
+    let previousId: string | null = null
+    this.transaction(() => {
+      const row = this.get('SELECT icon_id FROM servers WHERE id = ?', serverId)
+      previousId = row?.icon_id == null ? null : str(row.icon_id)
+      if (icon) {
+        this.run(
+          'INSERT INTO server_icons (id, server_id, created_by, size, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+          icon.id,
+          icon.serverId,
+          icon.createdBy,
+          icon.size,
+          icon.sha256,
+          icon.createdAt
+        )
+      }
+      this.run('UPDATE servers SET icon_id = ? WHERE id = ?', icon?.id ?? null, serverId)
+      if (previousId) this.run('DELETE FROM server_icons WHERE id = ?', previousId)
+    })
+    return { previousId }
+  }
+
+  async getServerIcon(id: string) {
+    const r = this.get('SELECT * FROM server_icons WHERE id = ?', id)
+    return r && toServerIcon(r)
+  }
+
+  async listServerIconIds() {
+    return new Set(this.all('SELECT id FROM server_icons').map((r) => str(r.id)))
+  }
+
+  async setMemberTimeout(serverId: string, userId: string, until: number | null) {
+    const r = this.run(
+      "UPDATE server_members SET timeout_until = ? WHERE server_id = ? AND user_id = ? AND role != 'owner'",
+      until,
+      serverId,
+      userId
+    )
+    return Number(r.changes) === 1
+  }
+
+  async clearExpiredTimeouts(now: number) {
+    let servers: string[] = []
+    this.transaction(() => {
+      servers = this.all(
+        'SELECT DISTINCT server_id FROM server_members WHERE timeout_until IS NOT NULL AND timeout_until <= ?',
+        now
+      ).map((r) => str(r.server_id))
+      this.run('UPDATE server_members SET timeout_until = NULL WHERE timeout_until IS NOT NULL AND timeout_until <= ?', now)
+      // Timeouts parked when someone left (see migration 7) that ran out meanwhile.
+      this.run('DELETE FROM server_timeout_holds WHERE until <= ?', now)
+    })
+    return servers
+  }
+
+  async arrangeChannels(serverId: string, placements: ChannelPlacement[]) {
+    this.transaction(() => {
+      for (const p of placements) {
+        const r = this.run(
+          'UPDATE channels SET category = ?, position = ? WHERE id = ? AND server_id = ?',
+          p.category,
+          p.position,
+          p.id,
+          serverId
+        )
+        // The route validates first; this keeps the whole layout change atomic regardless.
+        if (Number(r.changes) !== 1) throw new Error(`channel ${p.id} is not in server ${serverId}`)
+      }
+    })
   }
 
   async getMember(serverId: string, userId: string) {
@@ -1479,7 +1810,7 @@ export class SqliteRepository implements Repository {
         fromUserId
       )
       this.run(
-        "UPDATE server_members SET role = 'owner' WHERE server_id = ? AND user_id = ?",
+        "UPDATE server_members SET role = 'owner', timeout_until = NULL WHERE server_id = ? AND user_id = ?",
         serverId,
         toUserId
       )
@@ -1495,7 +1826,7 @@ export class SqliteRepository implements Repository {
       this.run('DELETE FROM server_bans WHERE server_id = ? AND user_id = ?', serverId, userId)
       this.run(
         `INSERT INTO server_members (server_id, user_id, role, joined_at) VALUES (?, ?, 'owner', ?)
-         ON CONFLICT (server_id, user_id) DO UPDATE SET role = 'owner'`,
+         ON CONFLICT (server_id, user_id) DO UPDATE SET role = 'owner', timeout_until = NULL`,
         serverId,
         userId,
         now
@@ -1601,7 +1932,7 @@ export class SqliteRepository implements Repository {
 
   async createChannel(c: ChannelRecord) {
     this.run(
-      'INSERT INTO channels (id, server_id, name, type, topic, category, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO channels (id, server_id, name, type, topic, category, position, created_at, user_limit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       c.id,
       c.serverId,
       c.name,
@@ -1609,13 +1940,19 @@ export class SqliteRepository implements Repository {
       c.topic,
       c.category,
       c.position,
-      c.createdAt
+      c.createdAt,
+      c.userLimit ?? 0
     )
   }
 
-  async updateChannel(id: string, patch: Partial<Pick<ChannelRecord, 'name' | 'topic'>>) {
-    if (patch.name !== undefined) this.run('UPDATE channels SET name = ? WHERE id = ?', patch.name, id)
-    if (patch.topic !== undefined) this.run('UPDATE channels SET topic = ? WHERE id = ?', patch.topic, id)
+  async updateChannel(id: string, patch: Partial<Pick<ChannelRecord, 'name' | 'topic' | 'userLimit'>>) {
+    this.transaction(() => {
+      if (patch.name !== undefined) this.run('UPDATE channels SET name = ? WHERE id = ?', patch.name, id)
+      if (patch.topic !== undefined) this.run('UPDATE channels SET topic = ? WHERE id = ?', patch.topic, id)
+      if (patch.userLimit !== undefined) {
+        this.run('UPDATE channels SET user_limit = ? WHERE id = ?', patch.userLimit, id)
+      }
+    })
     return this.getChannel(id)
   }
 
@@ -1751,7 +2088,10 @@ export class SqliteRepository implements Repository {
 
   // ---- Maintenance and legacy identities ----
 
-  async purgeExpired(now: number, retention: { sessionsMs: number; auditMs: number }) {
+  async purgeExpired(
+    now: number,
+    retention: { sessionsMs: number; auditMs: number; pendingSignupMs?: number }
+  ) {
     const out: Record<string, number> = {}
     this.transaction(() => {
       const cutoff = now - retention.sessionsMs
@@ -1769,6 +2109,23 @@ export class SqliteRepository implements Repository {
           cutoff
         ).changes
       )
+      out.emailCodes = Number(
+        this.run(
+          'DELETE FROM email_codes WHERE (used_at IS NOT NULL AND used_at < ?) OR expires_at < ?',
+          cutoff,
+          cutoff
+        ).changes
+      )
+      if (retention.pendingSignupMs !== undefined) {
+        // Never-confirmed self-registrations free their username and address again. They have
+        // no messages, memberships or sessions (they could never sign in).
+        out.pendingSignups = Number(
+          this.run(
+            'DELETE FROM users WHERE signup_pending = 1 AND created_at < ?',
+            now - retention.pendingSignupMs
+          ).changes
+        )
+      }
       out.auditEvents = Number(
         this.run('DELETE FROM audit_events WHERE at < ?', now - retention.auditMs).changes
       )
@@ -2122,9 +2479,13 @@ export class SqliteRepository implements Repository {
   // ---- Attachments ----
 
   async createAttachment(a: AttachmentRecord) {
+    this.insertAttachment(a)
+  }
+
+  private insertAttachment(a: AttachmentRecord): void {
     this.run(
-      `INSERT INTO attachments (id, message_id, channel_id, uploader_id, filename, content_type, kind, size, width, height, sha256, position, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO attachments (id, message_id, channel_id, uploader_id, filename, content_type, kind, size, width, height, sha256, position, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       a.id,
       a.messageId === null ? null : Number(a.messageId),
       a.channelId,
@@ -2137,7 +2498,8 @@ export class SqliteRepository implements Repository {
       a.height,
       a.sha256,
       a.position,
-      a.createdAt
+      a.createdAt,
+      a.expiresAt ?? null
     )
   }
 
@@ -2188,16 +2550,134 @@ export class SqliteRepository implements Repository {
   }
 
   async attachmentUsage(uploaderId: string) {
+    // Large files have their own pool (largeFileUsage); normal quotas count normal files only,
+    // including chunked uploads of normal-sized files still in progress (their space is
+    // reserved, so parallel uploads can't overshoot the quota together).
     const user = this.get(
-      'SELECT COALESCE(SUM(size), 0) AS bytes, SUM(message_id IS NULL) AS pending FROM attachments WHERE uploader_id = ?',
+      `SELECT COALESCE(SUM(CASE WHEN expires_at IS NULL THEN size ELSE 0 END), 0) AS bytes,
+              SUM(message_id IS NULL) AS pending
+       FROM attachments WHERE uploader_id = ?`,
       uploaderId
     )
-    const total = this.get('SELECT COALESCE(SUM(size), 0) AS bytes FROM attachments')
+    const total = this.get('SELECT COALESCE(SUM(size), 0) AS bytes FROM attachments WHERE expires_at IS NULL')
+    const uploading = this.get(
+      `SELECT COALESCE(SUM(CASE WHEN user_id = ? THEN size ELSE 0 END), 0) AS mine,
+              COALESCE(SUM(size), 0) AS everyone
+       FROM upload_sessions WHERE ephemeral = 0`,
+      uploaderId
+    )
     return {
-      user: num(user?.bytes ?? 0),
-      total: num(total?.bytes ?? 0),
+      user: num(user?.bytes ?? 0) + num(uploading?.mine ?? 0),
+      total: num(total?.bytes ?? 0) + num(uploading?.everyone ?? 0),
       pendingCount: num(user?.pending ?? 0)
     }
+  }
+
+  // ---- Large files (Milestone 13) ----
+
+  async createUploadSession(s: UploadSessionRecord) {
+    this.run(
+      `INSERT INTO upload_sessions (id, user_id, channel_id, filename, content_type, kind, size, received, ephemeral, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      s.id,
+      s.userId,
+      s.channelId,
+      s.filename,
+      s.contentType,
+      s.kind,
+      s.size,
+      s.received,
+      s.ephemeral ? 1 : 0,
+      s.createdAt,
+      s.updatedAt
+    )
+  }
+
+  async getUploadSession(id: string) {
+    const r = this.get('SELECT * FROM upload_sessions WHERE id = ?', id)
+    return r && toUploadSession(r)
+  }
+
+  async listUploadSessions(userId: string) {
+    return this.all('SELECT * FROM upload_sessions WHERE user_id = ? ORDER BY created_at', userId).map(
+      toUploadSession
+    )
+  }
+
+  async advanceUploadSession(id: string, expectedReceived: number, received: number, now: number) {
+    const r = this.run(
+      'UPDATE upload_sessions SET received = ?, updated_at = ? WHERE id = ? AND received = ? AND ? <= size',
+      received,
+      now,
+      id,
+      expectedReceived,
+      received
+    )
+    return Number(r.changes) === 1
+  }
+
+  async deleteUploadSession(id: string) {
+    const r = this.get('SELECT * FROM upload_sessions WHERE id = ?', id)
+    if (!r) return undefined
+    this.run('DELETE FROM upload_sessions WHERE id = ?', id)
+    return toUploadSession(r)
+  }
+
+  async listAbandonedUploadSessions(before: number) {
+    return this.all('SELECT * FROM upload_sessions WHERE updated_at < ? LIMIT 1000', before).map(toUploadSession)
+  }
+
+  async listUploadSessionIds() {
+    return new Set(this.all('SELECT id FROM upload_sessions').map((r) => str(r.id)))
+  }
+
+  async completeUploadSession(sessionId: string, attachment: AttachmentRecord) {
+    let ok = false
+    this.transaction(() => {
+      const r = this.run('DELETE FROM upload_sessions WHERE id = ? AND received = size', sessionId)
+      if (Number(r.changes) !== 1) return
+      this.insertAttachment(attachment)
+      ok = true
+    })
+    return ok
+  }
+
+  async largeFileUsage(userId: string) {
+    const files = this.get(
+      `SELECT COALESCE(SUM(CASE WHEN uploader_id = ? THEN size ELSE 0 END), 0) AS mine,
+              COALESCE(SUM(size), 0) AS everyone
+       FROM attachments WHERE expires_at IS NOT NULL AND expired_at IS NULL`,
+      userId
+    )
+    const sessions = this.get(
+      `SELECT COALESCE(SUM(CASE WHEN user_id = ? AND ephemeral = 1 THEN size ELSE 0 END), 0) AS mine,
+              COALESCE(SUM(CASE WHEN ephemeral = 1 THEN size ELSE 0 END), 0) AS everyone,
+              SUM(user_id = ?) AS open
+       FROM upload_sessions`,
+      userId,
+      userId
+    )
+    return {
+      user: num(files?.mine ?? 0) + num(sessions?.mine ?? 0),
+      pool: num(files?.everyone ?? 0) + num(sessions?.everyone ?? 0),
+      sessions: num(sessions?.open ?? 0)
+    }
+  }
+
+  async pendingUploadBytes() {
+    return num(this.get('SELECT COALESCE(SUM(size - received), 0) AS bytes FROM upload_sessions')?.bytes ?? 0)
+  }
+
+  async listDueExpirations(now: number, limit: number) {
+    return this.all(
+      'SELECT * FROM attachments WHERE expires_at IS NOT NULL AND expired_at IS NULL AND expires_at <= ? ORDER BY expires_at LIMIT ?',
+      now,
+      limit
+    ).map(toAttachment)
+  }
+
+  async markAttachmentExpired(id: string, now: number) {
+    this.run('UPDATE attachments SET expired_at = ? WHERE id = ? AND expired_at IS NULL', now, id)
   }
 
   // ---- Reactions ----
@@ -2357,17 +2837,20 @@ export class SqliteRepository implements Repository {
         userId,
         channelId
       )
-      if (!state && lastMessageId !== null) {
-        // First time this user sees the channel: start "caught up" rather than flooding them
-        // with every historic message as unread.
+      if (!state) {
+        // First time this user sees the channel: start "caught up" with its history rather
+        // than flooding them with every old message as unread. An empty channel is recorded
+        // too (position 0), so messages posted after this are unread — before, a later visit
+        // took them for history and silently marked them read.
+        const position = lastMessageId === null ? 0 : Number(lastMessageId)
         this.run(
           'INSERT OR IGNORE INTO read_states (user_id, channel_id, last_read_id, updated_at) VALUES (?, ?, ?, ?)',
           userId,
           channelId,
-          Number(lastMessageId),
+          position,
           at
         )
-        state = { last_read_id: lastMessageId }
+        state = { last_read_id: position }
       }
       const lastReadId = state ? str(state.last_read_id) : null
       const unread =

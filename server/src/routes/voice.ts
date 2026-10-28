@@ -7,6 +7,7 @@ import { hostnameOf } from '../lib/network.js'
 import { visibleVoiceStates } from '../realtime.js'
 import { authorizeVoiceJoin, issueVoiceToken } from '../voice/access.js'
 import { rememberVoiceGrant } from '../voice/enforce.js'
+import { claimVoiceSeat } from '../voice/seats.js'
 
 const voiceDisabled = () =>
   new ApiError(503, 'voice_unavailable', 'Voice is not configured on this server.')
@@ -38,6 +39,8 @@ export function registerVoiceRoutes(app: FastifyInstance, ctx: AppContext): void
       if (!limit.ok) throw tooManyRequests(limit.retryAfterMs)
 
       const { channel, permissions } = await authorizeVoiceJoin(ctx.access, user, request.params.channelId)
+      // User limit (Milestone 13): refuses the token when the channel is full.
+      claimVoiceSeat(ctx, channel, user.id, permissions)
       // Clients that reached us on a private address (LAN) get the LAN signaling URL; everyone
       // else (through the TLS proxy) gets the public wss:// URL. The Host header only picks
       // between two configured URLs, so a forged one can't point anyone elsewhere.

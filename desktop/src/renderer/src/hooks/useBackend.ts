@@ -38,9 +38,22 @@ import {
   toMessage,
   toggleReactionLocally
 } from '../chat/messageState'
-import { applyIncoming, applyReadPosition, type ReadState } from '../chat/unread'
+import {
+  applyIncoming,
+  applyReadPosition,
+  dropMention,
+  mentionCount,
+  withMentions,
+  type ReadState
+} from '../chat/unread'
+import { createMentionDetector, type MentionDetector } from '../chat/mentions'
 import { AttachmentCache } from '../chat/attachmentCache'
-import { parseProfileMediaKey } from '../lib/profileMedia'
+import {
+  GIF_PREFIX,
+  parseGifKey,
+  parseProfileMediaKey,
+  SERVER_ICON_PREFIX
+} from '../lib/profileMedia'
 import { applyRelationship, bumpConversation, type Relationships } from '../chat/conversations'
 import { checkLivekitUrl } from '../net/endpoints'
 import { extraLivekitUrl } from '../net/config'
@@ -113,6 +126,10 @@ export function describeError(err: unknown): string {
 export interface Backend {
   phase: 'loading' | 'ready' | 'error'
   loadError?: string
+  /** The initial load failed because the server couldn't be reached. */
+  loadOffline: boolean
+  /** Consecutive failed initial loads (0 once loaded). */
+  loadFailures: number
   /** The API client of this session (management screens use it directly). */
   api: ApiClient
   me: ApiMe | null
@@ -128,6 +145,8 @@ export interface Backend {
   readStates: Record<string, ReadState>
   /** Channels with unread messages from others. */
   unread: Set<string>
+  /** Unread mentions of you per channel / conversation (only those that have some). */
+  mentionCounts: Record<string, number>
   /** Bumped when a channel's pins change (pinned-messages view refreshes). */
   pinsRevision: Record<string, number>
   /** userId → voice channelId, from the backend (LiveKit webhooks). */
@@ -226,6 +245,14 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     () =>
       new AttachmentCache(
         (key) => {
+          if (key.startsWith(SERVER_ICON_PREFIX)) {
+            const { id, size } = parseProfileMediaKey(key.slice(SERVER_ICON_PREFIX.length))
+            return api.fetchServerIcon(id, size)
+          }
+          if (key.startsWith(GIF_PREFIX)) {
+            const { id, size } = parseGifKey(key)
+            return api.fetchGifMedia(id, size)
+          }
           const { id, size } = parseProfileMediaKey(key)
           return api.fetchProfileMedia(id, size)
         },
@@ -236,6 +263,10 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   const [preferencesLoaded, setPreferencesLoaded] = useState(false)
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
   const [loadError, setLoadError] = useState<string>()
+  /** The initial load failed because the server couldn't be reached (retried automatically). */
+  const [loadOffline, setLoadOffline] = useState(false)
+  /** Consecutive failed initial loads (for the retry backoff). */
+  const [loadFailures, setLoadFailures] = useState(0)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [me, setMe] = useState<ApiMe | null>(null)
   const [users, setUsers] = useState<Record<string, ApiUser>>({})
@@ -311,6 +342,16 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   useEffect(() => {
     usersRef.current = users
   }, [users])
+  // Same mention rule as highlighting and notifications (chat/mentions.ts), for unread badges.
+  const mentionDetectorRef = useRef<MentionDetector | null>(null)
+  useEffect(() => {
+    mentionDetectorRef.current = me
+      ? createMentionDetector(
+          { username: me.username, displayName: me.displayName },
+          Object.values(users).flatMap((u) => [u.username, u.displayName])
+        )
+      : null
+  }, [me, users])
   useEffect(() => {
     membersRef.current = members
   }, [members])
@@ -344,21 +385,52 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     [updateMessages]
   )
 
-  const loadReadStates = useCallback(async () => {
-    try {
-      const list = await api.readStates()
-      setReadStates(
-        Object.fromEntries(
-          list.map((r) => [
-            r.channelId,
-            { lastReadId: r.lastReadId, unreadCount: r.unreadCount, lastMessageId: r.lastMessageId }
-          ])
+  const loadReadStates = useCallback(
+    async (detector?: MentionDetector) => {
+      try {
+        const list = await api.readStates()
+        // Mentions already found stay while still unread (a reload only moves read positions).
+        setReadStates((prev) =>
+          Object.fromEntries(
+            list.map((r) => {
+              const base: ReadState = {
+                lastReadId: r.lastReadId,
+                unreadCount: r.unreadCount,
+                lastMessageId: r.lastMessageId
+              }
+              const known = prev[r.channelId]?.mentionIds
+              return [r.channelId, known?.length ? withMentions(base, known) : base]
+            })
+          )
         )
-      )
-    } catch (err) {
-      handleAuthError(err)
-    }
-  }, [api, handleAuthError])
+        if (!detector) return
+        // Mention badges after a restart: look at the unread messages themselves (newest 50
+        // per channel, at most 25 channels, one request at a time) — counts are never guessed.
+        const meId = meIdRef.current
+        const targets = list.filter((r) => r.unreadCount > 0).slice(0, 25)
+        for (const r of targets) {
+          const page = await api
+            .messages(
+              r.channelId,
+              r.lastReadId ? { after: r.lastReadId, limit: 50 } : { limit: 50 }
+            )
+            .catch(() => [])
+          const ids = page
+            .filter((m) => m.authorId !== meId && detector.mentions(m.content))
+            .map((m) => m.id)
+          if (ids.length > 0) {
+            setReadStates((prev) => ({
+              ...prev,
+              [r.channelId]: withMentions(prev[r.channelId], ids)
+            }))
+          }
+        }
+      } catch (err) {
+        handleAuthError(err)
+      }
+    },
+    [api, handleAuthError]
+  )
 
   const loadConnections = useCallback(async () => {
     try {
@@ -389,15 +461,24 @@ export function useBackend(session: BackendSession, options: Options): Backend {
       .then(([meUser, serverList, userList]) => {
         if (cancelled) return
         setMe(meUser)
+        meIdRef.current = meUser.id
         setServers(serverList)
         setUsers(Object.fromEntries(userList.map((u) => [u.id, u])))
         setPhase('ready')
-        void loadReadStates()
+        setLoadFailures(0)
+        void loadReadStates(
+          createMentionDetector(
+            { username: meUser.username, displayName: meUser.displayName },
+            userList.flatMap((u) => [u.username, u.displayName])
+          )
+        )
         void loadConnections()
       })
       .catch((err: unknown) => {
         if (cancelled || handleAuthError(err)) return
         setLoadError(describeError(err))
+        setLoadOffline(err instanceof ApiError && err.isNetwork)
+        setLoadFailures((n) => n + 1)
         setPhase('error')
       })
     // Preferences are not essential to start: defaults apply until they arrive.
@@ -419,7 +500,8 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         const serverList = await api.servers()
         if (cancelled) return
         setServers(serverList)
-        void loadReadStates()
+        // Also finds mentions that arrived while we were offline.
+        void loadReadStates(mentionDetectorRef.current ?? undefined)
         void loadConnections()
         for (const [channelId, ch] of Object.entries(channelsRef.current)) {
           if (!ch.loaded || ch.hasNewer) continue
@@ -488,9 +570,11 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         loadBufferRef.current.get(m.channelId)?.messages.push(message)
         // When the user is reading old history, don't splice the live message into that window.
         if (!channelsRef.current[m.channelId]?.hasNewer) applyMessages(m.channelId, [message])
+        const mentioned =
+          m.authorId !== meIdRef.current && Boolean(mentionDetectorRef.current?.mentions(m.content))
         setReadStates((prev) => ({
           ...prev,
-          [m.channelId]: applyIncoming(prev[m.channelId], m, meIdRef.current)
+          [m.channelId]: applyIncoming(prev[m.channelId], m, meIdRef.current, mentioned)
         }))
         if (conversationsRef.current[m.channelId]) {
           setConversations((prev) => bumpConversation(prev, m.channelId, m.id))
@@ -503,12 +587,28 @@ export function useBackend(session: BackendSession, options: Options): Backend {
       onMessageUpdate: (edit) => {
         markLoadStale(edit.channelId)
         updateMessages(edit.channelId, (ms) => applyEdit(ms, edit))
+        // Edited so it no longer mentions you: the badge goes away (adding one doesn't notify).
+        if (
+          typeof edit.content === 'string' &&
+          !mentionDetectorRef.current?.mentions(edit.content)
+        ) {
+          setReadStates((prev) => {
+            const next = dropMention(prev[edit.channelId], edit.id)
+            return next === prev[edit.channelId] || !next
+              ? prev
+              : { ...prev, [edit.channelId]: next }
+          })
+        }
       },
       onMessageDelete: ({ id, channelId }) => {
         markLoadStale(channelId)
         const removed = channelsRef.current[channelId]?.messages.find((m) => m.id === id)
         for (const a of removed?.attachments ?? []) attachments.forget(a.id)
         updateMessages(channelId, (ms) => applyDelete(ms, id))
+        setReadStates((prev) => {
+          const next = dropMention(prev[channelId], id)
+          return next === prev[channelId] || !next ? prev : { ...prev, [channelId]: next }
+        })
       },
       onReactionUpdate: (event) => {
         markLoadStale(event.channelId)
@@ -1431,10 +1531,21 @@ export function useBackend(session: BackendSession, options: Options): Backend {
       ),
     [readStates]
   )
+  /** Unread mentions of you per channel (only channels that have some). */
+  const mentionCounts = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const [id, r] of Object.entries(readStates)) {
+      const n = mentionCount(r)
+      if (n > 0) out[id] = n
+    }
+    return out
+  }, [readStates])
 
   return {
     phase,
     loadError,
+    loadOffline,
+    loadFailures,
     api,
     me,
     users,
@@ -1446,6 +1557,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     channels,
     readStates,
     unread,
+    mentionCounts,
     pinsRevision,
     voiceStates,
     voiceStreaming,

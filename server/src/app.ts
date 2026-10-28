@@ -12,6 +12,7 @@ import { createLimiters, type AppContext } from './context.js'
 import type { Repository } from './db/repository.js'
 import { GatewayHub, type GatewayOptions } from './gateway.js'
 import { ApiError, tooManyRequests } from './lib/errors.js'
+import { createMailer, MailOutbox, type Mailer } from './mail/mailer.js'
 import type { ApiErrorBody } from './protocol.js'
 import { join } from 'node:path'
 import { ProfileMediaStore } from './profile/media.js'
@@ -21,18 +22,24 @@ import { cleanupAttachments, registerAttachmentRoutes } from './routes/attachmen
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerConversationRoutes } from './routes/conversations.js'
 import { registerDevAuthRoutes } from './routes/devAuth.js'
+import { PENDING_SIGNUP_TTL_MS, registerEmailRoutes } from './routes/email.js'
 import { registerInviteRoutes } from './routes/invites.js'
 import { registerMemberRoutes } from './routes/members.js'
 import { registerMessageRoutes } from './routes/messages.js'
 import { registerReadStateRoutes, registerSearchRoutes } from './routes/readStates.js'
 import { registerRelationshipRoutes } from './routes/relationships.js'
 import { registerServerRoutes } from './routes/servers.js'
+import { cleanupServerIcons, expireTimeouts, registerServerAdminRoutes } from './routes/serverAdmin.js'
 import { cleanupProfileMedia, registerProfileRoutes } from './routes/profile.js'
 import { registerUserRoutes } from './routes/users.js'
 import { registerVoiceRoutes } from './routes/voice.js'
 import { voiceAuthorizer } from './voice/enforce.js'
 import { LiveKitBridge } from './voice/livekitBridge.js'
+import { voiceSeatAdmission } from './voice/seats.js'
 import { VoiceStateStore } from './voice/voiceStates.js'
+import { createGifProvider, type GifProvider } from './gifs/provider.js'
+import { registerGifRoutes } from './routes/gifs.js'
+import { cleanupLargeFiles, LARGE_CHUNK_BYTES, registerLargeUploadRoutes } from './routes/largeUploads.js'
 
 export interface BuildOptions {
   gateway?: Partial<GatewayOptions>
@@ -45,6 +52,16 @@ export interface BuildOptions {
   statusExpiryIntervalMs?: number
   /** Override the password hasher (tests use cheaper, still OWASP-compliant parameters). */
   hasher?: PasswordHasher
+  /** Override the email transport (tests use MemoryMailer). */
+  mailer?: Mailer
+  /** Delay before the one retry of a failed email (tests use 0). */
+  mailRetryDelayMs?: number
+  /** Override the GIF provider (tests inject a mock or a fake GIPHY). */
+  gifProvider?: GifProvider | null
+  /** Provider requests allowed per hour for the whole server (default 90). */
+  gifProviderCallsPerHour?: number
+  /** How often large files are expired and abandoned uploads removed; 0 disables (tests). */
+  largeFileSweepIntervalMs?: number
 }
 
 function errorBody(code: string, message: string, retryAfterMs?: number): ApiErrorBody {
@@ -98,10 +115,12 @@ export async function buildApp(
     attachments: new AttachmentStore(config.attachments.dir),
     // Same volume as attachments; AttachmentStore only ever touches its files/ and tmp/ folders.
     profileMedia: new ProfileMediaStore(join(config.attachments.dir, 'profile')),
+    serverIcons: new ProfileMediaStore(join(config.attachments.dir, 'server-icons')),
     audit: new AuditLog(repo, app.log),
     hasher:
       options.hasher ??
       new PasswordHasher(config.auth.argon2, new HashGate(config.auth.hashConcurrency, 32)),
+    mail: new MailOutbox(options.mailer ?? createMailer(config.mail), app.log, options.mailRetryDelayMs),
     voice: { store: voiceStore, bridge: null },
     limiters: createLimiters()
   } as unknown as AppContext
@@ -137,7 +156,8 @@ export async function buildApp(
             app.log.error({ err }, 'publishing voice changes failed')
           )
         },
-        app.log
+        app.log,
+        { admit: voiceSeatAdmission(ctx) }
       )
     : null
   const hub = ctx.hub
@@ -221,18 +241,41 @@ export async function buildApp(
 
   app.get('/health', async () => ({ ok: true, connections: hub.connectionCount }))
 
+  const gifProvider =
+    options.gifProvider !== undefined ? options.gifProvider : await createGifProvider(config.gifs)
+
   app.get('/api/meta', async () => ({
     name: 'Discord 2.0',
-    apiVersion: 4,
+    apiVersion: 5,
     devAuth: config.devAuth,
     voice: config.livekit !== null,
-    // Real accounts; new ones only with an invitation from an administrator.
+    // Real accounts. New ones: 'invite' = invitation code from an administrator, 'open' =
+    // anyone with an email address they confirm, 'closed' = none.
     accounts: true,
-    registration: 'invite',
+    registration: config.registration.mode,
+    // Milestone 13: email sign-up/sign-in endpoints exist; `email` = this server can send
+    // email (password reset by email, confirming an address).
+    emailAccounts: true,
+    email: ctx.mail.available,
     // Milestone 8: profiles, profile images, synced status and preferences.
     profiles: true,
     // Milestone 10: friends, blocking, direct and group conversations.
-    connections: true
+    connections: true,
+    // Milestone 13 (API 5): server icons/descriptions, channel layout, voice user limits,
+    // member timeouts, default notification level.
+    serverAdmin: true,
+    // Milestone 13: GIF picker through this server (null = not set up).
+    gifs: gifProvider ? { provider: gifProvider.name, attribution: gifProvider.attribution } : null,
+    // Milestone 13: chunked uploads of large files (null = off; the default).
+    largeFiles: config.attachments.large
+      ? {
+          maxBytes: config.attachments.large.maxFileBytes,
+          ephemeralThresholdBytes: config.attachments.large.ephemeralThresholdBytes,
+          ephemeralMs: config.attachments.large.ephemeralMs,
+          chunkBytes: LARGE_CHUNK_BYTES,
+          normalMaxBytes: config.attachments.maxFileBytes
+        }
+      : null
   }))
 
   app.get(
@@ -250,11 +293,13 @@ export async function buildApp(
   )
 
   registerAuthRoutes(app, ctx)
+  registerEmailRoutes(app, ctx)
   registerDevAuthRoutes(app, ctx)
   registerAdminRoutes(app, ctx)
   registerUserRoutes(app, ctx)
   registerProfileRoutes(app, ctx)
   registerServerRoutes(app, ctx)
+  registerServerAdminRoutes(app, ctx)
   registerMemberRoutes(app, ctx)
   registerInviteRoutes(app, ctx)
   registerMessageRoutes(app, ctx)
@@ -264,6 +309,8 @@ export async function buildApp(
   registerVoiceRoutes(app, ctx)
   registerRelationshipRoutes(app, ctx)
   registerConversationRoutes(app, ctx)
+  registerGifRoutes(app, ctx, gifProvider, { providerCallsPerHour: options.gifProviderCallsPerHour })
+  registerLargeUploadRoutes(app, ctx)
 
   const cleanupMs = options.attachmentCleanupIntervalMs ?? 60 * 60_000
   let cleanupTimer: NodeJS.Timeout | null = null
@@ -272,9 +319,14 @@ export async function buildApp(
       const run = (): void => {
         cleanupAttachments(ctx, app.log)
           .then(() => cleanupProfileMedia(ctx, app.log))
+          .then(() => cleanupServerIcons(ctx, app.log))
           .catch((err: unknown) => app.log.error({ err }, 'attachment cleanup failed'))
         repo
-          .purgeExpired(Date.now(), { sessionsMs: 30 * DAY, auditMs: 365 * DAY })
+          .purgeExpired(Date.now(), {
+            sessionsMs: 30 * DAY,
+            auditMs: 365 * DAY,
+            pendingSignupMs: PENDING_SIGNUP_TTL_MS
+          })
           .then((removed) => {
             if (Object.values(removed).some((n) => n > 0)) app.log.info({ removed }, 'expired auth data purged')
           })
@@ -286,7 +338,8 @@ export async function buildApp(
     })
   }
 
-  // Custom statuses with an expiry (30 min, 1 h, today…) clear themselves and notify people.
+  // Custom statuses with an expiry (30 min, 1 h, today…) clear themselves and notify people;
+  // ended member timeouts are cleared the same way (access itself already compares the time).
   const expiryMs = options.statusExpiryIntervalMs ?? 15_000
   let expiryTimer: NodeJS.Timeout | null = null
   if (expiryMs > 0) {
@@ -295,6 +348,7 @@ export async function buildApp(
         expireCustomStatuses(ctx).catch((err: unknown) =>
           app.log.error({ err }, 'custom status expiry failed')
         )
+        expireTimeouts(ctx).catch((err: unknown) => app.log.error({ err }, 'timeout expiry failed'))
       }, expiryMs)
       expiryTimer.unref()
     })
@@ -303,10 +357,25 @@ export async function buildApp(
   const reconcileMs = options.voiceReconcileIntervalMs ?? 30_000
   if (bridge && reconcileMs > 0) app.addHook('onReady', async () => bridge.start(reconcileMs))
 
+  // Large files: expiry and abandoned uploads (runs at start, so restarts catch up).
+  const largeSweepMs = options.largeFileSweepIntervalMs ?? 5 * 60_000
+  let largeSweepTimer: NodeJS.Timeout | null = null
+  if (largeSweepMs > 0) {
+    app.addHook('onReady', async () => {
+      const run = (): void => {
+        cleanupLargeFiles(ctx, app.log).catch((err: unknown) => app.log.error({ err }, 'large file cleanup failed'))
+      }
+      run()
+      largeSweepTimer = setInterval(run, largeSweepMs)
+      largeSweepTimer.unref()
+    })
+  }
+
   app.addHook('onClose', async () => {
     bridge?.stop()
     if (cleanupTimer) clearInterval(cleanupTimer)
     if (expiryTimer) clearInterval(expiryTimer)
+    if (largeSweepTimer) clearInterval(largeSweepTimer)
     hub.shutdown()
     for (const limiter of Object.values(ctx.limiters)) limiter.dispose()
   })

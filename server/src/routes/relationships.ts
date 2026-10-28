@@ -87,7 +87,7 @@ export function registerRelationshipRoutes(app: FastifyInstance, ctx: AppContext
       }
       if (username === user.username) throw badRequest('You can’t add yourself as a friend.', 'self_request')
       const target = await ctx.repo.findUserByUsername(username)
-      if (!target || target.bot || target.disabledAt) throw requestFailed()
+      if (!target || target.bot || target.disabledAt || target.signupPending) throw requestFailed()
       const iBlocked = (await ctx.repo.listRelationships(user.id)).some(
         (r) => r.userId === target.id && r.type === 'blocked'
       )

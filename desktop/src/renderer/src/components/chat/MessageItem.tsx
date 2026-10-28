@@ -8,6 +8,23 @@ import { LIMITS } from '../../net/protocol'
 import Avatar from '../Avatar'
 import Markdown from './Markdown'
 import AttachmentList from './AttachmentList'
+import GifEmbed from './GifEmbed'
+import { deleteMode } from '../../chat/messageDelete'
+import { parseGifMessage } from '../../chat/gifs'
+
+function TrashGlyph(): React.JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none">
+      <path
+        d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
 
 export interface MessageActions {
   reply: (m: Message) => void
@@ -15,6 +32,8 @@ export interface MessageActions {
   cancelEdit: () => void
   saveEdit: (m: Message, content: string) => Promise<string | null>
   requestDelete: (m: Message) => void
+  /** Deletes without the confirmation dialog (Shift + Delete button). */
+  quickDelete: (m: Message) => void
   react: (m: Message, emoji: string) => void
   openReactionPicker: (m: Message, anchor: DOMRect) => void
   openMenu: (m: Message, x: number, y: number) => void
@@ -36,6 +55,15 @@ interface MessageItemProps {
   compact: boolean
   showTimestamps: boolean
   isSelf: boolean
+  /** Own message or Manage Messages (the server re-checks). */
+  canDelete?: boolean
+  /** What the viewer may do here (the server re-checks); hides the matching controls. */
+  canReact?: boolean
+  canReply?: boolean
+  /** Own message, and not timed out. */
+  canEdit?: boolean
+  /** A delete request for this message is in flight. */
+  deleting?: boolean
   mentioned: boolean
   flash: boolean
   editing: boolean
@@ -166,7 +194,23 @@ function AuthorName({
 function MessageItem(props: MessageItemProps): React.JSX.Element {
   const { message, author, actions, editing } = props
   const local = message.pending || Boolean(message.failed)
+  // A message that is just one GIF link shows the GIF (when this server's provider knows it).
+  const gif = message.attachments?.length ? null : parseGifMessage(message.content)
   const status = message.failed ? ' failed' : message.pending ? ' pending' : ''
+  // Selection state as it was before this press: Shift+mousedown would otherwise extend the
+  // selection to the button and make every Shift+click look like "text is selected".
+  const selectionAtPress = useRef<boolean | null>(null)
+  const hasTextSelection = (): boolean => {
+    const selection = window.getSelection()
+    return Boolean(selection && !selection.isCollapsed)
+  }
+  const startDelete = (shiftKey: boolean): void => {
+    const selected = selectionAtPress.current ?? hasTextSelection()
+    selectionAtPress.current = null
+    if (deleteMode({ shiftKey, hasTextSelection: selected }) === 'quick')
+      actions.quickDelete(message)
+    else actions.requestDelete(message)
+  }
 
   const reply = message.replyTo && (
     <button
@@ -205,7 +249,16 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
     <EditBox message={message} actions={actions} />
   ) : (
     <>
-      {message.content && (
+      {message.content && gif ? (
+        <GifEmbed
+          gif={gif}
+          fallback={
+            <div className="message-content">
+              <Markdown content={message.content} onJump={actions.jump} />
+            </div>
+          }
+        />
+      ) : message.content ? (
         <div className="message-content">
           <Markdown
             content={message.content}
@@ -220,7 +273,7 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
             </span>
           ) : null}
         </div>
-      )}
+      ) : null}
       {message.attachments && message.attachments.length > 0 && (
         <AttachmentList
           attachments={message.attachments}
@@ -241,24 +294,26 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
           onClick={() => actions.react(message, r.emoji)}
           aria-pressed={r.me}
           aria-label={`${r.emoji} ${r.count} reaction${r.count === 1 ? '' : 's'}${r.me ? ', including you' : ''}`}
-          disabled={local}
+          disabled={local || props.canReact === false}
         >
           <span className="reaction-emoji">{r.emoji}</span>
           <ReactionCount count={r.count} />
         </button>
       ))}
-      <button
-        type="button"
-        className="reaction add"
-        onClick={(e) =>
-          actions.openReactionPicker(message, e.currentTarget.getBoundingClientRect())
-        }
-        aria-label="Add reaction"
-        title="Add reaction"
-        disabled={local}
-      >
-        +
-      </button>
+      {props.canReact !== false && (
+        <button
+          type="button"
+          className="reaction add"
+          onClick={(e) =>
+            actions.openReactionPicker(message, e.currentTarget.getBoundingClientRect())
+          }
+          aria-label="Add reaction"
+          title="Add reaction"
+          disabled={local}
+        >
+          +
+        </button>
+      )}
     </div>
   )
 
@@ -275,32 +330,51 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
   )
 
   const toolbar = !local && !editing && (
-    <div className="message-toolbar" role="toolbar" aria-label="Message actions">
-      {QUICK_REACTIONS.slice(0, 3).map((emoji) => (
+    <div
+      className="message-toolbar"
+      role="toolbar"
+      aria-label="Message actions"
+      onMouseDown={(e) => {
+        // Rapid Shift+clicks (e.g. on a button that just became disabled) must not start a text
+        // selection, which would make the next quick delete fall back to the confirmation.
+        if (e.shiftKey) e.preventDefault()
+      }}
+    >
+      {props.canReact !== false &&
+        QUICK_REACTIONS.slice(0, 3).map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            onClick={() => actions.react(message, emoji)}
+            aria-label={`React with ${emoji}`}
+            title={`React with ${emoji}`}
+          >
+            {emoji}
+          </button>
+        ))}
+      {props.canReact !== false && (
         <button
-          key={emoji}
           type="button"
-          onClick={() => actions.react(message, emoji)}
-          aria-label={`React with ${emoji}`}
-          title={`React with ${emoji}`}
+          onClick={(e) =>
+            actions.openReactionPicker(message, e.currentTarget.getBoundingClientRect())
+          }
+          aria-label="Add reaction"
+          title="Add reaction"
         >
-          {emoji}
+          ☺
         </button>
-      ))}
-      <button
-        type="button"
-        onClick={(e) =>
-          actions.openReactionPicker(message, e.currentTarget.getBoundingClientRect())
-        }
-        aria-label="Add reaction"
-        title="Add reaction"
-      >
-        ☺
-      </button>
-      <button type="button" onClick={() => actions.reply(message)} aria-label="Reply" title="Reply">
-        ↩
-      </button>
-      {props.isSelf && (
+      )}
+      {props.canReply !== false && (
+        <button
+          type="button"
+          onClick={() => actions.reply(message)}
+          aria-label="Reply"
+          title="Reply"
+        >
+          ↩
+        </button>
+      )}
+      {(props.canEdit ?? props.isSelf) && (
         <button
           type="button"
           onClick={() => actions.startEdit(message)}
@@ -308,6 +382,29 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
           title="Edit"
         >
           ✎
+        </button>
+      )}
+      {props.canDelete && (
+        <button
+          type="button"
+          className="message-toolbar-delete"
+          disabled={props.deleting}
+          onMouseDown={(e) => {
+            selectionAtPress.current = hasTextSelection()
+            if (e.shiftKey) e.preventDefault()
+          }}
+          onClick={(e) => startDelete(e.shiftKey)}
+          onKeyDown={(e) => {
+            // Keyboard: Shift+Enter / Shift+Space delete immediately, like Shift+click.
+            if (e.shiftKey && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault()
+              startDelete(true)
+            }
+          }}
+          aria-label="Delete message (hold Shift to skip confirmation)"
+          title="Delete — hold Shift to skip confirmation"
+        >
+          <TrashGlyph />
         </button>
       )}
       <button
@@ -326,7 +423,9 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
 
   const className = `message${props.compact ? ' compact' : props.grouped && !message.replyTo ? ' grouped' : ''}${
     props.mentioned ? ' mentioned' : ''
-  }${props.flash ? ' flash' : ''}${editing ? ' editing' : ''}${message.pinned ? ' pinned' : ''}${status}`
+  }${props.flash ? ' flash' : ''}${editing ? ' editing' : ''}${message.pinned ? ' pinned' : ''}${
+    props.deleting ? ' deleting' : ''
+  }${status}`
 
   const onContextMenu = (e: React.MouseEvent): void => {
     if (local || editing) return
@@ -334,9 +433,17 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
     actions.openMenu(message, e.clientX, e.clientY)
   }
 
+  // Each message is one Tab stop; keyboard focus reveals its toolbar (Tab again to reach it).
+  const articleProps = {
+    className,
+    'data-message-id': message.id,
+    onContextMenu,
+    tabIndex: 0
+  }
+
   if (props.compact) {
     return (
-      <article className={className} data-message-id={message.id} onContextMenu={onContextMenu}>
+      <article {...articleProps}>
         {reply}
         <div className="message-compact-line">
           {props.showTimestamps && (
@@ -357,7 +464,7 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
 
   if (props.grouped && !message.replyTo) {
     return (
-      <article className={className} data-message-id={message.id} onContextMenu={onContextMenu}>
+      <article {...articleProps}>
         <time className="message-hover-time" title={formatTimestamp(message.timestamp)}>
           {formatTime(message.timestamp)}
         </time>
@@ -372,7 +479,7 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
   }
 
   return (
-    <article className={className} data-message-id={message.id} onContextMenu={onContextMenu}>
+    <article {...articleProps}>
       {reply}
       <div className="message-main">
         <button

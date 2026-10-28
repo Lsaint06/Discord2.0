@@ -41,7 +41,8 @@ export interface ServerOption {
 }
 
 /**
- * The message for a server that couldn't be reached.
+ * The message for a server that couldn't be reached. Plain language: no addresses (those are in
+ * Connection settings for anyone who needs them).
  * @param serverUrl the selected server ("https://host" or "http://192.168.x.x:3001")
  * @param servers all servers built into the app (used to suggest the other option)
  */
@@ -50,12 +51,6 @@ export function describeConnectionFailure(
   serverUrl: string,
   servers: ServerOption[]
 ): string {
-  let host = serverUrl
-  try {
-    host = new URL(serverUrl).host
-  } catch {
-    // keep the raw value
-  }
   const current = servers.find((s) => s.id === serverUrl)
   const homeOnly = current ? current.insecure : serverUrl.startsWith('http:')
   const internet = servers.find((s) => !s.insecure && s.id !== serverUrl)
@@ -69,17 +64,18 @@ export function describeConnectionFailure(
     )
   }
   const base: Record<Exclude<NetworkProblem, 'certificate'>, string> = {
-    dns: `Can't find ${host}. Check your internet connection.`,
+    dns: "Can't find the Discord 2.0 server. Check your internet connection.",
     offline: "You're offline. Check your internet connection.",
-    refused: `${host} isn't accepting connections right now. It may be restarting; try again in a minute.`,
-    timeout: `${host} didn't respond. It may be offline, or this network blocks it.`,
-    unknown: `Can't reach ${host}.`
+    refused:
+      "The Discord 2.0 server isn't accepting connections right now. It may be restarting; try again in a minute.",
+    timeout: "The Discord 2.0 server didn't respond. It may be offline, or this network blocks it.",
+    unknown: "Can't reach the Discord 2.0 server."
   }
   let text = base[problem]
   if (homeOnly && problem !== 'offline') {
     text +=
-      ' This option only works on the home network.' +
-      (internet ? ` Away from home, choose "${internet.label}" above.` : '')
+      ` ${current ? `"${current.label}"` : 'This connection'} only works on your home network.` +
+      (internet ? ` Away from home, choose "${internet.label}" in Connection settings.` : '')
   }
   return text
 }

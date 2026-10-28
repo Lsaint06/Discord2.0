@@ -4,12 +4,16 @@ import {
   anchoredScrollTop,
   applyIncoming,
   applyReadPosition,
+  dropMention,
+  effectiveNotificationLevel,
   firstUnreadId,
   isNearBottom,
   listChange,
+  mentionCount,
   notificationText,
   shouldAcknowledge,
   shouldNotify,
+  withMentions,
   type NotifyContext
 } from './unread'
 
@@ -78,6 +82,44 @@ describe('read state', () => {
   })
 })
 
+describe('mention counts', () => {
+  it('counts live mentions only while unread and from others', () => {
+    let s = applyIncoming(undefined, { id: '10', authorId: 'bob' }, 'me', true)
+    s = applyIncoming(s, { id: '11', authorId: 'bob' }, 'me', false)
+    s = applyIncoming(s, { id: '12', authorId: 'ann' }, 'me', true)
+    expect(mentionCount(s)).toBe(2)
+    expect(s.unreadCount).toBe(3)
+    // Reading up to 10 leaves one unread mention.
+    s = applyReadPosition(s, '10')
+    expect(s.mentionIds).toEqual(['12'])
+    // Your own message reads everything.
+    s = applyIncoming(s, { id: '13', authorId: 'me' }, 'me', true)
+    expect(mentionCount(s)).toBe(0)
+  })
+
+  it('never counts already-read or duplicate mentions', () => {
+    const read = { lastReadId: '20', unreadCount: 0, lastMessageId: '20' }
+    expect(mentionCount(applyIncoming(read, { id: '19', authorId: 'bob' }, 'me', true))).toBe(0)
+    const s = withMentions(read, ['18', '21', '21', '22'])
+    expect(s.mentionIds).toEqual(['21', '22'])
+    expect(withMentions(s, ['21'])).toBe(s)
+  })
+
+  it('drops deleted (or edited-away) mentions', () => {
+    const s = withMentions({ lastReadId: '1', unreadCount: 2, lastMessageId: '3' }, ['2', '3'])
+    expect(dropMention(s, '2')?.mentionIds).toEqual(['3'])
+    expect(dropMention(s, '9')).toBe(s)
+    expect(dropMention(undefined, '2')).toBeUndefined()
+  })
+
+  it('keeps the newest ids when there are very many', () => {
+    const ids = Array.from({ length: 150 }, (_, i) => String(i + 1))
+    const s = withMentions(undefined, ids)
+    expect(mentionCount(s)).toBe(100)
+    expect(s.mentionIds?.[0]).toBe('51')
+  })
+})
+
 describe('notifications', () => {
   const ctx: NotifyContext = {
     enabled: true,
@@ -100,6 +142,20 @@ describe('notifications', () => {
     expect(shouldNotify(m, { ...ctx, mutedChannels: { c1: true } })).toBe(false)
     expect(shouldNotify({ ...m, authorId: 'me' }, ctx)).toBe(false)
     expect(shouldNotify(m, { ...ctx, activeChannelId: 'c1' })).toBe(false)
+  })
+
+  it('in an "only @mentions" server, notifies only for mentions', () => {
+    expect(shouldNotify(m, { ...ctx, mentionsOnly: true, mentionsMe: false })).toBe(false)
+    expect(shouldNotify(m, { ...ctx, mentionsOnly: true, mentionsMe: true })).toBe(true)
+    expect(shouldNotify(m, { ...ctx, mentionsOnly: false, mentionsMe: false })).toBe(true)
+  })
+
+  it('your per-server choice wins over the server default', () => {
+    expect(effectiveNotificationLevel(undefined, undefined)).toBe('all')
+    expect(effectiveNotificationLevel(undefined, 'mentions')).toBe('mentions')
+    expect(effectiveNotificationLevel('default', 'mentions')).toBe('mentions')
+    expect(effectiveNotificationLevel('all', 'mentions')).toBe('all')
+    expect(effectiveNotificationLevel('mentions', 'all')).toBe('mentions')
   })
 
   it('hides message content unless previews are enabled', () => {

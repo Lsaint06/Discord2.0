@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { DEFAULT_ARGON2, validateArgon2Params, type Argon2Params } from './auth/password.js'
@@ -47,6 +48,27 @@ export interface AttachmentConfig {
   maxPendingPerUser: number
   /** Unsent uploads older than this are deleted by the cleanup job. */
   pendingTtlMs: number
+  /** Chunked, resumable uploads of large files (Milestone 13). null = off (the default). */
+  large: LargeFileConfig | null
+}
+
+export interface LargeFileConfig {
+  /** Largest file (5 GB by default). */
+  maxFileBytes: number
+  /** Files strictly larger than this expire after `ephemeralMs` (500 MB by default). */
+  ephemeralThresholdBytes: number
+  /** Lifetime of large files, counted from upload completion (24 h by default). */
+  ephemeralMs: number
+  /** Active (unexpired) large files plus open sessions, per user. */
+  userQuotaBytes: number
+  /** All active large files plus open sessions. */
+  poolBytes: number
+  /** New large uploads are refused when free space would fall below this. */
+  minFreeBytes: number
+  /** Simultaneous upload sessions per user. */
+  concurrentPerUser: number
+  /** Sessions without progress for this long are abandoned and deleted. */
+  abandonAfterMs: number
 }
 
 export interface AuthConfig {
@@ -58,6 +80,37 @@ export interface AuthConfig {
   /** Concurrent password hashes (each uses argon2.memoryKiB of RAM). */
   hashConcurrency: number
 }
+
+/**
+ * Who may create accounts:
+ *   invite: only with a registration invitation from an administrator (default; unchanged).
+ *   open:   anyone may sign up with an email address they confirm (invitations still work).
+ *   closed: no new accounts (claiming existing development identities still works).
+ */
+export type RegistrationMode = 'invite' | 'open' | 'closed'
+
+export interface RegistrationConfig {
+  mode: RegistrationMode
+  /** Optional server every self-registered account joins after confirming its email. */
+  autoJoinServerId: string | null
+}
+
+export type MailConfig =
+  | { transport: 'none' }
+  | { transport: 'file'; dir: string }
+  | {
+      transport: 'smtp'
+      host: string
+      port: number
+      /** Implicit TLS (port 465). Otherwise STARTTLS is required. */
+      secure: boolean
+      user: string | null
+      /** Server-side only; read from SMTP_PASSWORD or SMTP_PASSWORD_FILE. */
+      password: string | null
+      from: string
+      /** Allow a relay without TLS (local test relays only). */
+      allowInsecure: boolean
+    }
 
 export interface Config {
   env: 'development' | 'production' | 'test'
@@ -84,9 +137,123 @@ export interface Config {
   livekit: LiveKitConfig | null
   attachments: AttachmentConfig
   auth: AuthConfig
+  registration: RegistrationConfig
+  mail: MailConfig
+  /** GIF picker (Milestone 13). provider 'none' = feature off. */
+  gifs: GifConfig
+}
+
+export type GifProviderName = 'none' | 'giphy' | 'mock'
+export type GifRating = 'g' | 'pg' | 'pg-13' | 'r'
+
+export interface GifConfig {
+  provider: GifProviderName
+  /** Provider API key (server side only; never sent to clients). */
+  apiKey: string | null
+  /** Highest content rating returned. */
+  rating: GifRating
+  /** Two-letter country of the users (providers ask for it when requests are proxied). */
+  country: string | null
+  /** Language hint for search (ISO 639-1). */
+  locale: string
+}
+
+function parseGifs(env: NodeJS.ProcessEnv, isProd: boolean): GifConfig {
+  const provider = (env.GIF_PROVIDER ?? 'none').trim().toLowerCase() || 'none'
+  if (!['none', 'giphy', 'mock'].includes(provider)) {
+    throw new Error('GIF_PROVIDER must be none, giphy or mock')
+  }
+  if (provider === 'mock' && isProd) throw new Error('GIF_PROVIDER=mock is for development and tests only')
+  let apiKey = env.GIF_API_KEY?.trim() || null
+  const keyFile = env.GIF_API_KEY_FILE?.trim()
+  if (keyFile) {
+    if (apiKey) throw new Error('Set GIF_API_KEY or GIF_API_KEY_FILE, not both')
+    apiKey = readFileSync(keyFile, 'utf8').trim() || null
+  }
+  if (provider === 'giphy' && !apiKey) {
+    throw new Error('GIF_PROVIDER=giphy needs GIF_API_KEY (or GIF_API_KEY_FILE)')
+  }
+  if (apiKey && !/^[A-Za-z0-9_-]{8,128}$/.test(apiKey)) throw new Error('GIF_API_KEY has an unexpected format')
+  const rating = (env.GIF_RATING ?? 'pg-13').trim().toLowerCase()
+  if (!['g', 'pg', 'pg-13', 'r'].includes(rating)) throw new Error('GIF_RATING must be g, pg, pg-13 or r')
+  const country = env.GIF_COUNTRY?.trim().toUpperCase() || null
+  if (country && !/^[A-Z]{2}$/.test(country)) throw new Error('GIF_COUNTRY must be a two-letter country code')
+  const locale = env.GIF_LOCALE?.trim().toLowerCase() || 'en'
+  if (!/^[a-z]{2}$/.test(locale)) throw new Error('GIF_LOCALE must be a two-letter language code')
+  return {
+    provider: provider as GifProviderName,
+    apiKey: provider === 'giphy' ? apiKey : null,
+    rating: rating as GifRating,
+    country,
+    locale
+  }
 }
 
 const DAY = 24 * 60 * 60_000
+
+function parseMail(env: NodeJS.ProcessEnv, isProd: boolean, databaseUrl: string): MailConfig {
+  const transport = (env.MAIL_TRANSPORT ?? 'none').trim().toLowerCase() || 'none'
+  if (transport === 'none') return { transport: 'none' }
+  if (transport === 'file') {
+    // A file sink "delivers" nothing: in production people would never receive their codes.
+    if (isProd) throw new Error('MAIL_TRANSPORT=file is a development mail sink and is refused in production. Use smtp.')
+    const dir = env.MAIL_SINK_DIR?.trim()
+    return {
+      transport: 'file',
+      dir: resolve(dir || join(dirname(defaultAttachmentsDir(databaseUrl)), 'mail-sink'))
+    }
+  }
+  if (transport !== 'smtp') throw new Error('MAIL_TRANSPORT must be none, smtp or file')
+
+  const host = env.SMTP_HOST?.trim()
+  if (!host) throw new Error('MAIL_TRANSPORT=smtp needs SMTP_HOST')
+  const secure = bool(env.SMTP_SECURE, env.SMTP_PORT?.trim() === '465')
+  const port = env.SMTP_PORT ? Number(env.SMTP_PORT) : secure ? 465 : 587
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`Invalid SMTP_PORT: ${env.SMTP_PORT}`)
+  const from = env.MAIL_FROM?.trim()
+  if (!from || !/@[^@\s>]+\.[^@\s>]+>?$/.test(from)) {
+    throw new Error('MAIL_FROM must be a sender address, e.g. "Discord 2.0 <no-reply@example.com>"')
+  }
+  let password = env.SMTP_PASSWORD || null
+  const passwordFile = env.SMTP_PASSWORD_FILE?.trim()
+  if (passwordFile) {
+    if (password) throw new Error('Set SMTP_PASSWORD or SMTP_PASSWORD_FILE, not both')
+    password = readFileSync(passwordFile, 'utf8').trim()
+  }
+  const user = env.SMTP_USER?.trim() || null
+  // Otherwise every login to the relay fails and nobody ever receives a code.
+  if (user && !password) throw new Error('SMTP_USER is set but there is no SMTP_PASSWORD (or SMTP_PASSWORD_FILE)')
+  const allowInsecure = bool(env.SMTP_ALLOW_INSECURE, false)
+  if (allowInsecure && isProd && !isPrivateHost(host) && !isLoopbackHost(host)) {
+    throw new Error('SMTP_ALLOW_INSECURE is only allowed for a relay on a private network.')
+  }
+  return {
+    transport: 'smtp',
+    host,
+    port,
+    secure,
+    user,
+    password,
+    from,
+    allowInsecure
+  }
+}
+
+function parseRegistration(env: NodeJS.ProcessEnv, mail: MailConfig): RegistrationConfig {
+  const mode = (env.REGISTRATION_MODE ?? 'invite').trim().toLowerCase() || 'invite'
+  if (mode !== 'invite' && mode !== 'open' && mode !== 'closed') {
+    throw new Error('REGISTRATION_MODE must be invite, open or closed')
+  }
+  // Self-registration is only safe when the email address can actually be confirmed.
+  if (mode === 'open' && mail.transport === 'none') {
+    throw new Error('REGISTRATION_MODE=open needs email delivery: set MAIL_TRANSPORT=smtp (see .env.example).')
+  }
+  const autoJoin = env.REGISTRATION_AUTO_JOIN_SERVER?.trim() || null
+  if (autoJoin && (autoJoin.length > 64 || autoJoin === '@direct')) {
+    throw new Error('REGISTRATION_AUTO_JOIN_SERVER must be a server id')
+  }
+  return { mode: mode as RegistrationMode, autoJoinServerId: autoJoin }
+}
 
 function integer(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const value = positiveNumber(env, name, fallback)
@@ -144,7 +311,27 @@ function parseAttachments(env: NodeJS.ProcessEnv, databaseUrl: string): Attachme
     totalQuotaBytes: positiveNumber(env, 'UPLOAD_TOTAL_QUOTA_MB', 20 * 1024) * MB,
     minFreeDiskBytes: positiveNumber(env, 'UPLOAD_MIN_FREE_DISK_MB', 2048) * MB,
     maxPendingPerUser: 20,
-    pendingTtlMs: 6 * 60 * 60_000
+    pendingTtlMs: 6 * 60 * 60_000,
+    large: bool(env.UPLOAD_LARGE_FILES, false) ? parseLargeFiles(env) : null
+  }
+}
+
+/** The agreed ceiling for one file (5 GB). */
+const LARGE_FILE_CEILING_MB = 5 * 1024
+
+function parseLargeFiles(env: NodeJS.ProcessEnv): LargeFileConfig {
+  const bytes = (name: string, fallbackMb: number): number => Math.floor(positiveNumber(env, name, fallbackMb) * MB)
+  const maxMb = positiveNumber(env, 'UPLOAD_MAX_LARGE_FILE_MB', LARGE_FILE_CEILING_MB)
+  if (maxMb > LARGE_FILE_CEILING_MB) throw new Error(`UPLOAD_MAX_LARGE_FILE_MB can be at most ${LARGE_FILE_CEILING_MB} (5 GB)`)
+  return {
+    maxFileBytes: Math.floor(maxMb * MB),
+    ephemeralThresholdBytes: bytes('UPLOAD_EPHEMERAL_THRESHOLD_MB', 500),
+    ephemeralMs: Math.floor(positiveNumber(env, 'UPLOAD_EPHEMERAL_HOURS', 24) * 60 * 60_000),
+    userQuotaBytes: bytes('UPLOAD_LARGE_USER_QUOTA_MB', 20 * 1024),
+    poolBytes: bytes('UPLOAD_LARGE_POOL_MB', 200 * 1024),
+    minFreeBytes: bytes('UPLOAD_LARGE_MIN_FREE_MB', 100 * 1024),
+    concurrentPerUser: Math.max(1, Math.floor(positiveNumber(env, 'UPLOAD_LARGE_CONCURRENT', 2))),
+    abandonAfterMs: 24 * 60 * 60_000
   }
 }
 
@@ -246,6 +433,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     )
   }
 
+  const mail = parseMail(env, isProd, databaseUrl)
+
   return {
     env: nodeEnv,
     // Loopback by default so the development server is never reachable from other machines by accident.
@@ -263,7 +452,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logLevel: env.LOG_LEVEL ?? (isProd ? 'info' : 'debug'),
     livekit: parseLiveKit(env),
     attachments: parseAttachments(env, databaseUrl),
-    auth: parseAuth(env)
+    auth: parseAuth(env),
+    registration: parseRegistration(env, mail),
+    mail,
+    gifs: parseGifs(env, isProd)
   }
 }
 

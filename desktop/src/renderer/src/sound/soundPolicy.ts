@@ -9,8 +9,8 @@
  * - bursts are coalesced: many messages at once → one chime; distinct mentions are spaced out
  *   rather than dropped (up to a small backlog).
  */
-import type { SoundEvent } from './sounds'
-import { SOUND_EVENTS } from './sounds'
+import type { SoundEvent, SoundInfo } from './sounds'
+import { SOUND_EVENTS, SOUND_INFO } from './sounds'
 
 export interface SoundPreferences {
   /** Global switch for all sound effects. */
@@ -18,6 +18,32 @@ export interface SoundPreferences {
   /** 0–100. */
   volume: number
   events: Record<SoundEvent, boolean>
+  /** Per category, 0–100 (missing = 100). */
+  categoryVolumes?: Partial<Record<SoundGroup, number>>
+  /** Per event, 0–100 (missing = 100). */
+  eventVolumes?: Partial<Record<SoundEvent, number>>
+  /** Your own sound for an event (id in the custom sound library; missing = built-in). */
+  custom?: Partial<Record<SoundEvent, string>>
+}
+
+export type SoundGroup = SoundInfo['group']
+export const SOUND_GROUPS: readonly SoundGroup[] = ['messages', 'voice', 'controls']
+
+const percent = (value: unknown): number | undefined => {
+  const n = Number(value)
+  return typeof value === 'number' && Number.isFinite(n)
+    ? Math.min(100, Math.max(0, Math.round(n)))
+    : undefined
+}
+
+/**
+ * The extra loudness factor for one event: category × event volume (0–1). The global volume
+ * is applied separately (master gain).
+ */
+export function eventGain(prefs: SoundPreferences, event: SoundEvent): number {
+  const category = prefs.categoryVolumes?.[SOUND_INFO[event].group] ?? 100
+  const own = prefs.eventVolumes?.[event] ?? 100
+  return (category / 100) * (own / 100)
 }
 
 export const DEFAULT_SOUND_EVENTS: Record<SoundEvent, boolean> = {
@@ -28,6 +54,8 @@ export const DEFAULT_SOUND_EVENTS: Record<SoundEvent, boolean> = {
   voiceLeave: true,
   connect: true,
   disconnect: true,
+  streamStart: true,
+  streamStop: true,
   mute: true,
   unmute: true,
   deafen: true,
@@ -37,7 +65,12 @@ export const DEFAULT_SOUND_EVENTS: Record<SoundEvent, boolean> = {
 export const DEFAULT_SOUND_VOLUME = 60
 
 export function eventEnabled(prefs: SoundPreferences, event: SoundEvent): boolean {
-  return prefs.enabled && prefs.volume > 0 && prefs.events[event] !== false
+  return (
+    prefs.enabled &&
+    prefs.volume > 0 &&
+    prefs.events[event] !== false &&
+    eventGain(prefs, event) > 0
+  )
 }
 
 /**
@@ -49,6 +82,9 @@ export function migrateSoundSettings(stored: Record<string, unknown>): {
   soundEffects: boolean
   soundVolume: number
   soundEvents: Record<SoundEvent, boolean>
+  soundCategoryVolumes: Partial<Record<SoundGroup, number>>
+  soundEventVolumes: Partial<Record<SoundEvent, number>>
+  soundCustom: Partial<Record<SoundEvent, string>>
 } {
   const events = { ...DEFAULT_SOUND_EVENTS }
   const raw = stored.soundEvents
@@ -62,12 +98,32 @@ export function migrateSoundSettings(stored: Record<string, unknown>): {
     events.mention = false
   }
   const volume = Number(stored.soundVolume)
+  const record = (value: unknown): Record<string, unknown> =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {}
+  const categoryVolumes: Partial<Record<SoundGroup, number>> = {}
+  for (const group of SOUND_GROUPS) {
+    const v = percent(record(stored.soundCategoryVolumes)[group])
+    if (v !== undefined) categoryVolumes[group] = v
+  }
+  const eventVolumes: Partial<Record<SoundEvent, number>> = {}
+  const custom: Partial<Record<SoundEvent, string>> = {}
+  for (const event of SOUND_EVENTS) {
+    const v = percent(record(stored.soundEventVolumes)[event])
+    if (v !== undefined) eventVolumes[event] = v
+    const id = record(stored.soundCustom)[event]
+    if (typeof id === 'string' && /^[0-9a-f-]{36}$/.test(id)) custom[event] = id
+  }
   return {
     soundEffects: typeof stored.soundEffects === 'boolean' ? stored.soundEffects : true,
     soundVolume: Number.isFinite(volume)
       ? Math.min(100, Math.max(0, Math.round(volume)))
       : DEFAULT_SOUND_VOLUME,
-    soundEvents: events
+    soundEvents: events,
+    soundCategoryVolumes: categoryVolumes,
+    soundEventVolumes: eventVolumes,
+    soundCustom: custom
   }
 }
 
@@ -82,6 +138,8 @@ export interface MessageSoundContext {
   windowFocused: boolean
   /** The message mentions you (see chat/mentions.ts). */
   mentionsMe: boolean
+  /** This server notifies you only about @mentions (its default or your choice). */
+  mentionsOnly?: boolean
 }
 
 /** Which sound (if any) an incoming message deserves, before deduplication and rate limiting. */
@@ -96,6 +154,7 @@ export function messageSound(
   if (ctx.mutedChannels[message.channelId]) return null
   if (ctx.windowFocused && ctx.activeChannelId === message.channelId) return null
   if (ctx.mentionsMe && eventEnabled(prefs, 'mention')) return 'mention'
+  if (ctx.mentionsOnly) return null
   // A mention with the mention sound off still counts as a message.
   if (eventEnabled(prefs, 'message')) return 'message'
   return null
@@ -131,6 +190,8 @@ const SPACING: Record<SoundEvent, number> = {
   voiceLeave: 250,
   connect: 400,
   disconnect: 400,
+  streamStart: 600,
+  streamStop: 600,
   mute: 60,
   unmute: 60,
   deafen: 60,

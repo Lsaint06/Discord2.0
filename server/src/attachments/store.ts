@@ -123,6 +123,11 @@ export class AttachmentStore {
     return createReadStream(this.pathFor(id))
   }
 
+  /** Bytes start..end (inclusive) of a stored file. */
+  openRange(id: string, start: number, end: number): ReadStream {
+    return createReadStream(this.pathFor(id), { start, end })
+  }
+
   /** Free bytes on the volume holding the attachments. */
   freeBytes(): number {
     const s = statfsSync(this.root)

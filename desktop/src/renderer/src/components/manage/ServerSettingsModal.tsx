@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiClient } from '../../net/api'
 import { ApiError } from '../../net/api'
 import {
+  LIMITS,
   Permissions,
   ROLE_RANK,
   type ApiAuditEvent,
@@ -12,6 +13,7 @@ import {
   type ApiServer,
   type ApiServerInvite,
   type ConfigurableRole,
+  type NotificationLevel,
   type ServerRole
 } from '../../net/protocol'
 import type { User } from '../../types'
@@ -24,8 +26,21 @@ import {
   hasPermission
 } from '../../lib/permissions'
 import { formatTimestamp } from '../../lib/format'
+import { checkProfileImageFile, PROFILE_IMAGE_ACCEPT } from '../../lib/profileMedia'
+import {
+  categoriesOf,
+  layoutOf,
+  moveCategory,
+  moveChannel,
+  renameCategory,
+  sameLayout,
+  setChannelCategory,
+  type LayoutEntry
+} from '../../lib/channelLayout'
+import { TIMEOUT_CHOICES, timeoutLength, timeoutRemaining } from '../../lib/timeouts'
 import Avatar from '../Avatar'
 import { CloseIcon } from '../Icons'
+import { ServerGlyph } from '../ServerSidebar'
 import { Field } from '../SettingsControls'
 import { useDialog } from '../../hooks/useDialog'
 import PasswordInput from '../auth/PasswordInput'
@@ -201,17 +216,99 @@ function ServerSettingsModal(props: ServerSettingsModalProps): React.JSX.Element
 function OverviewTab({ api, server }: { api: ApiClient; server: ApiServer }): React.JSX.Element {
   const [name, setName] = useState(server.name)
   const [color, setColor] = useState(server.color)
+  const [description, setDescription] = useState(server.description ?? '')
+  const [notifications, setNotifications] = useState<NotificationLevel>(
+    server.defaultNotifications ?? 'all'
+  )
   const { busy, error, run } = useAction()
+  const icon = useAction()
   const [saved, setSaved] = useState(false)
-  const changed = name.trim() !== server.name || color !== server.color
+  const fileRef = useRef<HTMLInputElement>(null)
+  const supportsAdmin = server.defaultNotifications !== undefined
+  const changed =
+    name.trim() !== server.name ||
+    color !== server.color ||
+    (supportsAdmin &&
+      (description.trim() !== (server.description ?? '') ||
+        notifications !== (server.defaultNotifications ?? 'all')))
+  const edited = (): void => setSaved(false)
   return (
     <>
       <h2>Server Overview</h2>
+      {supportsAdmin && (
+        <div className="server-icon-editor">
+          <div
+            className="server-icon server-icon-preview"
+            style={{ '--server-color': server.color } as React.CSSProperties}
+            aria-hidden="true"
+          >
+            <ServerGlyph server={server} size="full" />
+          </div>
+          <div className="server-icon-actions">
+            <span className="setting-field-label">Server Icon</span>
+            <span className="setting-description">
+              A square image of at least {LIMITS.serverIconMinSize}×{LIMITS.serverIconMinSize}{' '}
+              pixels (PNG, JPEG, WebP or GIF). It&rsquo;s cropped to a square and only members can
+              see it.
+            </span>
+            <div className="inline-actions">
+              <button
+                type="button"
+                className="button secondary small"
+                disabled={icon.busy}
+                onClick={() => fileRef.current?.click()}
+              >
+                {icon.busy ? 'Uploading…' : server.iconId ? 'Change Icon' : 'Upload Icon'}
+              </button>
+              {server.iconId && (
+                <button
+                  type="button"
+                  className="button secondary small"
+                  disabled={icon.busy}
+                  onClick={() =>
+                    void icon.run(() => api.removeServerIcon(server.id).then(() => undefined))
+                  }
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept={PROFILE_IMAGE_ACCEPT}
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (!file) return
+                const problem = checkProfileImageFile(file)
+                if (problem) {
+                  icon.setError(problem)
+                  return
+                }
+                void icon.run(() => api.uploadServerIcon(server.id, file).then(() => undefined))
+              }}
+            />
+            {icon.error && (
+              <p className="form-error" role="alert">
+                {icon.error}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
       <form
         onSubmit={(e) => {
           e.preventDefault()
           void run(async () => {
-            await api.updateServer(server.id, { name: name.trim(), color })
+            await api.updateServer(server.id, {
+              name: name.trim(),
+              color,
+              ...(supportsAdmin
+                ? { description: description.trim() || null, defaultNotifications: notifications }
+                : {})
+            })
             setSaved(true)
           })
         }}
@@ -223,10 +320,25 @@ function OverviewTab({ api, server }: { api: ApiClient; server: ApiServer }): Re
             maxLength={40}
             onChange={(e) => {
               setName(e.target.value)
-              setSaved(false)
+              edited()
             }}
           />
         </Field>
+        {supportsAdmin && (
+          <Field label="Description">
+            <textarea
+              className="text-input description-input"
+              value={description}
+              rows={3}
+              maxLength={LIMITS.serverDescriptionMaxLength}
+              placeholder="What is this server about?"
+              onChange={(e) => {
+                setDescription(e.target.value)
+                edited()
+              }}
+            />
+          </Field>
+        )}
         <div className="setting-field">
           <span className="setting-field-label">Color</span>
           <div className="swatches">
@@ -238,7 +350,7 @@ function OverviewTab({ api, server }: { api: ApiClient; server: ApiServer }): Re
                 style={{ background: c }}
                 onClick={() => {
                   setColor(c)
-                  setSaved(false)
+                  edited()
                 }}
                 aria-label={`Color ${c}`}
                 aria-pressed={color === c}
@@ -246,6 +358,24 @@ function OverviewTab({ api, server }: { api: ApiClient; server: ApiServer }): Re
             ))}
           </div>
         </div>
+        {supportsAdmin && (
+          <Field label="Default notifications">
+            <select
+              className="text-input"
+              value={notifications}
+              onChange={(e) => {
+                setNotifications(e.target.value as NotificationLevel)
+                edited()
+              }}
+            >
+              <option value="all">All messages</option>
+              <option value="mentions">Only @mentions</option>
+            </select>
+            <span className="setting-description">
+              What members are notified about in this server unless they choose otherwise.
+            </span>
+          </Field>
+        )}
         {error && (
           <p className="form-error" role="alert">
             {error}
@@ -281,6 +411,19 @@ function MembersTab(props: {
     open: banFor !== null,
     onClose: () => setBanFor(null)
   })
+  const [timeoutFor, setTimeoutFor] = useState<string | null>(null)
+  const [timeoutMinutes, setTimeoutMinutes] = useState(TIMEOUT_CHOICES[2]!.minutes)
+  const [timeoutReason, setTimeoutReason] = useState('')
+  const timeoutDialogRef = useDialog<HTMLFormElement>({
+    open: timeoutFor !== null,
+    onClose: () => setTimeoutFor(null)
+  })
+  // Re-renders the "… left" labels now and then.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15_000)
+    return () => clearInterval(timer)
+  }, [])
   const [filter, setFilter] = useState('')
   const outranks = (target: ServerRole): boolean => ROLE_RANK[role] > ROLE_RANK[target]
   const members = [...(props.members ?? [])]
@@ -336,6 +479,12 @@ function MembersTab(props: {
             !self &&
             m.role !== 'owner' &&
             outranks(m.role)
+          const canTimeout =
+            hasPermission(perms, Permissions.moderateMembers) &&
+            !self &&
+            m.role !== 'owner' &&
+            outranks(m.role)
+          const remaining = timeoutRemaining(m.timeoutUntil, now)
           return (
             <li key={m.userId} className="manage-row">
               <Avatar name={user.name} color={user.avatarColor} imageId={user.avatarId} size={32} />
@@ -343,6 +492,11 @@ function MembersTab(props: {
                 <span className="manage-row-title" style={{ color: ROLE_COLORS[m.role] }}>
                   {user.name}
                   {self && <span className="manage-tag">you</span>}
+                  {remaining && (
+                    <span className="manage-tag timeout-tag" title="Timed out">
+                      timed out · {remaining} left
+                    </span>
+                  )}
                 </span>
                 <span className="manage-row-sub">Joined {formatTimestamp(m.joinedAt)}</span>
               </div>
@@ -371,6 +525,30 @@ function MembersTab(props: {
                   {ROLE_LABELS[m.role]}
                 </span>
               )}
+              {canTimeout &&
+                (remaining ? (
+                  <button
+                    type="button"
+                    className="button secondary small"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(() =>
+                        api.setMemberTimeout(server.id, m.userId, null).then(() => undefined)
+                      )
+                    }
+                  >
+                    Remove Timeout
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="button secondary small"
+                    disabled={busy}
+                    onClick={() => setTimeoutFor(m.userId)}
+                  >
+                    Timeout
+                  </button>
+                ))}
               {canKick && (
                 <button
                   type="button"
@@ -442,6 +620,78 @@ function MembersTab(props: {
               </button>
               <button type="submit" className="button danger" disabled={busy}>
                 Ban
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {timeoutFor && (
+        <div className="modal-backdrop" onMouseDown={() => setTimeoutFor(null)}>
+          <form
+            ref={timeoutDialogRef}
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="timeout-title"
+            onMouseDown={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault()
+              void run(() =>
+                api
+                  .setMemberTimeout(
+                    server.id,
+                    timeoutFor,
+                    timeoutMinutes,
+                    timeoutReason.trim() || undefined
+                  )
+                  .then(() => undefined)
+              ).then((ok) => {
+                if (ok) {
+                  setTimeoutFor(null)
+                  setTimeoutReason('')
+                }
+              })
+            }}
+          >
+            <h2 id="timeout-title">Time out {resolveUser(timeoutFor).name}?</h2>
+            <p>
+              They can still read, but can&rsquo;t send messages, react, upload, join or speak in
+              voice until the timeout ends. You can remove it early.
+            </p>
+            <div className="setting-field" role="radiogroup" aria-label="Duration">
+              <span className="setting-field-label">Duration</span>
+              <div className="timeout-choices">
+                {TIMEOUT_CHOICES.map((c) => (
+                  <label key={c.minutes} className="checkbox-row">
+                    <input
+                      type="radio"
+                      name="timeout-duration"
+                      checked={timeoutMinutes === c.minutes}
+                      onChange={() => setTimeoutMinutes(c.minutes)}
+                    />
+                    {c.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <Field label="Reason (optional, for the audit log)">
+              <input
+                className="text-input"
+                value={timeoutReason}
+                maxLength={LIMITS.banReasonMaxLength}
+                onChange={(e) => setTimeoutReason(e.target.value)}
+              />
+            </Field>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setTimeoutFor(null)}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="button danger" disabled={busy}>
+                Time Out
               </button>
             </div>
           </form>
@@ -736,9 +986,11 @@ function ChannelsTab(props: {
   const { busy, error, run } = useAction()
   const [name, setName] = useState('')
   const [type, setType] = useState<'text' | 'voice'>('text')
+  const [category, setCategory] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
   const [overrides, setOverrides] = useState<ApiChannelOverride[] | null>(null)
   const [renaming, setRenaming] = useState('')
+  const [userLimit, setUserLimit] = useState(0)
   const channel = server.channels.find((c) => c.id === selected)
 
   useEffect(() => {
@@ -780,12 +1032,18 @@ function ChannelsTab(props: {
   return (
     <>
       <h2>Channels</h2>
+      {server.defaultNotifications !== undefined && <LayoutEditor api={api} server={server} />}
+      <h3>New channel</h3>
       <form
         className="manage-toolbar"
         onSubmit={(e) => {
           e.preventDefault()
           void run(async () => {
-            await api.createChannel(server.id, { name: name.trim(), type })
+            await api.createChannel(server.id, {
+              name: name.trim(),
+              type,
+              ...(category.trim() ? { category: category.trim() } : {})
+            })
             setName('')
           })
         }}
@@ -807,6 +1065,21 @@ function ChannelsTab(props: {
           <option value="text">Text</option>
           <option value="voice">Voice</option>
         </select>
+        <input
+          className="text-input compact"
+          placeholder={type === 'text' ? 'Text Channels' : 'Voice Channels'}
+          aria-label="Category (optional)"
+          title="Category (optional)"
+          list="channel-categories"
+          value={category}
+          maxLength={LIMITS.categoryNameMaxLength}
+          onChange={(e) => setCategory(e.target.value)}
+        />
+        <datalist id="channel-categories">
+          {[...new Set(server.channels.map((c) => c.category))].map((c) => (
+            <option key={c} value={c} />
+          ))}
+        </datalist>
         <button type="submit" className="button primary" disabled={busy || !name.trim()}>
           Create Channel
         </button>
@@ -816,9 +1089,10 @@ function ChannelsTab(props: {
           {error}
         </p>
       )}
+      <h3>Channel details and permissions</h3>
       <div className="channel-manage">
         <ul className="manage-list channel-pick" aria-label="Channels">
-          {server.channels.map((c) => (
+          {layoutOf(server.channels).map((c) => (
             <li key={c.id}>
               <button
                 type="button"
@@ -826,6 +1100,7 @@ function ChannelsTab(props: {
                 onClick={() => {
                   setSelected(c.id)
                   setRenaming(c.name)
+                  setUserLimit(server.channels.find((x) => x.id === c.id)?.userLimit ?? 0)
                   setOverrides(null)
                 }}
               >
@@ -878,6 +1153,48 @@ function ChannelsTab(props: {
                 Delete
               </button>
             </form>
+            {channel.type === 'voice' && channel.userLimit !== undefined && (
+              <form
+                className="manage-toolbar"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void run(() => api.updateChannel(channel.id, { userLimit }).then(() => undefined))
+                }}
+              >
+                <label className="inline-label" htmlFor="voice-user-limit">
+                  User limit
+                </label>
+                <input
+                  id="voice-user-limit"
+                  className="text-input compact"
+                  type="number"
+                  min={0}
+                  max={LIMITS.voiceUserLimitMax}
+                  value={userLimit}
+                  onChange={(e) =>
+                    setUserLimit(
+                      Math.max(
+                        0,
+                        Math.min(LIMITS.voiceUserLimitMax, Math.floor(Number(e.target.value) || 0))
+                      )
+                    )
+                  }
+                  aria-describedby="voice-user-limit-hint"
+                />
+                <button
+                  type="submit"
+                  className="button secondary"
+                  disabled={busy || userLimit === (channel.userLimit ?? 0)}
+                >
+                  Save
+                </button>
+                <span id="voice-user-limit-hint" className="setting-description">
+                  {userLimit === 0
+                    ? 'No limit.'
+                    : `At most ${userLimit} ${userLimit === 1 ? 'person' : 'people'} at once. People who can manage channels can still join.`}
+                </span>
+              </form>
+            )}
             <h3>Permissions in this channel</h3>
             <p className="setting-description">
               “Default” uses the role’s server permissions. Deny <em>View channel</em> for Members
@@ -942,6 +1259,225 @@ function ChannelsTab(props: {
   )
 }
 
+/** Channel order and categories: edit locally, then save in one step (PUT …/layout). */
+function LayoutEditor({ api, server }: { api: ApiClient; server: ApiServer }): React.JSX.Element {
+  const original = useMemo(() => layoutOf(server.channels), [server.channels])
+  // Local edits start from the server's layout; a server update resets them only when the
+  // server-side layout itself changed (tracked by its signature).
+  const signature = original.map((e) => `${e.id}:${e.category}`).join('|')
+  const [draft, setDraft] = useState<{ base: string; layout: LayoutEntry[] }>({
+    base: signature,
+    layout: original
+  })
+  const layout = draft.base === signature ? draft.layout : original
+  const setLayout = (next: LayoutEntry[]): void => setDraft({ base: signature, layout: next })
+  const [renamingCategory, setRenamingCategory] = useState<{ from: string; to: string } | null>(
+    null
+  )
+  // "New category…" for one channel: typed inline (Electron has no window.prompt).
+  const [newCategoryFor, setNewCategoryFor] = useState<{ id: string; name: string } | null>(null)
+  const { busy, error, run } = useAction()
+  const changed = !sameLayout(layout, original)
+  const categories = categoriesOf(layout)
+
+  return (
+    <section className="layout-editor" aria-labelledby="layout-title">
+      <h3 id="layout-title">Order and categories</h3>
+      <p className="setting-description">
+        Move channels with the arrows (at the edge of a category they move into the next one),
+        rename or reorder categories, then save. Channels you can&rsquo;t see keep their place.
+      </p>
+      {categories.map((cat, ci) => (
+        <div key={cat} className="layout-category">
+          <div className="layout-category-header">
+            {renamingCategory?.from === cat ? (
+              <form
+                className="inline-actions"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  setLayout(renameCategory(layout, cat, renamingCategory.to))
+                  setRenamingCategory(null)
+                }}
+              >
+                <input
+                  className="text-input compact"
+                  aria-label={`New name for ${cat}`}
+                  value={renamingCategory.to}
+                  maxLength={LIMITS.categoryNameMaxLength}
+                  autoFocus
+                  onChange={(e) => setRenamingCategory({ from: cat, to: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setRenamingCategory(null)
+                    }
+                  }}
+                />
+                <button
+                  type="submit"
+                  className="button secondary small"
+                  disabled={!renamingCategory.to.trim()}
+                >
+                  OK
+                </button>
+              </form>
+            ) : (
+              <>
+                <span className="layout-category-name">{cat}</span>
+                <button
+                  type="button"
+                  className="icon-button small"
+                  aria-label={`Rename category ${cat}`}
+                  title="Rename category"
+                  onClick={() => setRenamingCategory({ from: cat, to: cat })}
+                >
+                  ✎
+                </button>
+              </>
+            )}
+            <span className="layout-spacer" />
+            <button
+              type="button"
+              className="icon-button small"
+              aria-label={`Move category ${cat} up`}
+              disabled={ci === 0}
+              onClick={() => setLayout(moveCategory(layout, cat, -1))}
+            >
+              ▲
+            </button>
+            <button
+              type="button"
+              className="icon-button small"
+              aria-label={`Move category ${cat} down`}
+              disabled={ci === categories.length - 1}
+              onClick={() => setLayout(moveCategory(layout, cat, 1))}
+            >
+              ▼
+            </button>
+          </div>
+          <ul className="layout-channels" aria-label={`Channels in ${cat}`}>
+            {layout
+              .filter((e) => e.category === cat)
+              .map((e) => {
+                const index = layout.findIndex((x) => x.id === e.id)
+                return (
+                  <li key={e.id} className="layout-channel">
+                    <span className="layout-channel-name">
+                      {e.type === 'text' ? '#' : '🔊'} {e.name}
+                    </span>
+                    {newCategoryFor?.id === e.id ? (
+                      <form
+                        className="inline-actions"
+                        onSubmit={(ev) => {
+                          ev.preventDefault()
+                          setLayout(setChannelCategory(layout, e.id, newCategoryFor.name))
+                          setNewCategoryFor(null)
+                        }}
+                      >
+                        <input
+                          className="text-input compact"
+                          aria-label={`New category for ${e.name}`}
+                          placeholder="New category"
+                          value={newCategoryFor.name}
+                          maxLength={LIMITS.categoryNameMaxLength}
+                          autoFocus
+                          onChange={(ev) => setNewCategoryFor({ id: e.id, name: ev.target.value })}
+                          onKeyDown={(ev) => {
+                            if (ev.key === 'Escape') {
+                              ev.preventDefault()
+                              ev.stopPropagation()
+                              setNewCategoryFor(null)
+                            }
+                          }}
+                        />
+                        <button
+                          type="submit"
+                          className="button secondary small"
+                          disabled={!newCategoryFor.name.trim()}
+                        >
+                          OK
+                        </button>
+                      </form>
+                    ) : (
+                      <select
+                        className="text-input compact"
+                        aria-label={`Category of ${e.name}`}
+                        value={e.category}
+                        onChange={(ev) => {
+                          const value = ev.target.value
+                          if (value === '\u0000new') setNewCategoryFor({ id: e.id, name: '' })
+                          else setLayout(setChannelCategory(layout, e.id, value))
+                        }}
+                      >
+                        {categories.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                        <option value={'\u0000new'}>New category…</option>
+                      </select>
+                    )}
+                    <button
+                      type="button"
+                      className="icon-button small"
+                      aria-label={`Move ${e.name} up`}
+                      disabled={index === 0}
+                      onClick={() => setLayout(moveChannel(layout, e.id, -1))}
+                    >
+                      ▲
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button small"
+                      aria-label={`Move ${e.name} down`}
+                      disabled={index === layout.length - 1}
+                      onClick={() => setLayout(moveChannel(layout, e.id, 1))}
+                    >
+                      ▼
+                    </button>
+                  </li>
+                )
+              })}
+          </ul>
+        </div>
+      ))}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="inline-actions">
+        <button
+          type="button"
+          className="button primary"
+          disabled={!changed || busy}
+          onClick={() =>
+            void run(() =>
+              api
+                .arrangeChannels(
+                  server.id,
+                  layout.map((e) => ({ id: e.id, category: e.category }))
+                )
+                .then(() => undefined)
+            )
+          }
+        >
+          {busy ? 'Saving…' : 'Save Order'}
+        </button>
+        <button
+          type="button"
+          className="button secondary"
+          disabled={!changed || busy}
+          onClick={() => setLayout(original)}
+        >
+          Undo Changes
+        </button>
+      </div>
+    </section>
+  )
+}
+
 const AUDIT_LABELS: Record<string, string> = {
   'server.create': 'created the server',
   'server.update': 'updated the server',
@@ -955,10 +1491,15 @@ const AUDIT_LABELS: Record<string, string> = {
   'server.role_changed': 'changed the role of',
   'server.role_permissions': 'changed role permissions',
   'server.ownership_transferred': 'transferred ownership to',
+  'server.icon_changed': 'changed the server icon',
+  'server.icon_removed': 'removed the server icon',
+  'server.timeout': 'timed out',
+  'server.timeout_removed': 'removed the timeout of',
   'channel.create': 'created a channel',
   'channel.update': 'updated a channel',
   'channel.delete': 'deleted a channel',
   'channel.override': 'changed channel permissions',
+  'channel.layout': 'reordered the channels',
   'message.moderator_delete': 'deleted a message by',
   'admin.set_owner': 'was made owner (by an administrator)'
 }
@@ -1003,6 +1544,11 @@ function AuditTab(props: {
                     ? ` (${String(e.detail.from)} → ${e.detail.to})`
                     : ''}
                   {e.detail && typeof e.detail.name === 'string' ? ` (${e.detail.name})` : ''}
+                  {e.action === 'server.timeout' && e.detail && typeof e.detail.minutes === 'number'
+                    ? ` for ${timeoutLength(e.detail.minutes)}${
+                        typeof e.detail.reason === 'string' ? ` — “${e.detail.reason}”` : ''
+                      }`
+                    : ''}
                 </span>
                 <span className="manage-row-sub">{formatTimestamp(e.at)}</span>
               </div>

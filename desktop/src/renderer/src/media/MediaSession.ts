@@ -314,6 +314,24 @@ export class MediaSession {
     }
   }
 
+  /**
+   * Audio tracks for the voice connection panel: your published microphone (sender stats) and
+   * every subscribed remote voice (receiver stats), keyed by track sid.
+   */
+  getConnectionStatTracks(): { microphone?: Track; remoteAudio: Map<string, Track> } {
+    const room = this.room
+    const remoteAudio = new Map<string, Track>()
+    if (!room || room.state !== ConnectionState.Connected) return { remoteAudio }
+    for (const participant of room.remoteParticipants.values()) {
+      const pub = participant.getTrackPublication(Track.Source.Microphone)
+      if (pub?.track && pub.isSubscribed) remoteAudio.set(pub.trackSid, pub.track)
+    }
+    return {
+      microphone: room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track,
+      remoteAudio
+    }
+  }
+
   /** Resumes audio playback if the browser blocked it (needs a user gesture). */
   async startAudio(): Promise<void> {
     await this.room?.startAudio().catch(() => undefined)
@@ -498,6 +516,8 @@ export class MediaSession {
       next.noiseSuppression !== prev.noiseSuppression ||
       next.autoGainControl !== prev.autoGainControl
     ) {
+      // Also used when LiveKit re-acquires the microphone itself (device change, republish).
+      room.options.audioCaptureDefaults = this.captureOptions()
       const track = this.localMicTrack()
       if (track) {
         void track
@@ -816,7 +836,9 @@ export class MediaSession {
         // In push-to-talk mode publish (muted) up front so the first key press is instant.
         const prewarm = this.micState.pushToTalk && !this.micState.muted && !this.micState.deafened
         if (!transmit && !prewarm) return
-        await lp.setMicrophoneEnabled(true)
+        // Pass the current processing settings explicitly: the room's capture defaults were fixed
+        // when it connected, so a change made while unpublished would otherwise be ignored.
+        await lp.setMicrophoneEnabled(true, this.captureOptions())
         this.trackCaptured()
         await this.attachGain()
         if (!transmit) await lp.setMicrophoneEnabled(false)

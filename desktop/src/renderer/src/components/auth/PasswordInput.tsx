@@ -10,6 +10,8 @@ interface PasswordInputProps {
   hint?: string
   invalid?: boolean
   autoFocus?: boolean
+  /** Extra element(s) describing the field, e.g. a live requirements list. */
+  describedBy?: string
 }
 
 /** Password field with a show/hide toggle. Works with password managers (autocomplete hints). */
@@ -21,9 +23,11 @@ function PasswordInput({
   autoComplete,
   hint,
   invalid,
-  autoFocus
+  autoFocus,
+  describedBy
 }: PasswordInputProps): React.JSX.Element {
   const [visible, setVisible] = useState(false)
+  const described = [hint ? `${id}-hint` : '', describedBy ?? ''].filter(Boolean).join(' ')
   return (
     <div className="setting-field">
       <label className="setting-field-label" htmlFor={id}>
@@ -40,7 +44,7 @@ function PasswordInput({
           spellCheck={false}
           maxLength={256}
           aria-invalid={invalid || undefined}
-          aria-describedby={hint ? `${id}-hint` : undefined}
+          aria-describedby={described || undefined}
           onChange={(e) => onChange(e.target.value)}
         />
         <button

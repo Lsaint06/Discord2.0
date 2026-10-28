@@ -109,6 +109,46 @@ export interface D2DesktopApi {
      */
     lastError: (origin: string) => Promise<string | null>
   }
+  uiZoom: {
+    /** Saved interface scale for this device and the allowed steps; null if refused. */
+    get: () => Promise<UiZoomState | null>
+    /** Sets and saves the scale (must be one of `steps`; anything else resets to default). */
+    set: (factor: number) => Promise<{ factor: number } | null>
+    /** Fires when the scale changes (settings or Ctrl+=/-/0). Returns an unsubscribe function. */
+    onChange: (callback: (factor: number) => void) => () => void
+  }
+  shortcuts: {
+    /**
+     * Replaces the system-wide shortcuts (only mute and deafen may be system-wide). Resolves to
+     * whether each could be registered (false: invalid, or another app already uses it).
+     */
+    setGlobal: (
+      list: { id: string; accelerator: string }[]
+    ) => Promise<Record<string, boolean> | null>
+    /** Fires with the command id when a system-wide shortcut is pressed. */
+    onTriggered: (callback: (id: string) => void) => () => void
+  }
+  downloads: {
+    /**
+     * Saves an attachment to disk through Chromium's download manager (Save dialog, streamed,
+     * resumable). Only attachment URLs with an Authorization header are accepted.
+     */
+    start: (url: string, authorization: string) => Promise<boolean>
+    onProgress: (callback: (progress: DownloadProgress) => void) => () => void
+  }
+}
+
+export interface DownloadProgress {
+  url: string
+  state: 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+  received: number
+  total: number
+}
+
+export interface UiZoomState {
+  factor: number
+  steps: number[]
+  defaultFactor: number
 }
 
 export type SystemIdleState = 'active' | 'idle' | 'locked' | 'unknown'

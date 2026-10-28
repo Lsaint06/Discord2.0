@@ -3,13 +3,15 @@ import type {
   AppMetrics,
   CredentialStorage,
   D2DesktopApi,
+  DownloadProgress,
   EncoderFlagsState,
   MicrophoneAccess,
   ScreenCaptureCapabilities,
   ScreenSelectResult,
   ScreenSourceInfo,
   StoredCredentials,
-  SystemIdleState
+  SystemIdleState,
+  UiZoomState
 } from './types'
 
 /**
@@ -77,6 +79,54 @@ const d2: D2DesktopApi = {
   net: {
     lastError: (origin) =>
       ipcRenderer.invoke('d2:net-last-error', String(origin)) as Promise<string | null>
+  },
+  uiZoom: {
+    get: () => ipcRenderer.invoke('d2:ui-zoom-get') as Promise<UiZoomState | null>,
+    set: (factor) =>
+      ipcRenderer.invoke('d2:ui-zoom-set', Number(factor)) as Promise<{ factor: number } | null>,
+    onChange: (callback) => {
+      const listener = (_event: unknown, factor: unknown): void => {
+        if (typeof factor === 'number') callback(factor)
+      }
+      ipcRenderer.on('d2:ui-zoom-changed', listener)
+      return () => ipcRenderer.removeListener('d2:ui-zoom-changed', listener)
+    }
+  },
+  shortcuts: {
+    setGlobal: (list) =>
+      ipcRenderer.invoke(
+        'd2:shortcuts-set',
+        list.slice(0, 4).map((s) => ({ id: String(s.id), accelerator: String(s.accelerator) }))
+      ) as Promise<Record<string, boolean> | null>,
+    onTriggered: (callback) => {
+      const listener = (_event: unknown, id: unknown): void => {
+        if (typeof id === 'string') callback(id)
+      }
+      ipcRenderer.on('d2:shortcut', listener)
+      return () => ipcRenderer.removeListener('d2:shortcut', listener)
+    }
+  },
+  downloads: {
+    start: (url, authorization) =>
+      ipcRenderer.invoke('d2:download-file', {
+        url: String(url),
+        authorization: String(authorization)
+      }) as Promise<boolean>,
+    onProgress: (callback) => {
+      const listener = (_event: unknown, progress: unknown): void => {
+        const p = progress as Partial<DownloadProgress> | null
+        if (p && typeof p.url === 'string' && typeof p.state === 'string') {
+          callback({
+            url: p.url,
+            state: p.state,
+            received: Number(p.received) || 0,
+            total: Number(p.total) || 0
+          })
+        }
+      }
+      ipcRenderer.on('d2:download-progress', listener)
+      return () => ipcRenderer.removeListener('d2:download-progress', listener)
+    }
   }
 }
 

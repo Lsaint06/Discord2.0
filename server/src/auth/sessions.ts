@@ -37,6 +37,8 @@ export function sessionUsable(
   if (session.lastUsedAt + deps.config.auth.sessionIdleMs <= now) return false
   if (user.disabledAt) return false
   if (user.bot) return false
+  // Defence in depth: an unconfirmed self-registration never gets a session in the first place.
+  if (user.signupPending) return false
   if (session.kind === 'dev' && !deps.config.devAuth) return false
   return true
 }

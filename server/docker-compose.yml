@@ -46,6 +46,15 @@ services:
       UPLOAD_USER_QUOTA_MB: ${UPLOAD_USER_QUOTA_MB:-}
       UPLOAD_TOTAL_QUOTA_MB: ${UPLOAD_TOTAL_QUOTA_MB:-}
       UPLOAD_MIN_FREE_DISK_MB: ${UPLOAD_MIN_FREE_DISK_MB:-}
+      # Milestone 13: large files (off by default; see .env.example before enabling).
+      UPLOAD_LARGE_FILES: ${UPLOAD_LARGE_FILES:-false}
+      UPLOAD_MAX_LARGE_FILE_MB: ${UPLOAD_MAX_LARGE_FILE_MB:-}
+      UPLOAD_EPHEMERAL_THRESHOLD_MB: ${UPLOAD_EPHEMERAL_THRESHOLD_MB:-}
+      UPLOAD_EPHEMERAL_HOURS: ${UPLOAD_EPHEMERAL_HOURS:-}
+      UPLOAD_LARGE_USER_QUOTA_MB: ${UPLOAD_LARGE_USER_QUOTA_MB:-}
+      UPLOAD_LARGE_POOL_MB: ${UPLOAD_LARGE_POOL_MB:-}
+      UPLOAD_LARGE_MIN_FREE_MB: ${UPLOAD_LARGE_MIN_FREE_MB:-}
+      UPLOAD_LARGE_CONCURRENT: ${UPLOAD_LARGE_CONCURRENT:-}
       # Accounts and sessions (Milestone 7). Empty = built-in default (see .env.example).
       SESSION_IDLE_DAYS: ${SESSION_IDLE_DAYS:-}
       SESSION_MAX_DAYS: ${SESSION_MAX_DAYS:-}
@@ -53,6 +62,25 @@ services:
       ARGON2_PASSES: ${ARGON2_PASSES:-}
       ARGON2_PARALLELISM: ${ARGON2_PARALLELISM:-}
       ARGON2_MAX_CONCURRENT: ${ARGON2_MAX_CONCURRENT:-}
+      # Milestone 13: registration policy and email (defaults: invite-only, no email).
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-invite}
+      REGISTRATION_AUTO_JOIN_SERVER: ${REGISTRATION_AUTO_JOIN_SERVER:-}
+      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-none}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # Only if you mount the file into the container yourself (e.g. a compose override).
+      SMTP_PASSWORD_FILE: ${SMTP_PASSWORD_FILE:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      # Milestone 13: GIF picker (default off). The API key stays on the server.
+      GIF_PROVIDER: ${GIF_PROVIDER:-none}
+      GIF_API_KEY: ${GIF_API_KEY:-}
+      GIF_API_KEY_FILE: ${GIF_API_KEY_FILE:-}
+      GIF_RATING: ${GIF_RATING:-pg-13}
+      GIF_COUNTRY: ${GIF_COUNTRY:-}
+      GIF_LOCALE: ${GIF_LOCALE:-en}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

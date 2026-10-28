@@ -14,6 +14,8 @@ import { BlockIcon, ChatBubbleIcon, CheckIcon, CloseIcon, FriendsIcon } from '..
 export type FriendsTab = 'online' | 'all' | 'pending' | 'blocked' | 'add'
 
 interface FriendsPageProps {
+  /** Tab to start on (e.g. 'add' from the welcome checklist). */
+  initialTab?: FriendsTab
   relationships: Relationships
   users: Record<string, ApiUser>
   loaded: boolean
@@ -39,7 +41,7 @@ const TABS: { id: FriendsTab; label: string }[] = [
 
 /** Friends, requests and blocks — plus adding friends by exact username. */
 function FriendsPage(props: FriendsPageProps): React.JSX.Element {
-  const [tab, setTab] = useState<FriendsTab>('online')
+  const [tab, setTab] = useState<FriendsTab>(props.initialTab ?? 'online')
   const [filter, setFilter] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)

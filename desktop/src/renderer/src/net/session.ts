@@ -1,6 +1,7 @@
 import type { UserSettings } from '../types'
 import { defaultSettings } from '../data/defaults'
 import { migrateSoundSettings } from '../sound/soundPolicy'
+import { parseKeybinds } from '../lib/keybinds'
 
 /**
  * Session storage. The bearer token is kept by the Electron main process, encrypted with the OS
@@ -93,7 +94,12 @@ export function loadSettings(): UserSettings {
       if (key in parsed) (settings as Record<string, unknown>)[key] = parsed[key]
     }
     // Sound effects (Milestone 9): validated, and carries over the old notificationSounds choice.
-    return { ...settings, ...migrateSoundSettings(parsed) }
+    return {
+      ...settings,
+      ...migrateSoundSettings(parsed),
+      keybinds: parseKeybinds(parsed.keybinds),
+      serverNotifications: parseServerNotifications(parsed.serverNotifications)
+    }
   } catch {
     return { ...defaultSettings }
   }
@@ -101,6 +107,16 @@ export function loadSettings(): UserSettings {
 
 export function saveSettings(settings: UserSettings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+}
+
+/** Per-server notification choices: only 'all' / 'mentions' for plausible server ids. */
+function parseServerNotifications(raw: unknown): Record<string, 'all' | 'mentions'> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, 'all' | 'mentions'> = {}
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>).slice(0, 200)) {
+    if (id.length <= 64 && (value === 'all' || value === 'mentions')) out[id] = value
+  }
+  return out
 }
 
 /** The set-aside pre-Milestone-8 appearance settings (raw), if any. */

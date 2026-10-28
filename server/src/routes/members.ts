@@ -37,10 +37,15 @@ export function registerMemberRoutes(app: FastifyInstance, ctx: AppContext): voi
     async (request): Promise<ApiMember[]> => {
       const user = await requireUser(ctx, request)
       const { server } = await ctx.access.requireServer(user, request.params.serverId)
+      const now = Date.now()
       return (await ctx.repo.listMembers(server.id)).map((m) => ({
         userId: m.userId,
         role: m.role,
-        joinedAt: m.joinedAt
+        joinedAt: m.joinedAt,
+        timeoutUntil:
+          m.role !== 'owner' && typeof m.timeoutUntil === 'number' && m.timeoutUntil > now
+            ? m.timeoutUntil
+            : null
       }))
     }
   )

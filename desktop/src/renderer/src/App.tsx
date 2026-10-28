@@ -10,6 +10,7 @@ import {
   type StoredSession
 } from './net/session'
 import Workspace from './Workspace'
+import { LogoIcon } from './components/Icons'
 
 function ConfigError({ message }: { message: string }): React.JSX.Element {
   return (
@@ -25,11 +26,15 @@ function ConfigError({ message }: { message: string }): React.JSX.Element {
   )
 }
 
-function Splash(): React.JSX.Element {
+function Splash({ label = 'Starting Discord 2.0…' }: { label?: string }): React.JSX.Element {
   return (
     <div className="app splash">
-      <div className="splash-card">
+      <div className="splash-card" role="status" aria-live="polite">
+        <div className="splash-logo" aria-hidden="true">
+          <LogoIcon size={56} />
+        </div>
         <div className="spinner" aria-hidden="true" />
+        <p className="splash-label">{label}</p>
       </div>
     </div>
   )
@@ -37,8 +42,9 @@ function Splash(): React.JSX.Element {
 
 type GateState =
   | { phase: 'loading' }
-  | { phase: 'signed-out'; notice: string | null }
-  | { phase: 'signed-in'; session: StoredSession }
+  /** `connection`: Connection settings opened from the workspace; the saved sign-in is kept. */
+  | { phase: 'signed-out'; notice: string | null; connection?: boolean }
+  | { phase: 'signed-in'; session: StoredSession; newAccount: boolean }
 
 function SessionGate({
   endpoint,
@@ -51,6 +57,7 @@ function SessionGate({
 }): React.JSX.Element {
   const { httpUrl, gatewayUrl } = endpoint
   const [state, setState] = useState<GateState>({ phase: 'loading' })
+  const [loadCount, setLoadCount] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -58,13 +65,27 @@ function SessionGate({
     loadSession(httpUrl)
       .then((session) => {
         if (cancelled) return
-        setState(session ? { phase: 'signed-in', session } : { phase: 'signed-out', notice: null })
+        setState(
+          session
+            ? { phase: 'signed-in', session, newAccount: false }
+            : { phase: 'signed-out', notice: null }
+        )
       })
       .catch(() => !cancelled && setState({ phase: 'signed-out', notice: null }))
     return () => {
       cancelled = true
     }
-  }, [httpUrl])
+  }, [httpUrl, loadCount])
+
+  /** Back from Connection settings without changing anything: reopen the saved sign-in. */
+  const reloadSession = useCallback(() => {
+    setState({ phase: 'loading' })
+    setLoadCount((n) => n + 1)
+  }, [])
+  const openConnection = useCallback(
+    () => setState({ phase: 'signed-out', notice: null, connection: true }),
+    []
+  )
 
   // Clears the stored token first, so a crash right after can't resurrect the session.
   const signOut = useCallback((notice?: string) => {
@@ -74,7 +95,9 @@ function SessionGate({
   const signedIn = useCallback(
     (result: AuthSuccess) => {
       const session = { token: result.token, username: result.username, serverUrl: httpUrl }
-      void saveSession(session).finally(() => setState({ phase: 'signed-in', session }))
+      void saveSession(session).finally(() =>
+        setState({ phase: 'signed-in', session, newAccount: result.newAccount === true })
+      )
     },
     [httpUrl]
   )
@@ -89,6 +112,8 @@ function SessionGate({
         servers={endpoints}
         onSelectServer={onSelectEndpoint}
         notice={state.notice}
+        initialView={state.connection ? 'connection' : undefined}
+        onLeaveConnection={state.connection ? reloadSession : undefined}
         onAuthenticated={signedIn}
       />
     )
@@ -104,7 +129,9 @@ function SessionGate({
         httpUrl,
         gatewayUrl
       }}
+      newAccount={state.newAccount}
       onSignOut={signOut}
+      onOpenConnectionSettings={endpoints.length > 1 ? openConnection : undefined}
     />
   )
 }

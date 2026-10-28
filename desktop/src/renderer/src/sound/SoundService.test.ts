@@ -74,6 +74,7 @@ class FakeContext implements AudioContextLike {
     this.sinkIds.push(id)
     if (this.sinkFails.has(id)) throw new Error('NotFoundError')
   }
+  decodeAudioData?: (data: ArrayBuffer) => Promise<AudioBufferLike> = undefined
 }
 
 const prefs = (patch: Partial<SoundPreferences> = {}): SoundPreferences => ({
@@ -109,6 +110,62 @@ function setup(ctx = new FakeContext(), now = { t: 0 }): Setup {
 }
 
 describe('SoundService playback', () => {
+  it('applies category and event volume per voice (master unchanged)', () => {
+    const { service, ctx } = setup()
+    service.setPreferences(prefs({ categoryVolumes: { controls: 50 }, eventVolumes: { mute: 50 } }))
+    expect(service.play('mute')).toBe('played')
+    // gains[0] is the master; gains[1] the voice gain (0.5 × 0.5).
+    expect(ctx.gains[0]!.gain.value).toBeCloseTo(volumeToGain(60))
+    expect(ctx.gains[1]!.gain.value).toBeCloseTo(0.25)
+    // Full volume: no extra node per voice.
+    service.setPreferences(prefs())
+    const before = ctx.gains.length
+    ctx.sources[0]!.end()
+    service.play('deafen')
+    expect(ctx.gains.length).toBe(before)
+  })
+
+  it('plays your own sound for an event, at its loudness-matching gain', async () => {
+    const ctx = new FakeContext()
+    const decoded: AudioBufferLike = { copyToChannel: () => undefined }
+    const calls: number[] = []
+    ctx.decodeAudioData = async (data) => {
+      calls.push(data.byteLength)
+      return decoded
+    }
+    const { service } = setup(ctx)
+    const id = '1b4e28ba-2fa1-11d2-883f-0016d3cca427'
+    service.setCustomSound(id, { data: new ArrayBuffer(64), gain: 0.5 })
+    service.setPreferences(prefs({ custom: { mention: id }, eventVolumes: { mention: 80 } }))
+    expect(service.play('mention')).toBe('played')
+    await flush()
+    const source = ctx.sources.at(-1)!
+    expect(source.buffer).toBe(decoded)
+    expect(ctx.gains.at(-1)!.gain.value).toBeCloseTo(0.4)
+    // Decoded once per context.
+    service.preview('mention')
+    await flush()
+    expect(calls).toEqual([64])
+    // Library preview of a sound that isn't registered.
+    expect(service.previewCustom('missing')).toBe('unavailable')
+    expect(service.previewCustom(id)).toBe('played')
+  })
+
+  it('falls back to the built-in sound when your file no longer decodes', async () => {
+    const ctx = new FakeContext()
+    ctx.decodeAudioData = async () => {
+      throw new Error('EncodingError')
+    }
+    const { service } = setup(ctx)
+    const id = '1b4e28ba-2fa1-11d2-883f-0016d3cca427'
+    service.setCustomSound(id, { data: new ArrayBuffer(8), gain: 1 })
+    service.setPreferences(prefs({ custom: { message: id } }))
+    expect(service.play('message')).toBe('played')
+    await flush()
+    expect(ctx.sources).toHaveLength(1)
+    expect(ctx.buffers).toBe(1) // the synthesized built-in sound
+  })
+
   it('plays through one shared context and caches rendered buffers', () => {
     const { service, ctx, contexts, now } = setup()
     expect(service.play('mute')).toBe('played')

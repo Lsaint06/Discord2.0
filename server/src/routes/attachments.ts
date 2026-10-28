@@ -6,6 +6,7 @@ import { imageSize, sanitizeFilename, typeForFilename, ALLOWED_EXTENSIONS } from
 import { FileTooLargeError, isAttachmentId, newAttachmentId } from '../attachments/store.js'
 import { requireUser } from '../lib/auth.js'
 import {
+  ApiError,
   badRequest,
   insufficientStorage,
   notFound,
@@ -257,9 +258,26 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: AppContext):
       const type = attachment.contentType.startsWith('text/')
         ? `${attachment.contentType}; charset=utf-8`
         : attachment.contentType
+      // Large files: once their time is up they're gone, even before the sweep deletes the bytes.
+      if (attachment.expiredAt || (attachment.expiresAt && attachment.expiresAt <= Date.now())) {
+        throw new ApiError(410, 'attachment_expired', 'This file has expired and was deleted.')
+      }
+      // One byte range (resumable / streamed downloads of large files): "bytes=start-[end]".
+      let range: { start: number; end: number } | null = null
+      const header = request.headers.range
+      if (typeof header === 'string' && attachment.size > 0) {
+        const m = /^bytes=(\d{1,15})-(\d{0,15})$/.exec(header.trim())
+        const start = m ? Number(m[1]) : NaN
+        const end = m && m[2] ? Math.min(Number(m[2]), attachment.size - 1) : attachment.size - 1
+        if (!m || start >= attachment.size || end < start) {
+          reply.header('Content-Range', `bytes */${attachment.size}`)
+          throw new ApiError(416, 'range_not_satisfiable', 'Requested range not satisfiable')
+        }
+        range = { start, end }
+      }
       let stream
       try {
-        stream = store.open(attachment.id)
+        stream = range ? store.openRange(attachment.id, range.start, range.end) : store.open(attachment.id)
         await new Promise<void>((resolve, reject) => {
           stream!.once('open', () => resolve())
           stream!.once('error', reject)
@@ -270,13 +288,21 @@ export function registerAttachmentRoutes(app: FastifyInstance, ctx: AppContext):
       }
       reply
         .header('Content-Type', type)
-        .header('Content-Length', attachment.size)
+        .header('Accept-Ranges', 'bytes')
         .header('Content-Disposition', contentDisposition(inline ? 'inline' : 'attachment', attachment.filename))
         // Uploaded content is never active: no scripts, no plugins, no same-origin access.
         .header('Content-Security-Policy', "default-src 'none'; sandbox")
         .header('Cross-Origin-Resource-Policy', 'same-site')
         .header('Cache-Control', 'private, max-age=31536000, immutable')
         .header('ETag', `"${attachment.sha256}"`)
+      if (range) {
+        reply
+          .code(206)
+          .header('Content-Range', `bytes ${range.start}-${range.end}/${attachment.size}`)
+          .header('Content-Length', range.end - range.start + 1)
+      } else {
+        reply.header('Content-Length', attachment.size)
+      }
       return reply.send(stream)
     }
   )

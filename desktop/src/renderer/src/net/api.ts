@@ -1,5 +1,6 @@
 import type {
   ApiAccount,
+  ApiAccountEmail,
   ApiAttachment,
   ApiAuditEvent,
   ApiAuthResult,
@@ -8,7 +9,9 @@ import type {
   ApiChannelOverride,
   ApiConversation,
   ApiConversationEvent,
+  ApiEmailSent,
   ApiErrorBody,
+  ApiGifPage,
   ApiInvitePreview,
   ApiLegacyIdentity,
   ApiMe,
@@ -25,8 +28,10 @@ import type {
   ApiServerInvite,
   ApiSession,
   ApiUser,
+  ApiUploadSession,
   ApiVoiceToken,
   ConfigurableRole,
+  NotificationLevel,
   ProfileImageKind,
   SelectableStatus
 } from './protocol'
@@ -87,14 +92,37 @@ export interface ServerMeta {
   apiVersion: number
   devAuth: boolean
   voice?: boolean
-  /** Milestone 7+: password accounts exist (registration by invitation). */
+  /** Milestone 7+: password accounts exist. */
   accounts?: boolean
-  registration?: 'invite'
+  /** Who may create accounts (Milestone 13 adds 'open' and 'closed'; older servers: 'invite'). */
+  registration?: RegistrationMode
+  /** Milestone 13+: email sign-up / confirmation / reset endpoints exist. */
+  emailAccounts?: boolean
+  /** Milestone 13+: this server can send email (password reset by email works). */
+  email?: boolean
   /** Milestone 8+: profiles, presence preferences, profile images. */
   profiles?: boolean
   /** Milestone 10+: friends, blocking, direct and group conversations. */
   connections?: boolean
+  /** Milestone 13+ (API 5): server icons/descriptions, layout, user limits, timeouts. */
+  serverAdmin?: boolean
+  /** Milestone 13+: GIF picker through the server (null/absent = not set up). */
+  gifs?: { provider: string; attribution: { text: string; url: string } } | null
+  /** Milestone 13+: chunked uploads of large files (null/absent = off). */
+  largeFiles?: LargeFileSupport | null
 }
+
+export interface LargeFileSupport {
+  maxBytes: number
+  /** Files strictly larger than this are deleted `ephemeralMs` after the upload completes. */
+  ephemeralThresholdBytes: number
+  ephemeralMs: number
+  chunkBytes: number
+  /** Files up to this size use the normal (one-request) upload. */
+  normalMaxBytes: number
+}
+
+export type RegistrationMode = 'invite' | 'open' | 'closed'
 
 export interface SendMessageBody {
   content: string
@@ -115,18 +143,29 @@ export interface SearchParams {
   limit?: number
 }
 
-async function errorFrom(res: { status: number; json: () => Promise<unknown> }): Promise<ApiError> {
-  let payload: Partial<ApiErrorBody> = {}
+/**
+ * The ApiError for a failed response. Never throws: proxies and crashes can answer with an
+ * empty or non-JSON body (null from an XHR with responseType 'json'), and some errors use
+ * other shapes (Fastify's default body has `error` as a string).
+ */
+export async function errorFrom(res: {
+  status: number
+  json: () => Promise<unknown>
+}): Promise<ApiError> {
+  let error: Partial<ApiErrorBody['error']> = {}
   try {
-    payload = (await res.json()) as ApiErrorBody
+    const body = (await res.json()) as { error?: unknown } | null
+    if (body && typeof body === 'object' && body.error && typeof body.error === 'object') {
+      error = body.error as Partial<ApiErrorBody['error']>
+    }
   } catch {
     // Non-JSON error body.
   }
   return new ApiError(
     res.status,
-    payload.error?.code ?? 'http_error',
-    payload.error?.message ?? `Request failed (${res.status})`,
-    payload.error?.retryAfterMs
+    typeof error.code === 'string' ? error.code : 'http_error',
+    typeof error.message === 'string' ? error.message : `Request failed (${res.status})`,
+    typeof error.retryAfterMs === 'number' ? error.retryAfterMs : undefined
   )
 }
 
@@ -140,7 +179,12 @@ export class ApiClient {
     return this.token ? { Authorization: `${AUTH_SCHEME} ${this.token}` } : {}
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    timeoutMs = REQUEST_TIMEOUT_MS
+  ): Promise<T> {
     let res: Response
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
@@ -150,7 +194,7 @@ export class ApiClient {
           ...this.authHeaders()
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+        signal: AbortSignal.timeout(timeoutMs)
       })
     } catch (err) {
       const timedOut = err instanceof DOMException && err.name === 'TimeoutError'
@@ -236,6 +280,61 @@ export class ApiClient {
 
   regenerateRecoveryCodes(password: string): Promise<{ codes: string[] }> {
     return this.request('POST', '/api/auth/recovery-codes', { password })
+  }
+
+  // ---- Email accounts (Milestone 13) ----
+
+  /** Self-registration (servers with registration 'open'): a code is emailed. */
+  signup(body: {
+    email: string
+    username: string
+    displayName?: string
+    password: string
+  }): Promise<ApiEmailSent> {
+    return this.request('POST', '/api/auth/signup', body)
+  }
+
+  /** Confirms a new account's address (login = username or address) and signs in. */
+  verifyEmail(body: {
+    login: string
+    password: string
+    code: string
+    device?: string
+  }): Promise<ApiAuthResult> {
+    return this.request('POST', '/api/auth/verify-email', body)
+  }
+
+  resendVerification(login: string, password: string): Promise<ApiEmailSent> {
+    return this.request('POST', '/api/auth/resend-verification', { login, password })
+  }
+
+  forgotPassword(email: string): Promise<ApiEmailSent> {
+    return this.request('POST', '/api/auth/forgot-password', { email })
+  }
+
+  resetPassword(body: {
+    email: string
+    code: string
+    newPassword: string
+    device?: string
+  }): Promise<ApiAuthResult> {
+    return this.request('POST', '/api/auth/reset-password', body)
+  }
+
+  accountEmail(): Promise<ApiAccountEmail> {
+    return this.request('GET', '/api/auth/email')
+  }
+
+  requestEmailChange(email: string, password: string): Promise<ApiEmailSent> {
+    return this.request('POST', '/api/auth/email', { email, password })
+  }
+
+  confirmEmailChange(code: string): Promise<ApiAccountEmail> {
+    return this.request('POST', '/api/auth/email/verify', { code })
+  }
+
+  removeEmail(password: string): Promise<ApiAccountEmail> {
+    return this.request('POST', '/api/auth/email/remove', { password })
   }
 
   // ---- Instance administration ----
@@ -396,8 +495,102 @@ export class ApiClient {
 
   // ---- Server management ----
 
-  updateServer(serverId: string, patch: { name?: string; color?: string }): Promise<ApiServer> {
+  updateServer(
+    serverId: string,
+    patch: {
+      name?: string
+      color?: string
+      description?: string | null
+      defaultNotifications?: NotificationLevel
+    }
+  ): Promise<ApiServer> {
     return this.request('PATCH', `/api/servers/${encodeURIComponent(serverId)}`, patch)
+  }
+
+  /** Uploads a server icon (Manage Server); the server re-encodes it to a square WebP. */
+  async uploadServerIcon(serverId: string, image: Blob): Promise<ApiServer> {
+    const form = new FormData()
+    form.append('file', image, 'icon.png')
+    let res: Response
+    try {
+      res = await fetch(`${this.baseUrl}/api/servers/${encodeURIComponent(serverId)}/icon`, {
+        method: 'POST',
+        headers: this.authHeaders(),
+        body: form,
+        signal: AbortSignal.timeout(60_000)
+      })
+    } catch {
+      throw new ApiError(0, 'network_error', 'Cannot reach the server.')
+    }
+    if (!res.ok) throw await errorFrom(res)
+    return (await res.json()) as ApiServer
+  }
+
+  removeServerIcon(serverId: string): Promise<ApiServer> {
+    return this.request('DELETE', `/api/servers/${encodeURIComponent(serverId)}/icon`)
+  }
+
+  /** Server icons are fetched with the session token (members only). */
+  async fetchServerIcon(iconId: string, size: 'full' | 'small'): Promise<Blob> {
+    let res: Response
+    try {
+      res = await fetch(
+        `${this.baseUrl}/api/server-icons/${encodeURIComponent(iconId)}?size=${size}`,
+        { headers: this.authHeaders(), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS * 2) }
+      )
+    } catch {
+      throw new ApiError(0, 'network_error', 'Cannot reach the server.')
+    }
+    if (!res.ok) throw await errorFrom(res)
+    return res.blob()
+  }
+
+  // ---- GIF picker (proxied by the server; null provider = not set up) ----
+
+  gifTrending(offset = 0): Promise<ApiGifPage> {
+    return this.request('GET', `/api/gifs/trending?offset=${offset}`)
+  }
+
+  gifSearch(query: string, offset = 0): Promise<ApiGifPage> {
+    return this.request('GET', `/api/gifs/search?q=${encodeURIComponent(query)}&offset=${offset}`)
+  }
+
+  async fetchGifMedia(id: string, size: 'preview' | 'still' | 'full'): Promise<Blob> {
+    let res: Response
+    try {
+      res = await fetch(`${this.baseUrl}/api/gifs/media/${encodeURIComponent(id)}?size=${size}`, {
+        headers: this.authHeaders(),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS * 3)
+      })
+    } catch {
+      throw new ApiError(0, 'network_error', 'Cannot reach the server.')
+    }
+    if (!res.ok) throw await errorFrom(res)
+    return res.blob()
+  }
+
+  /** Every channel you can see, in the new order, each with its category. */
+  arrangeChannels(
+    serverId: string,
+    channels: { id: string; category: string }[]
+  ): Promise<ApiServer> {
+    return this.request('PUT', `/api/servers/${encodeURIComponent(serverId)}/layout`, {
+      channels
+    })
+  }
+
+  /** minutes null lifts the timeout. */
+  setMemberTimeout(
+    serverId: string,
+    userId: string,
+    minutes: number | null,
+    reason?: string
+  ): Promise<ApiMember> {
+    return this.request(
+      'PUT',
+      `/api/servers/${encodeURIComponent(serverId)}/members/${encodeURIComponent(userId)}/timeout`,
+      reason ? { minutes, reason } : { minutes }
+    )
   }
 
   members(serverId: string): Promise<ApiMember[]> {
@@ -467,14 +660,14 @@ export class ApiClient {
 
   createChannel(
     serverId: string,
-    body: { name: string; type: 'text' | 'voice'; topic?: string | null }
+    body: { name: string; type: 'text' | 'voice'; topic?: string | null; category?: string }
   ): Promise<ApiChannel> {
     return this.request('POST', `/api/servers/${encodeURIComponent(serverId)}/channels`, body)
   }
 
   updateChannel(
     channelId: string,
-    patch: { name?: string; topic?: string | null }
+    patch: { name?: string; topic?: string | null; userLimit?: number }
   ): Promise<ApiChannel> {
     return this.request('PATCH', `/api/channels/${encodeURIComponent(channelId)}`, patch)
   }
@@ -651,6 +844,78 @@ export class ApiClient {
   /** Removes an uploaded attachment that hasn't been sent. */
   deleteAttachment(attachmentId: string): Promise<void> {
     return this.request('DELETE', `/api/attachments/${encodeURIComponent(attachmentId)}`)
+  }
+
+  // ---- Large files: chunked, resumable uploads (Milestone 13) ----
+
+  startLargeUpload(channelId: string, filename: string, size: number): Promise<ApiUploadSession> {
+    return this.request('POST', `/api/channels/${encodeURIComponent(channelId)}/uploads`, {
+      filename,
+      size
+    })
+  }
+
+  largeUploadStatus(id: string): Promise<ApiUploadSession> {
+    return this.request('GET', `/api/uploads/${encodeURIComponent(id)}`)
+  }
+
+  /** Sends one chunk (raw bytes) at `offset`; progress is for this chunk only. */
+  uploadChunk(
+    id: string,
+    offset: number,
+    chunk: Blob,
+    options: { onProgress?: (bytes: number) => void; signal?: AbortSignal } = {}
+  ): Promise<{ receivedBytes: number }> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('PUT', `${this.baseUrl}/api/uploads/${encodeURIComponent(id)}?offset=${offset}`)
+      for (const [k, v] of Object.entries(this.authHeaders())) xhr.setRequestHeader(k, v)
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+      xhr.responseType = 'json'
+      xhr.timeout = 10 * 60_000
+      xhr.upload.onprogress = (e) => options.onProgress?.(e.loaded)
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(xhr.response as { receivedBytes: number })
+          return
+        }
+        void errorFrom({ status: xhr.status, json: async () => xhr.response }).then(reject)
+      }
+      xhr.onerror = () => reject(new ApiError(0, 'network_error', 'Cannot reach the server.'))
+      xhr.ontimeout = () => reject(new ApiError(0, 'timeout', 'The upload stalled.'))
+      xhr.onabort = () => reject(new UploadAbortedError())
+      if (options.signal) {
+        if (options.signal.aborted) return reject(new UploadAbortedError())
+        options.signal.addEventListener('abort', () => xhr.abort(), { once: true })
+      }
+      xhr.send(chunk)
+    })
+  }
+
+  /**
+   * Finishes a large upload. The server re-reads and hashes the whole file, which can take
+   * minutes for gigabytes on the Jetson, hence the caller-chosen timeout. Safe to repeat.
+   */
+  completeLargeUpload(id: string, timeoutMs?: number): Promise<ApiAttachment> {
+    return this.request(
+      'POST',
+      `/api/uploads/${encodeURIComponent(id)}/complete`,
+      undefined,
+      timeoutMs
+    )
+  }
+
+  cancelLargeUpload(id: string): Promise<void> {
+    return this.request('DELETE', `/api/uploads/${encodeURIComponent(id)}`)
+  }
+
+  /** For downloads handed to the main process (streamed to disk, never through memory). */
+  attachmentDownload(attachmentId: string): { url: string; authorization: string } | null {
+    if (!this.token) return null
+    return {
+      url: `${this.baseUrl}/api/attachments/${encodeURIComponent(attachmentId)}`,
+      authorization: `${AUTH_SCHEME} ${this.token}`
+    }
   }
 
   /** Downloads an attachment with the session token (attachments are never public URLs). */

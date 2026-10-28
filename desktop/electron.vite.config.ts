@@ -25,9 +25,15 @@ function cspPlugin(env: Record<string, string>): Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'RENDERER_VITE_')
+  // The main process only downloads attachments from these exact origins (never elsewhere
+  // with the session token, even if asked by a compromised renderer).
+  const parsed = parseEndpoints(env.RENDERER_VITE_SERVERS, env.RENDERER_VITE_SERVER_URL)
+  const serverOrigins = parsed.ok ? parsed.endpoints.map((e) => new URL(e.httpUrl).origin) : []
 
   return {
-    main: {},
+    main: {
+      define: { __D2_SERVER_ORIGINS__: JSON.stringify(serverOrigins) }
+    },
     preload: {},
     renderer: {
       resolve: {

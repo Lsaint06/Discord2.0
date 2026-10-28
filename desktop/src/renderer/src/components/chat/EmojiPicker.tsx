@@ -8,6 +8,8 @@ interface EmojiPickerProps {
   /** Where to anchor: above the composer or next to a message. */
   placement?: 'composer' | 'message'
   label?: string
+  /** After Escape closed it (e.g. focus goes back to the message box). */
+  onEscape?: () => void
 }
 
 /** Searchable emoji grid. Escape or a click outside closes it. */
@@ -16,28 +18,42 @@ function EmojiPicker({
   onClose,
   recent,
   placement = 'composer',
-  label = 'Emoji picker'
+  label = 'Emoji picker',
+  onEscape
 }: EmojiPickerProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const rootRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    // Its own toggle button handles open/close (closing here on mousedown would reopen it).
+    const outside = (target: EventTarget | null): boolean =>
+      !!rootRef.current &&
+      target instanceof Node &&
+      !rootRef.current.contains(target) &&
+      !(target instanceof Element && target.closest('[data-picker-toggle]'))
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.stopPropagation()
         onClose()
+        onEscape?.()
       }
     }
     const onDown = (e: MouseEvent): void => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) onClose()
+      if (outside(e.target)) onClose()
+    }
+    // Keyboard focus moving elsewhere (Tab) closes it too, like a menu.
+    const onFocus = (e: FocusEvent): void => {
+      if (outside(e.target)) onClose()
     }
     window.addEventListener('keydown', onKey, true)
     window.addEventListener('mousedown', onDown)
+    document.addEventListener('focusin', onFocus)
     return () => {
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('mousedown', onDown)
+      document.removeEventListener('focusin', onFocus)
     }
-  }, [onClose])
+  }, [onClose, onEscape])
 
   const grid = (entries: EmojiEntry[]): React.JSX.Element => (
     <div className="emoji-grid">

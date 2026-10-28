@@ -3,6 +3,9 @@ import { DEFAULT_SOUND_EVENTS, DEFAULT_SOUND_VOLUME } from '../sound/soundPolicy
 
 export const defaultSettings: UserSettings = {
   fontSize: 15,
+  sidebarWidth: 240,
+  contrast: 'system',
+  keybinds: {},
   inputVolume: 100,
   outputVolume: 100,
   inputDeviceId: '',
@@ -27,10 +30,14 @@ export const defaultSettings: UserSettings = {
   desktopNotifications: true,
   notificationPreview: false,
   mutedChannels: {},
+  serverNotifications: {},
   recentEmoji: [],
   soundEffects: true,
   soundVolume: DEFAULT_SOUND_VOLUME,
-  soundEvents: { ...DEFAULT_SOUND_EVENTS }
+  soundEvents: { ...DEFAULT_SOUND_EVENTS },
+  soundCategoryVolumes: {},
+  soundEventVolumes: {},
+  soundCustom: {}
 }
 
 export const DEFAULT_ACCENT = '#6d72f6'

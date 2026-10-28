@@ -514,6 +514,24 @@ describe('Messaging 2.0', () => {
     gwBob.ws.close()
   })
 
+  test('messages in a channel that was empty when first seen stay unread (regression)', async () => {
+    const alice = await login('empty-alice')
+    const bob = await login('empty-bob')
+    const music = async () =>
+      ((await (await api(alice.token, '/api/read-states')).json()) as ApiReadState[]).find(
+        (x) => x.channelId === 'studyhall-resources'
+      )!
+    // First look at the channel while it is empty: nothing unread, position recorded.
+    const first = await music()
+    assert.equal(first.unreadCount, 0)
+    // Bob posts while Alice is away; her next fetch (restart / reconnect) must count them.
+    await send(bob.token, 'studyhall-resources', { content: 'first ever message' })
+    await send(bob.token, 'studyhall-resources', { content: 'second one' })
+    const later = await music()
+    assert.equal(later.unreadCount, 2, 'not silently marked read')
+    assert.notEqual(later.lastReadId, later.lastMessageId)
+  })
+
   // ---------- History window ----------
 
   test('loads a window of history around a message', async () => {

@@ -3,6 +3,7 @@ import {
   DEFAULT_SOUND_EVENTS,
   DEFAULT_SOUND_VOLUME,
   eventEnabled,
+  eventGain,
   messageSound,
   migrateSoundSettings,
   SeenMessages,
@@ -51,6 +52,15 @@ describe('message sound rules', () => {
     expect(
       messageSound(msg, ctx({ mutedChannels: { memes: true }, mentionsMe: true }), prefs())
     ).toBeNull()
+  })
+
+  it('an "only @mentions" server plays only the mention sound', () => {
+    expect(messageSound(msg, ctx({ mentionsOnly: true }), prefs())).toBeNull()
+    expect(messageSound(msg, ctx({ mentionsOnly: true, mentionsMe: true }), prefs())).toBe(
+      'mention'
+    )
+    const noMention = prefs({ events: { ...DEFAULT_SOUND_EVENTS, mention: false } })
+    expect(messageSound(msg, ctx({ mentionsOnly: true, mentionsMe: true }), noMention)).toBeNull()
   })
 
   it('global switch, volume 0 and per-event toggles', () => {
@@ -124,8 +134,38 @@ describe('settings migration', () => {
     expect(migrateSoundSettings({})).toEqual({
       soundEffects: true,
       soundVolume: DEFAULT_SOUND_VOLUME,
-      soundEvents: DEFAULT_SOUND_EVENTS
+      soundEvents: DEFAULT_SOUND_EVENTS,
+      soundCategoryVolumes: {},
+      soundEventVolumes: {},
+      soundCustom: {}
     })
+  })
+
+  it('validates per-category and per-event volumes and custom sound ids', () => {
+    const id = '1b4e28ba-2fa1-11d2-883f-0016d3cca427'
+    const migrated = migrateSoundSettings({
+      soundCategoryVolumes: { voice: 40, messages: 250, controls: 'x', bogus: 10 },
+      soundEventVolumes: { mention: -3, message: 55.4, nope: 1 },
+      soundCustom: { mention: id, message: '../../etc/passwd', mute: 42 }
+    })
+    expect(migrated.soundCategoryVolumes).toEqual({ voice: 40, messages: 100 })
+    expect(migrated.soundEventVolumes).toEqual({ mention: 0, message: 55 })
+    expect(migrated.soundCustom).toEqual({ mention: id })
+  })
+
+  it('combines category and event volume; zero means off', () => {
+    const base = { enabled: true, volume: 60, events: { ...DEFAULT_SOUND_EVENTS } }
+    expect(eventGain(base, 'mention')).toBe(1)
+    expect(
+      eventGain(
+        { ...base, categoryVolumes: { messages: 50 }, eventVolumes: { mention: 50 } },
+        'mention'
+      )
+    ).toBe(0.25)
+    expect(eventGain({ ...base, categoryVolumes: { messages: 50 } }, 'voiceJoin')).toBe(1)
+    expect(eventEnabled({ ...base, eventVolumes: { mention: 0 } }, 'mention')).toBe(false)
+    expect(eventEnabled({ ...base, categoryVolumes: { voice: 0 } }, 'voiceJoin')).toBe(false)
+    expect(eventEnabled({ ...base, categoryVolumes: { voice: 0 } }, 'mention')).toBe(true)
   })
 
   it('keeps silence for people who had turned notification sounds off', () => {

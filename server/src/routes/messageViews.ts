@@ -14,7 +14,9 @@ export function toApiAttachment(a: AttachmentRecord): ApiAttachment {
     contentType: a.contentType,
     kind: a.kind,
     size: a.size,
-    ...(a.width !== null && a.height !== null ? { width: a.width, height: a.height } : {})
+    ...(a.width !== null && a.height !== null ? { width: a.width, height: a.height } : {}),
+    ...(a.expiresAt ? { expiresAt: a.expiresAt } : {}),
+    ...(a.expiredAt ? { expired: true } : {})
   }
 }
 

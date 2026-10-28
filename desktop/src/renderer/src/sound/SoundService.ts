@@ -13,6 +13,7 @@ import type { SoundEvent } from './sounds'
 import { RECIPES, renderRecipe } from './sounds'
 import {
   eventEnabled,
+  eventGain,
   SoundGate,
   type SoundPreferences,
   DEFAULT_SOUND_EVENTS,
@@ -48,6 +49,8 @@ export interface AudioContextLike {
   suspend: () => Promise<void>
   close: () => Promise<void>
   setSinkId?: (sinkId: string) => Promise<void>
+  /** Needed for your own (imported) sounds. */
+  decodeAudioData?: (data: ArrayBuffer) => Promise<AudioBufferLike>
 }
 
 export type PlayResult =
@@ -81,6 +84,10 @@ export class SoundService {
   private everRan = false
   private failed = false
   private readonly buffers = new Map<SoundEvent, AudioBufferLike>()
+  /** Imported sounds: raw file bytes and their loudness-matching gain (customSounds.ts). */
+  private readonly customData = new Map<string, { data: ArrayBuffer; gain: number }>()
+  /** Decoded imported sounds for the current context (null = couldn't be decoded). */
+  private readonly customBuffers = new Map<string, Promise<AudioBufferLike | null>>()
   private readonly active = new Set<BufferSourceLike>()
   private readonly gate = new SoundGate()
   private idleTimer: unknown = null
@@ -141,6 +148,20 @@ export class SoundService {
     return this.start(event, false)
   }
 
+  /** Registers (or, with null, forgets) one of your own sounds by its library id. */
+  setCustomSound(id: string, sound: { data: ArrayBuffer; gain: number } | null): void {
+    this.customBuffers.delete(id)
+    if (sound) this.customData.set(id, sound)
+    else this.customData.delete(id)
+  }
+
+  /** Auditions one of your own sounds (from the library list), at the global volume. */
+  previewCustom(id: string): PlayResult {
+    if (!this.prefs.enabled || this.prefs.volume <= 0) return 'skipped'
+    if (!this.customData.has(id)) return 'unavailable'
+    return this.start(null, false, id)
+  }
+
   /** Releases the audio device and cached buffers (sign-out, window close). Reusable later. */
   dispose(): void {
     this.stopAll()
@@ -150,14 +171,19 @@ export class SoundService {
     this.context = null
     this.master = null
     this.buffers.clear()
+    this.customBuffers.clear()
     this.everRan = false
     this.failed = false
     if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => undefined)
   }
 
-  private start(event: SoundEvent, gated: boolean): PlayResult {
+  /**
+   * `event` null = a library preview of `customId`. Imported sounds play through their own
+   * loudness gain × the event's category/event volume; built-in ones through the volume only.
+   */
+  private start(event: SoundEvent | null, gated: boolean, previewId?: string): PlayResult {
     let delayMs = 0
-    if (gated) {
+    if (gated && event) {
       const decision = this.gate.admit(event, this.now())
       if (!decision.play) return 'skipped'
       delayMs = decision.delayMs
@@ -166,19 +192,56 @@ export class SoundService {
     const ctx = this.ensureContext()
     if (!ctx) return 'unavailable'
 
+    const customId = previewId ?? (event ? this.prefs.custom?.[event] : undefined)
+    const play = (): boolean => this.playVoice(ctx, event, customId, delayMs)
+
     if (ctx.state === 'running') {
-      return this.schedule(ctx, event, delayMs) ? 'played' : 'unavailable'
+      return play() ? 'played' : 'unavailable'
     }
     if (ctx.state === 'suspended' && this.everRan) {
       // We suspended it ourselves while idle: resume and play right after.
       void this.resume(ctx).then((ok) => {
-        if (ok) this.schedule(ctx, event, delayMs)
+        if (ok) play()
       })
       return 'played'
     }
     // Never ran: autoplay is blocked until a user gesture. Try, but report it unavailable.
     void this.resume(ctx)
     return 'unavailable'
+  }
+
+  /** Schedules one voice; imported sounds are decoded first (then cached for this context). */
+  private playVoice(
+    ctx: AudioContextLike,
+    event: SoundEvent | null,
+    customId: string | undefined,
+    delayMs: number
+  ): boolean {
+    const volume = event ? eventGain(this.prefs, event) : 1
+    const custom = customId ? this.customData.get(customId) : undefined
+    if (custom && customId && typeof ctx.decodeAudioData === 'function') {
+      void this.customBuffer(ctx, customId).then((buffer) => {
+        if (buffer) this.schedule(ctx, buffer, volume * custom.gain, delayMs)
+        // A file that no longer decodes falls back to the built-in sound.
+        else if (event) this.schedule(ctx, this.bufferFor(ctx, event), volume, delayMs)
+      })
+      return true
+    }
+    if (!event) return false
+    return this.schedule(ctx, this.bufferFor(ctx, event), volume, delayMs)
+  }
+
+  private customBuffer(ctx: AudioContextLike, id: string): Promise<AudioBufferLike | null> {
+    let pending = this.customBuffers.get(id)
+    if (!pending) {
+      const source = this.customData.get(id)
+      pending =
+        source && ctx.decodeAudioData
+          ? ctx.decodeAudioData(source.data.slice(0)).catch(() => null)
+          : Promise.resolve(null)
+      this.customBuffers.set(id, pending)
+    }
+    return pending
   }
 
   private ensureContext(): AudioContextLike | null {
@@ -192,6 +255,7 @@ export class SoundService {
       this.context = ctx
       this.master = master
       this.buffers.clear()
+      this.customBuffers.clear()
       if (ctx.state === 'running') this.everRan = true
       if (this.sinkId) void this.applySink(ctx)
       return ctx
@@ -239,17 +303,32 @@ export class SoundService {
     return buffer
   }
 
-  private schedule(ctx: AudioContextLike, event: SoundEvent, delayMs: number): boolean {
+  private schedule(
+    ctx: AudioContextLike,
+    buffer: AudioBufferLike,
+    volume: number,
+    delayMs: number
+  ): boolean {
     const master = this.master
     if (!master || ctx !== this.context) return false
     try {
       const source = ctx.createBufferSource()
-      source.buffer = this.bufferFor(ctx, event)
-      source.connect(master)
+      source.buffer = buffer
+      // Category / event volume (and an imported file's loudness match) for this voice only.
+      let output: AudioNodeLike = master
+      let voiceGain: GainNodeLike | null = null
+      if (volume !== 1) {
+        voiceGain = ctx.createGain()
+        voiceGain.gain.value = Math.max(0, volume)
+        voiceGain.connect(master)
+        output = voiceGain
+      }
+      source.connect(output)
       this.active.add(source)
       source.onended = () => {
         this.active.delete(source)
         source.disconnect()
+        voiceGain?.disconnect()
         this.armIdleSuspend()
       }
       source.start(ctx.currentTime + delayMs / 1000)

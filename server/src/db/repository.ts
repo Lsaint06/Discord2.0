@@ -1,6 +1,7 @@
 import type {
   ChannelType,
   ConfigurableRole,
+  NotificationLevel,
   ProfileImageKind,
   SelectableStatus,
   ServerRole
@@ -31,7 +32,34 @@ export interface UserRecord {
   customStatusExpiresAt?: number | null
   /** Milestone 10: whether people sharing a server (but not friends) may open a DM. */
   allowServerDms?: boolean
+  // ---- Email accounts (Milestone 13) ----
+  /** Normalized address (confirmed when emailVerifiedAt is set). Never shown to other users. */
+  email?: string | null
+  emailVerifiedAt?: number | null
+  /** Self-registered and not confirmed yet: cannot sign in, invisible to others. */
+  signupPending?: boolean
 }
+
+export type EmailCodePurpose = 'verify' | 'reset'
+
+export interface EmailCodeRecord {
+  id: string
+  userId: string
+  purpose: EmailCodePurpose
+  /** Where the code was sent (for 'verify': the address being confirmed). */
+  email: string
+  codeHash: string
+  createdAt: number
+  expiresAt: number
+  attempts: number
+  usedAt: number | null
+}
+
+export type EmailSignupResult =
+  | { ok: true; user: UserRecord }
+  | { ok: false; reason: 'username_taken' }
+  /** The address already belongs to `existing` (pending or confirmed). Nothing was created. */
+  | { ok: false; reason: 'email_taken'; existing: UserRecord }
 
 export interface ProfilePatch {
   displayName?: string
@@ -107,6 +135,8 @@ export interface MemberRecord {
   userId: string
   role: ServerRole
   joinedAt: number
+  /** Timed out until (epoch ms); null/absent = not timed out. Migration 7. */
+  timeoutUntil?: number | null
 }
 
 export interface BanRecord {
@@ -207,6 +237,10 @@ export interface ServerRecord {
   ownerId: string | null
   position: number
   createdAt: number
+  /** Migration 7 (absent on records created before it, treated as defaults). */
+  description?: string | null
+  iconId?: string | null
+  defaultNotifications?: NotificationLevel
 }
 
 export interface ChannelRecord {
@@ -218,6 +252,24 @@ export interface ChannelRecord {
   category: string
   position: number
   createdAt: number
+  /** Voice: most participants at once (0 = no limit). Migration 7. */
+  userLimit?: number
+}
+
+export interface ServerIconRecord {
+  id: string
+  serverId: string
+  createdBy: string | null
+  size: number
+  sha256: string
+  createdAt: number
+}
+
+/** One channel's place in the server layout (category and order). */
+export interface ChannelPlacement {
+  id: string
+  category: string
+  position: number
 }
 
 export interface MessageRecord {
@@ -264,6 +316,24 @@ export interface AttachmentRecord {
   sha256: string
   position: number
   createdAt: number
+  /** Large files: when the bytes are deleted (null = normal retention). Migration 8. */
+  expiresAt?: number | null
+  /** Set once the bytes were deleted (the row and message stay). */
+  expiredAt?: number | null
+}
+
+export interface UploadSessionRecord {
+  id: string
+  userId: string
+  channelId: string
+  filename: string
+  contentType: string
+  kind: 'image' | 'file'
+  size: number
+  received: number
+  ephemeral: boolean
+  createdAt: number
+  updatedAt: number
 }
 
 export interface ReactionSummary {
@@ -507,6 +577,47 @@ export interface Repository {
   /** Instance bootstrap (local CLI only): create an account, or set a password on an identity. */
   provisionAccount(user: UserRecord, passwordHash: string, now: number): Promise<UserRecord>
 
+  // ---- Email accounts (Milestone 13) ----
+  findUserByEmail(email: string): Promise<UserRecord | undefined>
+  /**
+   * Atomic self-registration: refuses a taken username or address; otherwise creates the
+   * account (signup_pending, address unconfirmed), its password and its first 'verify' code.
+   */
+  registerWithEmail(input: {
+    newUser: UserRecord
+    email: string
+    passwordHash: string
+    code: EmailCodeRecord
+  }): Promise<EmailSignupResult>
+  /** Stores a new code, retiring any open code of the same user and purpose. */
+  putEmailCode(code: EmailCodeRecord): Promise<void>
+  getOpenEmailCode(userId: string, purpose: EmailCodePurpose, now: number): Promise<EmailCodeRecord | undefined>
+  /**
+   * Atomic check of a code: the open, unexpired code of that user and purpose with fewer than
+   * `maxAttempts` wrong guesses. A wrong guess is counted; a right one marks it used (once).
+   * With `peek`, a right code is returned but stays usable (wrong guesses still count).
+   */
+  consumeEmailCode(input: {
+    userId: string
+    purpose: EmailCodePurpose
+    codeHash: string
+    now: number
+    maxAttempts: number
+    peek?: boolean
+  }): Promise<EmailCodeRecord | null>
+  /**
+   * Sets the user's confirmed address (and ends a pending signup, joining `autoJoinServerId`
+   * if it exists). 'email_taken' if another account has the address.
+   */
+  confirmEmail(
+    userId: string,
+    email: string,
+    now: number,
+    autoJoinServerId: string | null
+  ): Promise<'ok' | 'email_taken'>
+  /** Removes the address from the account (sign-in by username keeps working). */
+  removeEmail(userId: string): Promise<void>
+
   // Sessions
   insertSession(session: SessionRecord): Promise<void>
   /** The session and its user for a token hash (no validity checks; see auth/sessions.ts). */
@@ -541,7 +652,20 @@ export interface Repository {
 
   // Servers and membership
   getServer(id: string): Promise<ServerRecord | undefined>
-  updateServer(id: string, patch: Partial<Pick<ServerRecord, 'name' | 'color'>>): Promise<ServerRecord | undefined>
+  updateServer(
+    id: string,
+    patch: Partial<Pick<ServerRecord, 'name' | 'color' | 'description' | 'defaultNotifications'>>
+  ): Promise<ServerRecord | undefined>
+  /** Sets (or with null clears) the server icon; returns the previous icon id to delete. */
+  replaceServerIcon(serverId: string, icon: ServerIconRecord | null): Promise<{ previousId: string | null }>
+  getServerIcon(id: string): Promise<ServerIconRecord | undefined>
+  listServerIconIds(): Promise<Set<string>>
+  /** Times a member out until `until` (null lifts it). False if not a member (or the owner). */
+  setMemberTimeout(serverId: string, userId: string, until: number | null): Promise<boolean>
+  /** Clears timeouts that ended at or before `now`; returns the affected server ids. */
+  clearExpiredTimeouts(now: number): Promise<string[]>
+  /** Moves/reorders channels of one server in one transaction (ids must belong to it). */
+  arrangeChannels(serverId: string, placements: ChannelPlacement[]): Promise<void>
   getMember(serverId: string, userId: string): Promise<MemberRecord | undefined>
   listMembers(serverId: string): Promise<MemberRecord[]>
   membershipsForUser(userId: string): Promise<MemberRecord[]>
@@ -564,7 +688,10 @@ export interface Repository {
   /** allow = deny = 0 removes the override. */
   setChannelOverride(channelId: string, role: ConfigurableRole, allow: number, deny: number): Promise<void>
   createChannel(channel: ChannelRecord): Promise<void>
-  updateChannel(id: string, patch: Partial<Pick<ChannelRecord, 'name' | 'topic'>>): Promise<ChannelRecord | undefined>
+  updateChannel(
+    id: string,
+    patch: Partial<Pick<ChannelRecord, 'name' | 'topic' | 'userLimit'>>
+  ): Promise<ChannelRecord | undefined>
   /** Deletes a channel and everything in it; returns the attachment ids to remove from disk. */
   deleteChannel(id: string): Promise<string[]>
 
@@ -583,7 +710,10 @@ export interface Repository {
 
   // Maintenance and legacy identity migration
   /** Deletes expired/revoked sessions, used/expired codes and old audit events. */
-  purgeExpired(now: number, retention: { sessionsMs: number; auditMs: number }): Promise<Record<string, number>>
+  purgeExpired(
+    now: number,
+    retention: { sessionsMs: number; auditMs: number; pendingSignupMs?: number }
+  ): Promise<Record<string, number>>
   /** Moves everything owned by one identity to another account (dry run = report only). */
   mergeUsers(fromUserId: string, intoUserId: string, dryRun: boolean): Promise<MergeReport>
   integrityReport(): Promise<IntegrityReport>
@@ -628,8 +758,28 @@ export interface Repository {
   deleteAttachmentRows(ids: string[]): Promise<void>
   /** Every attachment id that has a database row (pending or sent). */
   listAttachmentIds(): Promise<Set<string>>
-  /** Bytes stored by one user, and in total. */
+  /** Bytes stored by one user, and in total (normal-retention files only). */
   attachmentUsage(uploaderId: string): Promise<{ user: number; total: number; pendingCount: number }>
+
+  // Large files (Milestone 13)
+  createUploadSession(session: UploadSessionRecord): Promise<void>
+  getUploadSession(id: string): Promise<UploadSessionRecord | undefined>
+  listUploadSessions(userId: string): Promise<UploadSessionRecord[]>
+  /** Records progress only if `expectedReceived` still matches (no lost or doubled chunks). */
+  advanceUploadSession(id: string, expectedReceived: number, received: number, now: number): Promise<boolean>
+  deleteUploadSession(id: string): Promise<UploadSessionRecord | undefined>
+  /** Sessions without progress since `before`. */
+  listAbandonedUploadSessions(before: number): Promise<UploadSessionRecord[]>
+  listUploadSessionIds(): Promise<Set<string>>
+  /** One transaction: the session is removed and the (pending) attachment row inserted. */
+  completeUploadSession(sessionId: string, attachment: AttachmentRecord): Promise<boolean>
+  /** Active large files + open large sessions, for one user and for everyone. */
+  largeFileUsage(userId: string): Promise<{ user: number; pool: number; sessions: number }>
+  /** Bytes still to arrive for every open upload session (reserved disk space). */
+  pendingUploadBytes(): Promise<number>
+  /** Large files whose time is up and whose bytes are still there. */
+  listDueExpirations(now: number, limit: number): Promise<AttachmentRecord[]>
+  markAttachmentExpired(id: string, now: number): Promise<void>
 
   // Reactions
   /** Returns false if the per-message distinct-emoji limit would be exceeded. */

@@ -12,6 +12,7 @@ import type {
 import { LIMITS } from '../../net/protocol'
 import { storageInfo, type SessionStorageKind } from '../../net/session'
 import { formatTimestamp } from '../../lib/format'
+import { emailCodeComplete, formatEmailCode } from '../../lib/accountForms'
 import PasswordInput from '../auth/PasswordInput'
 import { Field } from '../SettingsControls'
 
@@ -35,6 +36,195 @@ function CodeReveal({ code, label }: { code: string; label: string }): React.JSX
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * Milestone 13: the account's email address (for password reset by email). Adding or changing
+ * it needs the current password and a code sent to the new address.
+ */
+function EmailSection({ api, me }: { api: ApiClient; me: ApiMe }): React.JSX.Element {
+  const [mailAvailable, setMailAvailable] = useState<boolean | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [address, setAddress] = useState('')
+  const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [sentTo, setSentTo] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    api
+      .meta()
+      .then((m) => alive && setMailAvailable(m.email === true))
+      .catch(() => alive && setMailAvailable(false))
+    return () => {
+      alive = false
+    }
+  }, [api])
+
+  const act = (fn: () => Promise<void>): void => {
+    setBusy(true)
+    setMessage(null)
+    fn()
+      .catch((err: unknown) => setMessage({ error: true, text: errorText(err) }))
+      .finally(() => setBusy(false))
+  }
+
+  const reset = (): void => {
+    setEditing(false)
+    setSentTo(null)
+    setAddress('')
+    setPassword('')
+    setCode('')
+  }
+
+  return (
+    <>
+      <h3>Email address</h3>
+      <p className="setting-description">
+        {me.email
+          ? me.emailVerified
+            ? `${me.email} — confirmed. You can reset your password by email.`
+            : `${me.email} — not confirmed yet.`
+          : 'No email address. Add one so you can reset your password if you forget it.'}
+      </p>
+      {mailAvailable === false && !me.email && (
+        <p className="setting-description">Email isn’t set up on this server yet.</p>
+      )}
+      {mailAvailable && !editing && !sentTo && (
+        <div className="inline-actions">
+          <button type="button" className="button secondary" onClick={() => setEditing(true)}>
+            {me.email ? 'Change email' : 'Add email'}
+          </button>
+          {me.email && (
+            <button
+              type="button"
+              className="button secondary danger-text"
+              onClick={() => setEditing(true)}
+            >
+              Remove…
+            </button>
+          )}
+        </div>
+      )}
+      {editing && !sentTo && (
+        <form
+          className="stacked-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            act(async () => {
+              await api.requestEmailChange(address.trim(), password)
+              setSentTo(address.trim())
+              setPassword('')
+              setMessage({
+                error: false,
+                text: `We sent a code to ${address.trim()}. It can take a minute to arrive.`
+              })
+            })
+          }}
+        >
+          <Field label="New email address">
+            <input
+              className="text-input"
+              type="email"
+              autoComplete="email"
+              value={address}
+              maxLength={LIMITS.emailMaxLength}
+              onChange={(e) => setAddress(e.target.value)}
+            />
+          </Field>
+          <PasswordInput
+            id="email-current-password"
+            label="Current password"
+            value={password}
+            autoComplete="current-password"
+            onChange={setPassword}
+          />
+          {message && (
+            <p className={message.error ? 'form-error' : 'form-notice'} role="status">
+              {message.text}
+            </p>
+          )}
+          <div className="inline-actions">
+            <button
+              type="submit"
+              className="button primary"
+              disabled={busy || !address.trim() || !password}
+            >
+              {busy ? 'Sending…' : 'Send code'}
+            </button>
+            {me.email && (
+              <button
+                type="button"
+                className="button secondary danger-text"
+                disabled={busy || !password}
+                onClick={() =>
+                  act(async () => {
+                    await api.removeEmail(password)
+                    reset()
+                    setMessage({ error: false, text: 'Email address removed.' })
+                  })
+                }
+              >
+                Remove email
+              </button>
+            )}
+            <button type="button" className="button secondary" onClick={reset}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+      {sentTo && (
+        <form
+          className="stacked-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            act(async () => {
+              await api.confirmEmailChange(code)
+              reset()
+              setMessage({ error: false, text: 'Email address confirmed.' })
+            })
+          }}
+        >
+          <Field label={`Code sent to ${sentTo}`}>
+            <input
+              className="text-input code-input"
+              type="text"
+              autoComplete="one-time-code"
+              value={code}
+              maxLength={9}
+              placeholder="XXXX-XXXX"
+              onChange={(e) => setCode(formatEmailCode(e.target.value))}
+            />
+          </Field>
+          {message && (
+            <p className={message.error ? 'form-error' : 'form-notice'} role="status">
+              {message.text}
+            </p>
+          )}
+          <div className="inline-actions">
+            <button
+              type="submit"
+              className="button primary"
+              disabled={busy || !emailCodeComplete(code)}
+            >
+              {busy ? 'Checking…' : 'Confirm'}
+            </button>
+            <button type="button" className="button secondary" onClick={reset}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+      {!editing && !sentTo && message && (
+        <p className={message.error ? 'form-error' : 'form-notice'} role="status">
+          {message.text}
+        </p>
+      )}
+    </>
+  )
+}
 
 export function SecuritySection({
   api,
@@ -91,6 +281,8 @@ export function SecuritySection({
           ? 'This device keeps your sign-in encrypted by Windows (DPAPI) for this Windows user.'
           : 'This device can’t store your sign-in securely, so you’ll sign in again after restarting the app.'}
       </p>
+
+      {me.email !== undefined && <EmailSection api={api} me={me} />}
 
       <h3>Change password</h3>
       <form

@@ -13,8 +13,24 @@ import type {
 } from './db/repository.js'
 import { DIRECT_SERVER_ID } from './db/migrations.js'
 import { forbidden, notFound } from './lib/errors.js'
-import { channelPermissions, has, rolePermissions } from './lib/permissions.js'
+import { applyTimeout, channelPermissions, has, rolePermissions } from './lib/permissions.js'
 import { Permissions, type ServerRole } from './protocol.js'
+
+/** Role permissions, narrowed while a (non-owner) member is timed out. */
+const memberPermissions = (
+  role: ServerRole,
+  perms: number,
+  timeoutUntil: number | null | undefined,
+  now: number
+): number => (role === 'owner' ? perms : applyTimeout(perms, timeoutUntil, now))
+
+/** The running timeout's end, or null (none, ended, or the owner — who can't be timed out). */
+const activeTimeout = (
+  role: ServerRole,
+  timeoutUntil: number | null | undefined,
+  now: number
+): number | null =>
+  role !== 'owner' && typeof timeoutUntil === 'number' && timeoutUntil > now ? timeoutUntil : null
 
 /** What members of a conversation may do: chat, attach, react and pin. Nobody moderates. */
 export const CONVERSATION_PERMISSIONS =
@@ -29,8 +45,10 @@ export type DmBlockReason = 'blocked' | 'not_allowed' | 'unavailable'
 export interface ServerAccess {
   server: ServerRecord
   role: ServerRole
-  /** Server-level permissions. */
+  /** Server-level permissions (already narrowed by a running timeout). */
   permissions: number
+  /** You are timed out here until this time (epoch ms); null = not timed out. */
+  timeoutUntil: number | null
 }
 
 export interface ChannelAccess {
@@ -62,7 +80,14 @@ export class AccessService {
     ])
     if (!server || !member) return null
     const configured = (await this.repo.getRolePermissions([serverId])).get(serverId) ?? {}
-    return { server, role: member.role, permissions: rolePermissions(member.role, configured) }
+    const now = Date.now()
+    const timeoutUntil = activeTimeout(member.role, member.timeoutUntil, now)
+    return {
+      server,
+      role: member.role,
+      permissions: memberPermissions(member.role, rolePermissions(member.role, configured), timeoutUntil, now),
+      timeoutUntil
+    }
   }
 
   async channel(user: UserRecord, channelId: string): Promise<ChannelAccess | null> {
@@ -76,7 +101,12 @@ export class AccessService {
     const configured = (await this.repo.getRolePermissions([channel.serverId])).get(channel.serverId) ?? {}
     return {
       channel,
-      channelPermissions: channelPermissions(access.role, configured, overrides),
+      channelPermissions: memberPermissions(
+        access.role,
+        channelPermissions(access.role, configured, overrides),
+        access.timeoutUntil,
+        Date.now()
+      ),
       historyFrom: '0',
       conversation: null,
       member: null
@@ -153,27 +183,41 @@ export class AccessService {
     if (user.bot) return []
     const memberships = await this.repo.membershipsForUser(user.id)
     if (memberships.length === 0) return []
-    const roleOf = new Map(memberships.map((m) => [m.serverId, m.role]))
+    const now = Date.now()
+    const memberOf = new Map(memberships.map((m) => [m.serverId, m]))
     const [servers, channels, configured] = await Promise.all([
       this.repo.listServers(),
       this.repo.listChannels(),
-      this.repo.getRolePermissions([...roleOf.keys()])
+      this.repo.getRolePermissions([...memberOf.keys()])
     ])
-    const mine = channels.filter((c) => roleOf.has(c.serverId))
+    const mine = channels.filter((c) => memberOf.has(c.serverId))
     const overrides = await this.repo.overridesForChannels(mine.map((c) => c.id))
     const out: VisibleServer[] = []
     for (const server of servers) {
-      const role = roleOf.get(server.id)
-      if (!role) continue
+      const member = memberOf.get(server.id)
+      if (!member) continue
+      const role = member.role
+      const timeoutUntil = activeTimeout(role, member.timeoutUntil, now)
       const conf = configured.get(server.id) ?? {}
       const visible = mine
         .filter((c) => c.serverId === server.id)
         .map((channel) => ({
           channel,
-          permissions: channelPermissions(role, conf, overrides.get(channel.id) ?? [])
+          permissions: memberPermissions(
+            role,
+            channelPermissions(role, conf, overrides.get(channel.id) ?? []),
+            timeoutUntil,
+            now
+          )
         }))
         .filter((c) => c.permissions !== 0)
-      out.push({ server, role, permissions: rolePermissions(role, conf), channels: visible })
+      out.push({
+        server,
+        role,
+        permissions: memberPermissions(role, rolePermissions(role, conf), timeoutUntil, now),
+        timeoutUntil,
+        channels: visible
+      })
     }
     return out
   }
@@ -213,9 +257,15 @@ export class AccessService {
     ])
     const conf = configured.get(channel.serverId) ?? {}
     const list = overrides.get(channel.id) ?? []
+    const now = Date.now()
     const out = new Set<string>()
     for (const m of members) {
-      const perms = channelPermissions(m.role, conf, list)
+      const perms = memberPermissions(
+        m.role,
+        channelPermissions(m.role, conf, list),
+        activeTimeout(m.role, m.timeoutUntil, now),
+        now
+      )
       if (perms !== 0 && (!bits || has(perms, bits))) out.add(m.userId)
     }
     return out

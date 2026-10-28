@@ -1,9 +1,11 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import type { ApiAttachment } from '../../net/protocol'
 import type { AttachmentCache } from '../../chat/attachmentCache'
 import { formatBytes } from '../../chat/uploads'
 import { fitBox } from '../../chat/layout'
 import { downloadAttachment, useAttachmentUrl } from '../../hooks/useAttachmentUrl'
+import { attachmentExpired, expiryLabel } from '../../chat/largeUpload'
+import { DISK_DOWNLOAD_MIN_BYTES, useDiskDownload } from '../../chat/diskDownloads'
 
 interface AttachmentListProps {
   attachments: ApiAttachment[]
@@ -56,6 +58,44 @@ function FileCard({
   cache: AttachmentCache
 }): React.JSX.Element {
   const ext = attachment.filename.split('.').pop()?.toUpperCase() ?? 'FILE'
+  const disk = useDiskDownload(attachment.id)
+  const [error, setError] = useState<string | null>(null)
+  const expired = attachmentExpired(attachment)
+  const expires = expiryLabel(attachment.expiresAt)
+  const progress = disk.progress
+  const download = (): void => {
+    setError(null)
+    const inMemory = (): void => {
+      downloadAttachment(cache, attachment.id, attachment.filename).catch(() =>
+        setError('Couldn’t download this file.')
+      )
+    }
+    // Big files go straight to disk (Save dialog); small ones through the in-memory cache.
+    if (disk.supported && attachment.size > DISK_DOWNLOAD_MIN_BYTES) {
+      void disk.start().then((ok) => {
+        if (!ok) inMemory()
+      })
+      return
+    }
+    inMemory()
+  }
+  if (expired) {
+    return (
+      <div className="attachment-file expired" aria-label={`${attachment.filename}, expired`}>
+        <span className="attachment-file-icon" aria-hidden="true">
+          {ext.slice(0, 4)}
+        </span>
+        <span className="attachment-file-info">
+          <span className="attachment-file-name" title={attachment.filename}>
+            {attachment.filename}
+          </span>
+          <span className="attachment-file-size">
+            File expired · large files are kept for a limited time
+          </span>
+        </span>
+      </div>
+    )
+  }
   return (
     <div className="attachment-file">
       <span className="attachment-file-icon" aria-hidden="true">
@@ -65,12 +105,24 @@ function FileCard({
         <span className="attachment-file-name" title={attachment.filename}>
           {attachment.filename}
         </span>
-        <span className="attachment-file-size">{formatBytes(attachment.size)}</span>
+        <span className="attachment-file-size">
+          {formatBytes(attachment.size)}
+          {expires && <span className="attachment-expiry"> · {expires}</span>}
+          {progress?.state === 'progressing' && progress.total > 0 && (
+            <span role="status">
+              {' '}
+              · Downloading {Math.floor((progress.received / progress.total) * 100)}%
+            </span>
+          )}
+          {progress?.state === 'completed' && <span role="status"> · Saved</span>}
+          {progress?.state === 'interrupted' && <span role="status"> · Download interrupted</span>}
+          {error && <span role="alert"> · {error}</span>}
+        </span>
       </span>
       <button
         type="button"
         className="link-button"
-        onClick={() => void downloadAttachment(cache, attachment.id, attachment.filename)}
+        onClick={download}
         aria-label={`Download ${attachment.filename}`}
       >
         Download

@@ -55,6 +55,21 @@ export function codeVerifier(purpose: 'register' | 'invite' | 'recovery' | 'rese
   return sha256Hex(`${purpose}:${canonical}`)
 }
 
+/**
+ * Codes sent by email ("7K3Q-9XTA": 8 characters, 40 bits). Shorter than the other codes so
+ * they're easy to type from a phone, which is safe because each one is bound to one account
+ * and purpose, expires within minutes, and dies after a few wrong guesses (routes/email.ts).
+ */
+export const EMAIL_CODE_LENGTH = 8
+
+export function newEmailCode(): string {
+  return newCode(2, 4)
+}
+
+export function emailCodeVerifier(purpose: 'verify' | 'reset', email: string, canonical: string): string {
+  return sha256Hex(`email-${purpose}:${email}:${canonical}`)
+}
+
 export const CODE_LENGTHS = {
   /** Registration and claim invitations: 100 bits. */
   register: 20,

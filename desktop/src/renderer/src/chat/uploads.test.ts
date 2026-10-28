@@ -34,6 +34,13 @@ describe('validateFile', () => {
       /Files can be at most 25 MB/
     )
   })
+
+  it('accepts files up to the server’s large-file ceiling when it offers one', () => {
+    const GB = 1024 * MB
+    expect(validateFile({ name: 'movie.mkv', size: 4 * GB }, 5 * GB)).toBeNull()
+    expect(validateFile({ name: 'big.zip', size: 5 * GB + 1 }, 5 * GB)).toMatch(/at most 5 GB/)
+    expect(validateFile({ name: 'setup.exe', size: 10 }, 5 * GB)).toMatch(/\.exe/)
+  })
 })
 
 describe('planUploads', () => {

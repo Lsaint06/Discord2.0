@@ -7,12 +7,20 @@ import { requireUser } from '../lib/auth.js'
 import { badRequest, forbidden, notFound, tooManyRequests } from '../lib/errors.js'
 import { CHANNEL_PERMISSIONS, canConfigureRole, isConfigurableRole } from '../lib/permissions.js'
 import {
+  normalizeCategoryName,
   normalizeChannelName,
   normalizeColor,
+  normalizeServerDescription,
   normalizeServerName,
   normalizeTopic
 } from '../lib/validation.js'
-import { Permissions, type ApiChannel, type ApiChannelOverride, type ApiServer } from '../protocol.js'
+import {
+  LIMITS,
+  Permissions,
+  type ApiChannel,
+  type ApiChannelOverride,
+  type ApiServer
+} from '../protocol.js'
 import { publishServerChanged } from '../realtime.js'
 import { enforceVoiceAccess } from '../voice/enforce.js'
 
@@ -25,7 +33,8 @@ export function toApiChannel(c: ChannelRecord, permissions?: number): ApiChannel
     topic: c.topic,
     category: c.category,
     position: c.position,
-    ...(permissions === undefined ? {} : { permissions })
+    ...(permissions === undefined ? {} : { permissions }),
+    ...(c.type === 'voice' ? { userLimit: c.userLimit ?? 0 } : {})
   }
 }
 
@@ -37,7 +46,11 @@ export function toApiServer(v: VisibleServer): ApiServer {
     ownerId: v.server.ownerId,
     role: v.role,
     permissions: v.permissions,
-    channels: v.channels.map((c) => toApiChannel(c.channel, c.permissions))
+    channels: v.channels.map((c) => toApiChannel(c.channel, c.permissions)),
+    description: v.server.description ?? null,
+    iconId: v.server.iconId ?? null,
+    defaultNotifications: v.server.defaultNotifications ?? 'all',
+    timeoutUntil: v.timeoutUntil
   }
 }
 
@@ -49,7 +62,7 @@ function rate(limit: { take: (key: string) => { ok: boolean; retryAfterMs: numbe
 }
 
 /** Fetches the server as the user sees it now (for responses after a change). */
-async function serverView(ctx: AppContext, userId: string, serverId: string): Promise<ApiServer> {
+export async function serverView(ctx: AppContext, userId: string, serverId: string): Promise<ApiServer> {
   const user = await ctx.repo.getUser(userId)
   const v = user ? (await ctx.access.visibleServers(user)).find((s) => s.server.id === serverId) : undefined
   if (!v) throw notFound('Server not found')
@@ -152,7 +165,10 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     }
   )
 
-  app.patch<{ Params: { serverId: string }; Body: { name?: string; color?: string } }>(
+  app.patch<{
+    Params: { serverId: string }
+    Body: { name?: string; color?: string; description?: string | null; defaultNotifications?: 'all' | 'mentions' }
+  }>(
     '/api/servers/:serverId',
     {
       schema: {
@@ -162,7 +178,9 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
           additionalProperties: false,
           properties: {
             name: { type: 'string', maxLength: 80 },
-            color: { type: 'string', maxLength: 7 }
+            color: { type: 'string', maxLength: 7 },
+            description: { type: ['string', 'null'], maxLength: 1000 },
+            defaultNotifications: { type: 'string', enum: ['all', 'mentions'] }
           }
         }
       }
@@ -175,18 +193,26 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
         request.params.serverId,
         Permissions.manageServer
       )
+      const body = request.body
       const patch = {
-        name: request.body.name === undefined ? undefined : normalizeServerName(request.body.name),
-        color: request.body.color === undefined ? undefined : normalizeColor(request.body.color)
+        name: body.name === undefined ? undefined : normalizeServerName(body.name),
+        color: body.color === undefined ? undefined : normalizeColor(body.color),
+        description: body.description === undefined ? undefined : normalizeServerDescription(body.description),
+        defaultNotifications: body.defaultNotifications
       }
-      if (patch.name === undefined && patch.color === undefined) throw badRequest('Nothing to update')
+      if (Object.values(patch).every((v) => v === undefined)) throw badRequest('Nothing to update')
       await ctx.repo.updateServer(server.id, patch)
       await ctx.audit.record({
         action: 'server.update',
         actorId: user.id,
         serverId: server.id,
         request,
-        detail: { name: patch.name, color: patch.color }
+        detail: {
+          name: patch.name,
+          color: patch.color,
+          description: patch.description === undefined ? undefined : patch.description !== null,
+          defaultNotifications: patch.defaultNotifications
+        }
       })
       await publishServerChanged(ctx, server.id)
       return serverView(ctx, user.id, server.id)
@@ -227,8 +253,9 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       const existing = (await ctx.repo.listChannels()).filter((c) => c.serverId === server.id)
       if (existing.length >= 100) throw badRequest('A server can have at most 100 channels')
       const type = request.body.type
-      const category =
-        normalizeServerName(request.body.category ?? (type === 'text' ? 'Text Channels' : 'Voice Channels'))
+      const category = normalizeCategoryName(
+        request.body.category ?? (type === 'text' ? 'Text Channels' : 'Voice Channels')
+      )
       const channel: ChannelRecord = {
         id: randomUUID(),
         serverId: server.id,
@@ -264,7 +291,10 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
     return { user, channel, access }
   }
 
-  app.patch<{ Params: { channelId: string }; Body: { name?: string; topic?: string | null } }>(
+  app.patch<{
+    Params: { channelId: string }
+    Body: { name?: string; topic?: string | null; userLimit?: number }
+  }>(
     '/api/channels/:channelId',
     {
       schema: {
@@ -274,16 +304,21 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
           additionalProperties: false,
           properties: {
             name: { type: 'string', maxLength: 80 },
-            topic: { type: ['string', 'null'], maxLength: 400 }
+            topic: { type: ['string', 'null'], maxLength: 400 },
+            userLimit: { type: 'integer', minimum: 0, maximum: LIMITS.voiceUserLimitMax }
           }
         }
       }
     },
     async (request) => {
       const { user, channel } = await channelForManage(request)
+      if (request.body.userLimit !== undefined && channel.type !== 'voice') {
+        throw badRequest('Only voice channels have a user limit', 'not_voice_channel')
+      }
       const patch = {
         name: request.body.name === undefined ? undefined : normalizeChannelName(request.body.name, channel.type),
-        topic: request.body.topic === undefined ? undefined : normalizeTopic(request.body.topic)
+        topic: request.body.topic === undefined ? undefined : normalizeTopic(request.body.topic),
+        userLimit: request.body.userLimit
       }
       const updated = await ctx.repo.updateChannel(channel.id, patch)
       if (!updated) throw notFound('Channel not found')
@@ -292,7 +327,7 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
         actorId: user.id,
         serverId: channel.serverId,
         request,
-        detail: { channelId: channel.id, name: patch.name }
+        detail: { channelId: channel.id, name: patch.name, userLimit: patch.userLimit }
       })
       await publishServerChanged(ctx, channel.serverId)
       return toApiChannel(updated)

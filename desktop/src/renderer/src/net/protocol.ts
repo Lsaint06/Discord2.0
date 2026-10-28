@@ -52,6 +52,10 @@ export interface ApiMe extends ApiUser {
   ownCustomStatus: ApiCustomStatus | null
   /** Whether people you share a server with (but aren't friends with) may message you directly. */
   allowServerDms: boolean
+  /** Milestone 13: your email address (null = none; absent on older servers). Only you see it. */
+  email?: string | null
+  /** The address is confirmed (password reset by email works). */
+  emailVerified?: boolean
 }
 
 /** Full profile for the profile modal. */
@@ -174,7 +178,9 @@ export const Permissions = {
   /** Change members' roles and role permissions (only below your own role). */
   manageRoles: 1 << 14,
   /** Rename the server, change its color, see its audit log. */
-  manageServer: 1 << 15
+  manageServer: 1 << 15,
+  /** Time out members below your role (Milestone 13: no sending, reacting or voice for a while). */
+  moderateMembers: 1 << 16
 } as const
 export type PermissionName = keyof typeof Permissions
 export const ALL_PERMISSIONS = Object.values(Permissions).reduce((a, b) => a | b, 0)
@@ -191,7 +197,11 @@ export interface ApiChannel {
   position: number
   /** Your effective permissions in this channel. */
   permissions?: number
+  /** Voice channels: most people at once (0 = no limit). Milestone 13. */
+  userLimit?: number
 }
+
+export type NotificationLevel = 'all' | 'mentions'
 
 export interface ApiServer {
   id: string
@@ -204,12 +214,22 @@ export interface ApiServer {
   role?: ServerRole
   /** Your server-level permissions. */
   permissions?: number
+  /** Milestone 13: short description shown to members (null = none). */
+  description?: string | null
+  /** Server icon (GET /api/server-icons/:id); null = the colored initials. */
+  iconId?: string | null
+  /** What members are notified about unless they choose otherwise. */
+  defaultNotifications?: NotificationLevel
+  /** You are timed out here until this time (epoch ms); null/absent = not timed out. */
+  timeoutUntil?: number | null
 }
 
 export interface ApiMember {
   userId: string
   role: ServerRole
   joinedAt: number
+  /** Timed out until (epoch ms); null = not timed out. Milestone 13. */
+  timeoutUntil?: number | null
 }
 
 export interface ApiBan {
@@ -228,6 +248,27 @@ export interface ApiChannelOverride {
   role: ConfigurableRole
   allow: number
   deny: number
+}
+
+/** A GIF from the picker (Milestone 13). Media: GET /api/gifs/media/:id?size=preview|still|full */
+export interface ApiGif {
+  id: string
+  title: string
+  /** Preview size (picker grid). */
+  width: number
+  height: number
+  /** Message size. */
+  fullWidth: number
+  fullHeight: number
+}
+
+export interface ApiGifPage {
+  provider: string
+  /** Must be shown with the results (provider terms). */
+  attribution: { text: string; url: string }
+  items: ApiGif[]
+  /** Offset for the next page; null at the end. */
+  next: number | null
 }
 
 export interface ApiServerInvite {
@@ -270,6 +311,19 @@ export interface ApiAuthResult {
   session: ApiSession
   /** Shown once after registration / regeneration. */
   recoveryCodes?: string[]
+  /** Milestone 13: the account was just created (the app shows its short introduction). */
+  newAccount?: boolean
+}
+
+/** Milestone 13: sign-up, resend and "forgot password" always answer the same way. */
+export interface ApiEmailSent {
+  status: 'email_sent'
+  expiresInMinutes: number
+}
+
+export interface ApiAccountEmail {
+  email: string | null
+  verified: boolean
 }
 
 export interface ApiRegistrationInvite {
@@ -333,6 +387,24 @@ export interface ApiAttachment {
   /** Display dimensions (EXIF orientation already applied) for images. */
   width?: number
   height?: number
+  /** Large files (Milestone 13): when the file is deleted (epoch ms). Absent = kept. */
+  expiresAt?: number
+  /** The file was deleted after its time; the message stays. */
+  expired?: boolean
+}
+
+/** A chunked, resumable upload in progress (Milestone 13 large files). */
+export interface ApiUploadSession {
+  id: string
+  channelId: string
+  filename: string
+  size: number
+  /** Bytes stored so far: the next chunk starts here. */
+  receivedBytes: number
+  /** Send chunks of at most this many bytes. */
+  chunkBytes: number
+  /** Over the threshold: the file will be deleted this long after the upload completes. */
+  expiresAfterMs: number | null
 }
 
 export interface ApiReaction {
@@ -429,6 +501,7 @@ export const LIMITS = {
   passwordMaxLength: 256,
   usernameMinLength: 2,
   usernameMaxLength: 32,
+  emailMaxLength: 254,
   recoveryCodeCount: 10,
   inviteMaxUses: 100,
   inviteMaxAgeDays: 30,
@@ -452,7 +525,14 @@ export const LIMITS = {
   /** Group conversations: total members including the creator. */
   groupMinMembers: 3,
   groupMaxMembers: 10,
-  groupNameMaxLength: 100
+  groupNameMaxLength: 100,
+  /** Milestone 13 server administration. */
+  serverDescriptionMaxLength: 300,
+  categoryNameMaxLength: 40,
+  voiceUserLimitMax: 99,
+  /** Longest member timeout (28 days). */
+  timeoutMaxMinutes: 28 * 24 * 60,
+  serverIconMinSize: 64
 } as const
 
 /** Client → server gateway frames. */

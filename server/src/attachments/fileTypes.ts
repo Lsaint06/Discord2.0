@@ -32,6 +32,11 @@ const isPdf = (h: Uint8Array): boolean => bytes(h, 0, ascii('%PDF-'))
 const isZip = (h: Uint8Array): boolean =>
   bytes(h, 0, [0x50, 0x4b, 0x03, 0x04]) || bytes(h, 0, [0x50, 0x4b, 0x05, 0x06])
 const is7z = (h: Uint8Array): boolean => bytes(h, 0, [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])
+const isRar = (h: Uint8Array): boolean => bytes(h, 0, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07])
+/** ISO base media (MP4, MOV): a box whose type is "ftyp" right at the start. */
+const isIsoMedia = (h: Uint8Array): boolean => bytes(h, 4, ascii('ftyp'))
+/** Matroska / WebM: the EBML magic. */
+const isEbml = (h: Uint8Array): boolean => bytes(h, 0, [0x1a, 0x45, 0xdf, 0xa3])
 
 /** Plain text: no NUL bytes and valid UTF-8 (a truncated final character is tolerated). */
 export function looksLikeText(head: Uint8Array): boolean {
@@ -67,9 +72,15 @@ export const FILE_TYPES: readonly FileType[] = [
   text('json', 'application/json'),
   { ext: 'zip', contentType: 'application/zip', kind: 'file', matches: isZip },
   { ext: '7z', contentType: 'application/x-7z-compressed', kind: 'file', matches: is7z },
+  { ext: 'rar', contentType: 'application/vnd.rar', kind: 'file', matches: isRar },
   { ext: 'docx', contentType: `${OOXML}.wordprocessingml.document`, kind: 'file', matches: isZip },
   { ext: 'xlsx', contentType: `${OOXML}.spreadsheetml.sheet`, kind: 'file', matches: isZip },
-  { ext: 'pptx', contentType: `${OOXML}.presentationml.presentation`, kind: 'file', matches: isZip }
+  { ext: 'pptx', contentType: `${OOXML}.presentationml.presentation`, kind: 'file', matches: isZip },
+  // Milestone 13 (large files): videos are offered as downloads, never played inline.
+  { ext: 'mp4', contentType: 'video/mp4', kind: 'file', matches: isIsoMedia },
+  { ext: 'mov', contentType: 'video/quicktime', kind: 'file', matches: isIsoMedia },
+  { ext: 'mkv', contentType: 'video/x-matroska', kind: 'file', matches: isEbml },
+  { ext: 'webm', contentType: 'video/webm', kind: 'file', matches: isEbml }
 ]
 
 export const ALLOWED_EXTENSIONS = FILE_TYPES.map((t) => t.ext)

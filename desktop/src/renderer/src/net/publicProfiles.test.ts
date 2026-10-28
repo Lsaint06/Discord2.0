@@ -115,14 +115,16 @@ describe('connection failure messages', () => {
 
   it('suggests the Internet option when the home-network option fails away from home', () => {
     const text = describeConnectionFailure('ERR_CONNECTION_TIMED_OUT', HOME, servers)
-    expect(text).toMatch(/192\.168\.68\.65:3001 didn't respond/)
-    expect(text).toMatch(/only works on the home network/)
-    expect(text).toMatch(/"Discord 2\.0 — Internet"/)
+    expect(text).toMatch(/didn't respond/)
+    expect(text).toMatch(/"Discord 2\.0 — Home Network" only works on your home network/)
+    expect(text).toMatch(/choose "Discord 2\.0 — Internet" in Connection settings/)
+    // Plain language: no addresses on the sign-in screen.
+    expect(text).not.toMatch(/192\.168|https?:|duckdns/)
   })
 
   it('gives internet-specific advice for the Internet option', () => {
     expect(describeConnectionFailure('ERR_NAME_NOT_RESOLVED', INTERNET, servers)).toBe(
-      "Can't find landhoev3.duckdns.org. Check your internet connection."
+      "Can't find the Discord 2.0 server. Check your internet connection."
     )
     expect(describeConnectionFailure('ERR_INTERNET_DISCONNECTED', INTERNET, servers)).toMatch(
       /offline/
@@ -131,7 +133,7 @@ describe('connection failure messages', () => {
       /isn't accepting connections/
     )
     expect(describeConnectionFailure(null, INTERNET, servers)).toBe(
-      "Can't reach landhoev3.duckdns.org."
+      "Can't reach the Discord 2.0 server."
     )
   })
 })

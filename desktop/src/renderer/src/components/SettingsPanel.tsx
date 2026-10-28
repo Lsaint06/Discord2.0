@@ -27,6 +27,9 @@ import AppearanceSettings from './profile/AppearanceSettings'
 import ProfileCard, { CustomStatusText } from './profile/ProfileCard'
 import EncoderSettings from './EncoderSettings'
 import SoundSettings from './SoundSettings'
+import KeybindSettings from './KeybindSettings'
+import { parseKeybinds, type CommandId } from '../lib/keybinds'
+import type { ServerNotificationChoice } from '../chat/unread'
 import PrivacySettings, { type PrivacyProps } from './PrivacySettings'
 
 export type SectionId =
@@ -41,6 +44,7 @@ export type SectionId =
   | 'streaming'
   | 'notifications'
   | 'sounds'
+  | 'keybinds'
   | 'diagnostics'
 
 const sections: { id: SectionId; label: string; adminOnly?: boolean }[] = [
@@ -55,6 +59,7 @@ const sections: { id: SectionId; label: string; adminOnly?: boolean }[] = [
   { id: 'streaming', label: 'Screen Share' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'sounds', label: 'Sounds' },
+  { id: 'keybinds', label: 'Keybinds' },
   { id: 'diagnostics', label: 'Diagnostics' }
 ]
 
@@ -94,6 +99,8 @@ interface SettingsPanelProps {
   onToggleDeafen: () => void
   onClose: () => void
   privacy: PrivacyProps
+  /** Whether each system-wide shortcut could be registered (Keybinds). */
+  shortcutStatus?: Partial<Record<CommandId, boolean>>
 }
 
 function SettingsPanel({
@@ -123,7 +130,8 @@ function SettingsPanel({
   onToggleMute,
   onToggleDeafen,
   onClose,
-  privacy
+  privacy,
+  shortcutStatus = {}
 }: SettingsPanelProps): React.JSX.Element {
   const [section, setSection] = useState<SectionId>(initialSection)
   const [now] = useState(() => Date.now())
@@ -175,7 +183,14 @@ function SettingsPanel({
           <button
             type="button"
             className="settings-nav-item"
-            onClick={() => onChange({ ...defaultSettings })}
+            onClick={() => {
+              if (
+                window.confirm(
+                  'Reset all settings on this PC to their defaults? This clears your keybinds, sound choices, notification, volume and device settings, and text size. Your account, profile and imported sounds are kept.'
+                )
+              )
+                onChange({ ...defaultSettings })
+            }}
           >
             Reset to Defaults
           </button>
@@ -325,6 +340,8 @@ function SettingsPanel({
               onChange={onPreferencesChange}
               fontSize={settings.fontSize}
               onFontSizeChange={(fontSize) => onChange({ fontSize })}
+              contrast={settings.contrast}
+              onContrastChange={(contrast) => onChange({ contrast })}
             />
           )}
           {section === 'voice' && (
@@ -476,10 +493,57 @@ function SettingsPanel({
                 . Windows notifications themselves are silent unless the app can&rsquo;t play its
                 own sound.
               </p>
+              {servers.length > 0 && (
+                <>
+                  <h3 className="settings-subheading">Per server</h3>
+                  <p className="settings-note">
+                    Choose what each server notifies you about (sounds and desktop notifications).
+                    Direct messages always notify you.
+                  </p>
+                  <ul className="server-notify-list">
+                    {servers.map((s) => {
+                      const serverDefault = s.defaultNotifications ?? 'all'
+                      return (
+                        <li key={s.id} className="server-notify-row">
+                          <span className="server-notify-name">{s.name}</span>
+                          <select
+                            className="text-input compact"
+                            aria-label={`Notifications for ${s.name}`}
+                            value={settings.serverNotifications[s.id] ?? 'default'}
+                            onChange={(e) => {
+                              const value = e.target.value as ServerNotificationChoice
+                              const next = { ...settings.serverNotifications }
+                              if (value === 'default') delete next[s.id]
+                              else next[s.id] = value
+                              onChange({ serverNotifications: next })
+                            }}
+                          >
+                            <option value="default">
+                              Server default (
+                              {serverDefault === 'mentions' ? 'only @mentions' : 'all messages'})
+                            </option>
+                            <option value="all">All messages</option>
+                            <option value="mentions">Only @mentions</option>
+                          </select>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </>
+              )}
             </>
           )}
 
           {section === 'sounds' && <SoundSettings settings={settings} onChange={onChange} />}
+          {section === 'keybinds' && (
+            <KeybindSettings
+              keybinds={parseKeybinds(settings.keybinds)}
+              onChange={(keybinds) => onChange({ keybinds })}
+              globalStatus={shortcutStatus}
+              pushToTalkKey={settings.pushToTalkKey}
+              onOpenVoiceSettings={() => setSection('voice')}
+            />
+          )}
         </div>
 
         <div className="settings-close">

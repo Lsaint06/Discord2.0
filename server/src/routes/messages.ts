@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { ChannelAccess } from '../access.js'
 import type { AppContext } from '../context.js'
 import { RepositoryConflict, type MessageRecord, type UserRecord } from '../db/repository.js'
+import { DIRECT_SERVER_ID } from '../db/migrations.js'
 import { isAttachmentId } from '../attachments/store.js'
 import { requireUser } from '../lib/auth.js'
 import { badRequest, conflict, forbidden, notFound, tooManyRequests } from '../lib/errors.js'
@@ -265,6 +266,10 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext): vo
       // Only authors edit their own messages (moderators can delete, never rewrite).
       if (message.authorId !== user.id) {
         throw forbidden('You can only edit your own messages', 'not_author')
+      }
+      // Timed out: no new words in the server, and rewriting old messages would be just that.
+      if (channel.serverId !== DIRECT_SERVER_ID && (await ctx.access.server(user, channel.serverId))?.timeoutUntil) {
+        throw forbidden('You can’t edit messages while you’re timed out.', 'timed_out')
       }
       const hasAttachments = (await ctx.repo.attachmentsForMessages([message.id])).length > 0
       const content = normalizeMessageContent(request.body.content, { allowEmpty: hasAttachments })

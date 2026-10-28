@@ -15,6 +15,8 @@ interface ChannelSidebarProps {
   unreadChannelIds: Set<string>
   /** Unread message counts per channel (shown as a badge). */
   unreadCounts?: Record<string, number>
+  /** Unread mentions of you per channel (a red badge, shown instead of the count). */
+  mentionCounts?: Record<string, number>
   /** Voice channel we're in (or joining), if any. */
   voiceChannelId: string | null
   selfId: string
@@ -43,6 +45,7 @@ function ChannelSidebar({
   activeChannelId,
   unreadChannelIds,
   unreadCounts,
+  mentionCounts,
   voiceChannelId,
   selfId,
   resolveUser,
@@ -92,8 +95,9 @@ function ChannelSidebar({
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           disabled={serverActions.length === 0}
+          title={server.description ? `${server.name}\n\n${server.description}` : server.name}
         >
-          <h1 title={server.name}>{server.name}</h1>
+          <h1>{server.name}</h1>
           <ChevronDownIcon size={18} />
         </button>
         {menuOpen && serverActions.length > 0 && (
@@ -123,6 +127,11 @@ function ChannelSidebar({
       </header>
 
       <div className="channel-scroller">
+        {server.description && (
+          <p className="server-description" title={server.description}>
+            {server.description}
+          </p>
+        )}
         {server.categories.map((category) => {
           const isCollapsed = collapsed.has(category.id)
           return (
@@ -169,7 +178,23 @@ function ChannelSidebar({
                           <SpeakerIcon size={20} className="channel-icon" />
                         )}
                         <span className="channel-name">{channel.name}</span>
-                        {unread && !active && (unreadCounts?.[channel.id] ?? 0) > 0 ? (
+                        {channel.type === 'voice' && (channel.userLimit ?? 0) > 0 && (
+                          <span
+                            className={`voice-limit${participants.length >= channel.userLimit! ? ' full' : ''}`}
+                            aria-label={`${participants.length} of ${channel.userLimit} people`}
+                            title={`User limit: ${channel.userLimit}`}
+                          >
+                            {participants.length}/{channel.userLimit}
+                          </span>
+                        )}
+                        {!active && (mentionCounts?.[channel.id] ?? 0) > 0 ? (
+                          <span
+                            className="mention-badge"
+                            aria-label={`${mentionCounts![channel.id]} unread mention${mentionCounts![channel.id] === 1 ? '' : 's'}`}
+                          >
+                            {mentionCounts![channel.id] >= 99 ? '99+' : mentionCounts![channel.id]}
+                          </span>
+                        ) : unread && !active && (unreadCounts?.[channel.id] ?? 0) > 0 ? (
                           <span
                             className="unread-badge"
                             aria-label={`${unreadCounts![channel.id]} unread`}

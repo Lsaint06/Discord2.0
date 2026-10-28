@@ -21,7 +21,7 @@ import { isAppUrl } from './appUrl'
 export type MicrophoneAccess = 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'
 
 /** Accelerators we accept for global push-to-talk: optional modifiers + one key. */
-const ACCELERATOR =
+export const ACCELERATOR =
   /^(?:(?:CommandOrControl|Control|Ctrl|Alt|Shift|Super)\+){0,3}(?:[A-Z0-9]|F(?:[1-9]|1\d|2[0-4])|Space|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Up|Down|Left|Right|Plus|`|-|=|\[|\]|\\|;|'|,|\.|\/|num[0-9]|numdec|numadd|numsub|nummult|numdiv)$/
 
 let registeredAccelerator: string | null = null

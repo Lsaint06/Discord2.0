@@ -1,6 +1,7 @@
 import {
   Fragment,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -26,6 +27,11 @@ import {
 import { filesFromTransfer } from '../chat/uploads'
 import { messageLink } from '../chat/markdown'
 import { createMentionDetector } from '../chat/mentions'
+import type { Drafts } from '../chat/drafts'
+import { DeleteGuard, canDeleteMessage } from '../chat/messageDelete'
+import { gifMessageContent } from '../chat/gifs'
+import { GifContext } from '../chat/gifContext'
+import type { LargeFileSupport } from '../net/api'
 import { anyDialogOpen } from '../lib/focusTrap'
 import { useDialog } from '../hooks/useDialog'
 import { AtIcon, BellIcon, FriendsIcon, HashIcon, MembersIcon, PinIcon, SearchIcon } from './Icons'
@@ -92,6 +98,13 @@ interface ChatPanelProps {
   onJumpTo: (channelId: string, messageId: string) => void
   /** Open a user's profile popout (stable callback). */
   onOpenProfile: (userId: string, anchor: DOMRect) => void
+  /** Unsent text per channel (kept by the workspace across views and restarts). */
+  drafts: Drafts
+  onDraftChange: (channelId: string, text: string) => void
+  /** Why you can't send in this server channel right now (e.g. a timeout). */
+  readOnlyReason?: string
+  /** The server accepts large files (chunked uploads); null = normal limits only. */
+  largeFiles?: LargeFileSupport | null
 }
 
 function useWindowFocus(): boolean {
@@ -113,6 +126,7 @@ const EMPTY: Message[] = []
 
 function ChatPanel(props: ChatPanelProps): React.JSX.Element {
   const { channel, backend, meId, conversation } = props
+  const gifs = useContext(GifContext)
   const label = conversation ? conversation.label : `#${channel.name}`
   const noun = conversation ? 'conversation' : 'channel'
   // What this user may do here (the server enforces it; this only hides controls).
@@ -126,7 +140,9 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
     pin:
       hasPermission(perms, Permissions.pinMessages) ||
       hasPermission(perms, Permissions.manageMessages),
-    manageMessages: hasPermission(perms, Permissions.manageMessages)
+    manageMessages: hasPermission(perms, Permissions.manageMessages),
+    // Own messages, except while timed out in the server (readOnlyReason explains that).
+    edit: !props.readOnlyReason
   }
   const messages = props.state?.messages ?? EMPTY
   const loaded = props.state?.loaded ?? false
@@ -134,13 +150,15 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
   const hasNewer = props.state?.hasNewer ?? false
   const loadingOlder = props.state?.loadingOlder ?? false
 
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [replyTo, setReplyTo] = useState<Message | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
   const [picker, setPicker] = useState<{ message: Message; rect: DOMRect } | null>(null)
   const [lightbox, setLightbox] = useState<ApiAttachment | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Message | null>(null)
+  // Deletes in flight: one request per message however often it's clicked.
+  const deleteGuard = useRef(new DeleteGuard())
+  const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(() => new Set())
   const [searchOpen, setSearchOpen] = useState(false)
   const [pinsOpen, setPinsOpen] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -381,6 +399,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
       cancelEdit: () => setEditingId(null),
       saveEdit: (m, content) => backend.editMessage(m, content),
       requestDelete: (m) => setConfirmDelete(m),
+      quickDelete: (m) => void deleteNowRef.current(m),
       react: (m, emoji) => {
         backend.toggleReaction(m, emoji)
         props.onEmojiUsed(emoji)
@@ -404,9 +423,39 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
 
   const deleteNow = async (m: Message): Promise<void> => {
     setConfirmDelete(null)
-    const failure = await backend.deleteMessage(m)
-    if (failure) showToast(`Couldn’t delete: ${failure}`)
+    const guard = deleteGuard.current
+    if (!guard.begin(m.id)) return
+    setDeletingIds((s) => new Set(s).add(m.id))
+    try {
+      const failure = await backend.deleteMessage(m)
+      if (failure) showToast(`Couldn’t delete: ${failure}`)
+    } finally {
+      guard.end(m.id)
+      setDeletingIds((s) => {
+        const next = new Set(s)
+        next.delete(m.id)
+        return next
+      })
+    }
   }
+  const deleteNowRef = useRef(deleteNow)
+  useEffect(() => {
+    deleteNowRef.current = deleteNow
+  })
+  // While Shift is held, delete buttons turn red: a click deletes without asking.
+  const [shiftHeld, setShiftHeld] = useState(false)
+  useEffect(() => {
+    const update = (e: KeyboardEvent): void => setShiftHeld(e.shiftKey)
+    const release = (): void => setShiftHeld(false)
+    window.addEventListener('keydown', update)
+    window.addEventListener('keyup', update)
+    window.addEventListener('blur', release)
+    return () => {
+      window.removeEventListener('keydown', update)
+      window.removeEventListener('keyup', update)
+      window.removeEventListener('blur', release)
+    }
+  }, [])
 
   const menuItems = (m: Message, x: number, y: number): MenuItem[] => {
     const own = m.authorId === meId
@@ -418,7 +467,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
       })
     }
     if (can.send) items.push({ label: 'Reply', onSelect: () => actions.reply(m) })
-    if (own) items.push({ label: 'Edit Message', onSelect: () => actions.startEdit(m) })
+    if (own && can.edit) items.push({ label: 'Edit Message', onSelect: () => actions.startEdit(m) })
     if (can.pin) {
       items.push({
         label: m.pinned ? 'Unpin Message' : 'Pin Message',
@@ -489,7 +538,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
 
   return (
     <main
-      className="chat-panel"
+      className={`chat-panel${shiftHeld ? ' shift-held' : ''}`}
       onDragEnter={(e) => {
         if (!isFile(e)) return
         dragDepth.current++
@@ -750,6 +799,15 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
                       compact={props.compactMode}
                       showTimestamps={props.showTimestamps}
                       isSelf={message.authorId === meId}
+                      canDelete={canDeleteMessage({
+                        own: message.authorId === meId,
+                        manageMessages: can.manageMessages,
+                        local: Boolean(message.pending || message.failed)
+                      })}
+                      canReact={can.react}
+                      canReply={can.send}
+                      canEdit={message.authorId === meId && can.edit}
+                      deleting={deletingIds.has(message.id)}
                       mentioned={mentionsSelf(message)}
                       flash={flashId === message.id}
                       editing={editingId === message.id}
@@ -799,8 +857,8 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
           <Composer
             key={channel.id}
             channel={channel}
-            draft={drafts[channel.id] ?? ''}
-            onDraftChange={(value) => setDrafts((d) => ({ ...d, [channel.id]: value }))}
+            draft={props.drafts[channel.id]?.text ?? ''}
+            onDraftChange={(value) => props.onDraftChange(channel.id, value)}
             replyTo={replyTo}
             replyAuthorName={replyTo ? props.resolveUser(replyTo.authorId).name : undefined}
             onCancelReply={() => setReplyTo(null)}
@@ -809,18 +867,25 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
               setReplyTo(null)
               scrollToBottom()
             }}
-            upload={(file, name, onProgress, signal) =>
-              backend.uploadAttachment(channel.id, file, name, onProgress, signal)
-            }
-            deleteAttachment={backend.deleteAttachment}
-            describeError={describeError}
+            largeFiles={props.largeFiles ?? null}
             recentEmoji={props.recentEmoji}
             onEmojiUsed={props.onEmojiUsed}
             onEditLast={() => lastOwn && setEditingId(lastOwn.id)}
             disabled={!can.send}
-            disabledReason={conversation?.readOnlyReason}
+            disabledReason={conversation?.readOnlyReason ?? props.readOnlyReason}
             canAttach={can.attach}
             targetLabel={label}
+            gifApi={gifs ? backend.api : undefined}
+            onSendGif={(gif) => {
+              if (!gifs) return
+              backend.sendMessage(channel.id, {
+                content: gifMessageContent(gifs.provider, gif.id),
+                attachments: [],
+                replyTo
+              })
+              setReplyTo(null)
+              scrollToBottom()
+            }}
             ref={composerRef}
           />
 
@@ -879,7 +944,11 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
       {lightbox && (
         <Lightbox
           attachment={lightbox}
+          gallery={messages.flatMap((m) =>
+            m.pending || m.failed ? [] : (m.attachments ?? []).filter((a) => a.kind === 'image')
+          )}
           cache={backend.attachments}
+          onNavigate={setLightbox}
           onClose={() => setLightbox(null)}
         />
       )}

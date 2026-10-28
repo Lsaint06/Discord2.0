@@ -9,6 +9,7 @@ import type { ConnectionQualityLabel } from '../media/MediaSession'
 import type { ScreenShareState } from '../media/ScreenShareController'
 import { SCREEN_PROFILES, type ScreenProfileId } from '../media/screenProfiles'
 import Avatar from './Avatar'
+import { gradeConnection, type ConnectionSummary } from '../media/connectionStats'
 import {
   EyeIcon,
   GearIcon,
@@ -28,6 +29,10 @@ export interface VoiceConnection {
   deviceNotice?: string
   retryInMs?: number
   quality: ConnectionQualityLabel
+  /** Measured telemetry (null until the first sample; never estimated). */
+  stats?: ConnectionSummary | null
+  detailsOpen?: boolean
+  onToggleDetails?: () => void
   audioBlocked: boolean
   screenShare: ScreenShareState
   /** Present in push-to-talk mode. */
@@ -84,6 +89,56 @@ const QUALITY_TITLE: Record<ConnectionQualityLabel, string> = {
   unknown: 'Connection quality'
 }
 
+const UNAVAILABLE = 'Unavailable'
+const fmt = (value: number | undefined, unit: string): string =>
+  value === undefined ? UNAVAILABLE : `${value} ${unit}`
+
+function transportLabel(stats: ConnectionSummary | null | undefined): string {
+  const t = stats?.transport
+  if (!t?.protocol) return UNAVAILABLE
+  const relayed = t.candidateType === 'relay' ? ', relayed' : ''
+  return t.protocol === 'tcp' ? `TCP (UDP blocked)${relayed}` : `UDP${relayed}`
+}
+
+/** Expandable, measured details of the voice connection. */
+function ConnectionDetails({
+  id,
+  stats,
+  quality
+}: {
+  id: string
+  stats: ConnectionSummary | null | undefined
+  quality: ConnectionQualityLabel
+}): React.JSX.Element {
+  return (
+    <div className="voice-connection-details" id={id}>
+      <dl>
+        <dt>Round trip</dt>
+        <dd>{fmt(stats?.rttMs, 'ms')}</dd>
+        <dt>Jitter</dt>
+        <dd>{fmt(stats?.jitterMs, 'ms')}</dd>
+        <dt>Packet loss ↑</dt>
+        <dd>{fmt(stats?.uploadLossPct, '%')}</dd>
+        <dt>Packet loss ↓</dt>
+        <dd>{fmt(stats?.downloadLossPct, '%')}</dd>
+        <dt>Sending</dt>
+        <dd>{fmt(stats?.sendKbps, 'kbit/s')}</dd>
+        <dt>Receiving</dt>
+        <dd>{fmt(stats?.receiveKbps, 'kbit/s')}</dd>
+        <dt>Path</dt>
+        <dd>{transportLabel(stats)}</dd>
+        <dt>Server estimate</dt>
+        <dd>{quality === 'unknown' ? UNAVAILABLE : quality}</dd>
+      </dl>
+      <p className="voice-connection-note">
+        Measured from your voice connection. Values appear after a few seconds; “Unavailable” means
+        there was nothing to measure (for example, your microphone is muted and nobody else is
+        talking).
+      </p>
+    </div>
+  )
+}
+
 function UserPanel({
   displayName,
   avatarColor,
@@ -126,19 +181,38 @@ function UserPanel({
         <div className="voice-panel">
           <div className="voice-panel-row">
             <div className="voice-panel-info">
-              <div
-                className={`voice-panel-status ${voice.status} quality-${voice.quality}`}
-                role="status"
-                title={voice.status === 'connected' ? QUALITY_TITLE[voice.quality] : undefined}
-              >
-                <SignalIcon size={16} />
-                <span>
-                  {STATUS_LABEL[voice.status]}
-                  {voice.status === 'reconnecting' && voice.retryInMs !== undefined
-                    ? ` (${Math.max(1, Math.round(voice.retryInMs / 1000))}s)`
-                    : ''}
-                </span>
-              </div>
+              {voice.status === 'connected' && voice.onToggleDetails ? (
+                <button
+                  type="button"
+                  className={`voice-panel-status ${voice.status} quality-${voice.quality} grade-${gradeConnection(voice.stats ?? {})} as-button`}
+                  aria-expanded={voice.detailsOpen === true}
+                  aria-controls="voice-connection-details"
+                  title={`${QUALITY_TITLE[voice.quality]}. Show connection details.`}
+                  onClick={voice.onToggleDetails}
+                >
+                  <SignalIcon size={16} />
+                  <span role="status">
+                    {STATUS_LABEL[voice.status]}
+                    {voice.stats?.rttMs !== undefined && (
+                      <span className="voice-panel-ping"> · {voice.stats.rttMs} ms</span>
+                    )}
+                  </span>
+                </button>
+              ) : (
+                <div
+                  className={`voice-panel-status ${voice.status} quality-${voice.quality}`}
+                  role="status"
+                  title={voice.status === 'connected' ? QUALITY_TITLE[voice.quality] : undefined}
+                >
+                  <SignalIcon size={16} />
+                  <span>
+                    {STATUS_LABEL[voice.status]}
+                    {voice.status === 'reconnecting' && voice.retryInMs !== undefined
+                      ? ` (${Math.max(1, Math.round(voice.retryInMs / 1000))}s)`
+                      : ''}
+                  </span>
+                </div>
+              )}
               <div
                 className="voice-panel-where"
                 title={`${voice.channelName} / ${voice.serverName}`}
@@ -156,6 +230,14 @@ function UserPanel({
               <HangUpIcon size={20} />
             </button>
           </div>
+
+          {voice.status === 'connected' && voice.detailsOpen && (
+            <ConnectionDetails
+              id="voice-connection-details"
+              stats={voice.stats}
+              quality={voice.quality}
+            />
+          )}
 
           {voice.status === 'connected' && share && (
             <div className="voice-panel-share">

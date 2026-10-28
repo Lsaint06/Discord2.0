@@ -11,6 +11,11 @@ export const ProfileMediaContext = createContext<AttachmentCache | null>(null)
 
 export const profileMediaKey = (id: string, size: ProfileImageSize): string => `${id}:${size}`
 
+/** Server icons share the cache; their keys carry a prefix (see useBackend). */
+export const SERVER_ICON_PREFIX = 'icon:'
+export const serverIconKey = (id: string, size: ProfileImageSize): string =>
+  `${SERVER_ICON_PREFIX}${profileMediaKey(id, size)}`
+
 export function parseProfileMediaKey(key: string): { id: string; size: ProfileImageSize } {
   const [id = '', size] = key.split(':')
   return { id, size: size === 'full' ? 'full' : 'small' }
@@ -21,8 +26,33 @@ export function useProfileImage(
   id: string | null | undefined,
   size: ProfileImageSize
 ): { url?: string; failed: boolean } {
+  return useCachedImage(id ? profileMediaKey(id, size) : null)
+}
+
+/** blob: URL of a server icon (members only), or undefined while loading / missing. */
+export function useServerIcon(
+  id: string | null | undefined,
+  size: ProfileImageSize
+): { url?: string; failed: boolean } {
+  return useCachedImage(id ? serverIconKey(id, size) : null)
+}
+
+/** GIF media from the picker proxy (same cache, 'gif:' keys). */
+export const GIF_PREFIX = 'gif:'
+export type GifSize = 'preview' | 'still' | 'full'
+export const gifKey = (id: string, size: GifSize): string => `${GIF_PREFIX}${id}:${size}`
+
+export function parseGifKey(key: string): { id: string; size: GifSize } {
+  const [id = '', size] = key.slice(GIF_PREFIX.length).split(':')
+  return { id, size: size === 'preview' || size === 'still' ? size : 'full' }
+}
+
+export function useGifMedia(id: string | null, size: GifSize): { url?: string; failed: boolean } {
+  return useCachedImage(id ? gifKey(id, size) : null)
+}
+
+function useCachedImage(key: string | null): { url?: string; failed: boolean } {
   const cache = useContext(ProfileMediaContext)
-  const key = id ? profileMediaKey(id, size) : null
   const [state, setState] = useState<{ key: string | null; url?: string; failed: boolean }>({
     key: null,
     failed: false
