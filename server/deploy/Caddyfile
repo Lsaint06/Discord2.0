@@ -4,14 +4,19 @@
 #
 # One hostname serves everything:
 #   /rtc, /rtc/*   -> LiveKit signaling (WebSocket) on the host network, port 7880
+#   /api/livekit/webhook* -> 404 (LiveKit calls it from the Jetson itself, never from outside)
 #   everything else -> Discord 2.0 backend (REST, /gateway WebSocket, attachments)
 # Media (voice/screen share) does NOT go through here: it uses ports 7881/TCP and 7882/UDP directly.
 #
 # No access log is configured on purpose: LiveKit join tokens travel in the /rtc query string.
-
 {
 	# Admin API only inside the container (never published).
 	admin localhost:2019
+
+	# UDP 443 (HTTP/3) is not published or forwarded; don't advertise it to clients.
+	servers {
+		protocols h1 h2
+	}
 }
 
 {$PUBLIC_HOSTNAME} {
@@ -27,16 +32,21 @@
 		max_size 64MB
 	}
 
+	# Only LiveKit (on the Jetson itself) calls the webhook; it never needs to come from outside.
+	@internal path /api/livekit/webhook*
+	handle @internal {
+		respond 404
+	}
+
 	@livekit path /rtc /rtc/*
 	handle @livekit {
 		reverse_proxy host.docker.internal:7880
 	}
 
 	handle {
-		reverse_proxy server:3001 {
-			# The backend trusts X-Forwarded-For only from this proxy's fixed address (TRUST_PROXY).
-			# Overwrite whatever the client sent with the real peer address.
-			header_up X-Forwarded-For {remote_host}
-		}
+		# X-Forwarded-For: Caddy discards whatever the client sent (no trusted_proxies here) and
+		# sets the real peer address. The backend trusts it only from this proxy's fixed address
+		# (TRUST_PROXY).
+		reverse_proxy server:3001
 	}
 }

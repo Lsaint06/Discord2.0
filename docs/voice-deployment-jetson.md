@@ -58,6 +58,7 @@ Set at least:
 BIND_ADDRESS=192.168.68.65
 LIVEKIT_NODE_IP=192.168.68.65
 LIVEKIT_PUBLIC_URL=ws://192.168.68.65:7880
+LIVEKIT_LAN_CIDR=192.168.68.65/32                    # LiveKit offers only this address as its LAN candidate
 LIVEKIT_API_KEY=<API Key from generate-keys>
 LIVEKIT_API_SECRET=<API Secret from generate-keys>   # letters/digits, ≥ 32 chars
 DEV_AUTH=false                                       # development identities off (production refuses them)
@@ -67,11 +68,15 @@ DEV_AUTH=false                                       # development identities of
 
 ## 3. Firewall (only if `ufw` is active)
 
+`ufw` only governs LiveKit (host networking) and SSH. Docker-published ports such as 3001 bypass it, so `BIND_ADDRESS` is what keeps the backend on the LAN.
+
 ```bash
 sudo ufw status
 # Allow your LAN only (adjust the subnet to your network, e.g. 192.168.68.0/22 for TP-Link Deco):
-sudo ufw allow from 192.168.68.0/22 to any port 3001,7880,7881 proto tcp
+sudo ufw allow from 192.168.68.0/22 to any port 7880,7881 proto tcp
 sudo ufw allow from 192.168.68.0/22 to any port 7882 proto udp
+# Required: the backend container reaches LiveKit's API through the Docker host (host.docker.internal):
+sudo ufw allow from 172.30.0.0/24 to any port 7880 proto tcp
 ```
 
 Do **not** add router port forwards or public tunnels for these ports.
@@ -82,7 +87,7 @@ Do **not** add router port forwards or public tunnels for these ports.
 docker compose pull livekit
 docker compose up -d --build
 docker compose ps                      # both "running"; livekit "healthy" after ~10 s
-curl -s http://192.168.68.65:3001/api/meta   # → {"…","devAuth":true,"voice":true}
+curl -s http://192.168.68.65:3001/api/meta   # → {"…","devAuth":false,"voice":true}
 curl -s http://192.168.68.65:7880/           # → OK
 docker compose logs -f livekit         # look for: starting LiveKit server … nodeIP 192.168.68.65
 docker compose logs -f server          # look for: Voice enabled (LiveKit)

@@ -63,7 +63,7 @@ All settings are environment variables. Copy `.env.example` to `.env` (git-ignor
 | `LOG_LEVEL` | `debug` (dev), `info` (prod) | Pino log level. |
 | `LIVEKIT_API_KEY` | *(empty)* | Voice: LiveKit API key. All four `LIVEKIT_*` must be set together, or none (voice disabled). |
 | `LIVEKIT_API_SECRET` | *(empty)* | Voice: ≥ 32 chars. **Server-side only — never put it in the desktop app.** |
-| `LIVEKIT_URL` | *(empty)* | Voice: `http(s)://` URL the backend uses for LiveKit's API (compose sets `http://livekit:7880`). |
+| `LIVEKIT_URL` | *(empty)* | Voice: `http(s)://` URL the backend uses for LiveKit's API (compose sets `http://host.docker.internal:7880`, since LiveKit uses host networking). |
 | `LIVEKIT_PUBLIC_URL` | *(empty)* | Voice: URL given to clients. `wss://` is required for a public host (e.g. `wss://myhome.duckdns.org`); `ws://` only for private addresses (e.g. `ws://192.168.68.65:7880`). |
 
 The server holds no secrets today. When real secrets arrive (database passwords, signing keys), they belong in the server's environment only — **never** in the desktop app.
