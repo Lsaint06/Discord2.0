@@ -3,7 +3,8 @@
 # the public IP changes (LiveKit learns its public address only at start-up).
 #
 # Free: DuckDNS (https://www.duckdns.org) + this script in root's crontab, e.g. every 5 minutes:
-#   */5 * * * * /home/<you>/Discord2.0/server/deploy/public-ip-watch.sh >> /var/log/discord2-ip.log 2>&1
+#   */5 * * * * /bin/bash /home/<you>/Discord2.0/server/deploy/public-ip-watch.sh >> /var/log/discord2-ip.log 2>&1
+#   (run it with bash: the file is not marked executable in Git)
 #
 # Configuration (root-only, never in Git):  /etc/discord2/duckdns.env  (chmod 600)
 #   DUCKDNS_DOMAIN=yourname          # the part before .duckdns.org

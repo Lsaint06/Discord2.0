@@ -117,7 +117,13 @@ Option B, public HTTPS/WSS, with free components only. Tailscale was rejected be
 | 7881 | TCP | LiveKit media over TCP (fallback when UDP is blocked) |
 | 7882 | UDP | LiveKit media (normal path) |
 
-3. **Certificates:** Caddy requests and renews them automatically (free, Let's Encrypt, HTTP-01 on port 80). They are stored in the `caddy-data` volume.
+3. **Certificates:** Caddy requests and renews them automatically (free, Let's Encrypt). They are stored in the `caddy-data` volume. Caddy tries both the HTTP-01 challenge (port 80) and TLS-ALPN-01 (port 443), so a certificate can still be issued if the ISP filters inbound port 80. Forward 80 anyway, for the HTTP→HTTPS redirect.
+
+**Verified on October 28, 2026 (Checkpoint 3 preflight, read-only):**
+- The router (TP-Link, BE11000 class, MiniUPnPd 2.2.2) reports its WAN address over both NAT-PMP and UPnP as **the same public IPv4 that internet services see**. There is no carrier-grade NAT and no second router in front, so port forwarding can work.
+- Whether the ISP filters inbound ports can only be tested from outside after forwarding.
+- There's no global IPv6 on the LAN, so only IPv4 is published (DuckDNS A record).
+- **UPnP and NAT-PMP are enabled on the router.** Any device on the LAN can ask it to open inbound ports. Discord 2.0 doesn't use them; consider turning them off in the router unless a game console or similar needs them. Also confirm **DMZ is off**.
 
 ## LiveKit media transport
 
@@ -184,90 +190,142 @@ Not acceptable as a release process: asking friends to turn Smart App Control of
 
 ## Deployment (Phase 2)
 
-**Not performed. Requires your explicit approval.** Order matters: Milestone 10's server is not on the Jetson yet, so it ships together with Milestone 11.
+**Not performed. Each stage requires your explicit approval** (checkpoints 1–3). Milestone 10's server is not on the Jetson yet (it runs `milestone-8-identity`, `d2997e0`), so it ships together with Milestone 11. Run everything on the Jetson in `/home/lsaint06/Discord2.0/server`; Docker needs `sudo` there.
 
-1. **Back up and verify** ([below](#backup-and-rollback)).
-2. **DuckDNS updater** on the Jetson (as root):
+**Checkpoint 1 — preparation:** [back up, verify, and rehearse the migration on a copy](#backup-and-rollback). Nothing running changes, apart from about 10 seconds with the backend stopped.
+
+**Checkpoint 2 — deploy on the LAN only** (no Caddy, no router change). New server code and LiveKit's new networking, still reachable only at home:
+
+1. Settings. The backup already holds the old `.env`. Edit `.env` (keep the LiveKit key and secret):
+   ```
+   DEV_AUTH=false
+   BIND_ADDRESS=192.168.68.65
+   LIVEKIT_NODE_IP=192.168.68.65
+   LIVEKIT_PUBLIC_URL=ws://192.168.68.65:7880
+   LIVEKIT_LAN_CIDR=192.168.68.65/32
+   # The installed 1.0 apps load from file:// and send Origin "null"; Milestone 11 refuses it in
+   # production unless allowed. Remove once every PC runs 1.1:
+   ALLOW_NULL_ORIGIN=true
+   # Today it holds http://localhost:5173 (a development leftover); production doesn't need it:
+   CORS_ORIGINS=
+   ```
+2. Deploy (the backend is down from the backup until the new one is healthy; LiveKit restarts, so calls in progress drop). Prepared as `d2-cp2-deploy.sh`, which checks every step; the essential commands:
+   ```bash
+   cd ~/Discord2.0/server
+   git fetch /tmp/d2-m11.bundle refs/heads/milestone-11-connect:refs/remotes/bundle/milestone-11-connect   # no GitHub credentials needed
+   # fresh consistent backup: online snapshot, `sudo docker compose stop server`, archive the volume, verify (see Backup)
+   sudo docker compose down          # with the OLD compose file; NOT "down -v": the volume is kept
+   git checkout -b milestone-11-connect 86831b4
+   install -m 600 <prepared env.candidate> .env
+   sudo docker tag discord2-server:m11-rc discord2-server:dev      # the image verified in Checkpoint 1
+   sudo docker compose up -d --no-build --pull never               # no rebuild: runs exactly that image
+   sudo docker inspect -f '{{.Image}}' "$(sudo docker compose ps -q server)"   # must equal the m11-rc image ID
+   sudo docker compose exec -T server node dist/cli/admin.js verify            # OK, directContainerMembers 0
+   sudo docker compose exec -T server node -e "fetch('http://host.docker.internal:7880/').then(r=>r.text()).then(console.log,console.error)"   # OK
+   curl -s http://192.168.68.65:3001/api/meta        # apiVersion 4, devAuth false, voice true
+   ```
+3. With the installed 1.0 apps on the LAN: sign in, servers and channels, messages, attachments, friends, DMs and groups, then join and leave a voice channel (the member list updates within a second: the webhook works), two-way audio, and a screen share.
+
+If anything fails, see the decision points under [rollback](#backup-and-rollback): **R1** (go back to Milestone 8 and keep all data; Milestone 8 opens the migrated database, as rehearsed) is the default. Restoring a backup (**R3**) is only for a damaged database, and only with the backup taken immediately before the deployment, never an older one.
+
+**Checkpoint 3 — public exposure** (only with the backend healthy on the LAN):
+
+1. **DuckDNS updater** (as root; the token goes only into this root-only file):
    ```bash
    sudo install -d -m 700 /etc/discord2 && sudo install -d /var/lib/discord2
    sudo tee /etc/discord2/duckdns.env >/dev/null <<'EOF'
    DUCKDNS_DOMAIN=myhome
    DUCKDNS_TOKEN=<your token>
-   COMPOSE_DIR=/home/<you>/Discord2.0/server
+   COMPOSE_DIR=/home/lsaint06/Discord2.0/server
    EOF
    sudo chmod 600 /etc/discord2/duckdns.env
-   sudo /home/<you>/Discord2.0/server/deploy/public-ip-watch.sh     # first run records the IP
-   ( sudo crontab -l 2>/dev/null; echo '*/5 * * * * /home/<you>/Discord2.0/server/deploy/public-ip-watch.sh >> /var/log/discord2-ip.log 2>&1' ) | sudo crontab -
+   sudo /bin/bash /home/lsaint06/Discord2.0/server/deploy/public-ip-watch.sh     # first run records the IP (run with bash: not executable in Git)
+   ( sudo crontab -l 2>/dev/null; echo '*/5 * * * * /bin/bash /home/lsaint06/Discord2.0/server/deploy/public-ip-watch.sh >> /var/log/discord2-ip.log 2>&1' ) | sudo crontab -
    nslookup myhome.duckdns.org    # must return your public IP
    ```
-3. **Server `.env`** on the Jetson. First keep a copy for rollback (the Milestone 8 compose file needs the old values, e.g. a non-empty `LIVEKIT_NODE_IP`): `cp .env .env.pre-m11 && chmod 600 .env.pre-m11`. Then set (keep the existing LiveKit key and secret):
+2. **Settings:** change in `.env`:
    ```
-   DEV_AUTH=false
-   BIND_ADDRESS=192.168.68.65
    PUBLIC_HOSTNAME=myhome.duckdns.org
    LIVEKIT_PUBLIC_URL=wss://myhome.duckdns.org
    LIVEKIT_LAN_URL=ws://192.168.68.65:7880
    LIVEKIT_USE_EXTERNAL_IP=true
    LIVEKIT_NODE_IP=
-   # The Jetson's own LAN address only (a wider range would also advertise e.g. the USB-device
-   # bridge l4tbr0, 192.168.55.1, as a useless candidate):
-   LIVEKIT_LAN_CIDR=192.168.68.65/32
-   # Only while friends still run the 1.0 app (file://); remove afterwards:
-   ALLOW_NULL_ORIGIN=true
    ```
-4. **Pre-flight checks** (read-only):
-   - `docker compose ls` and `docker volume ls | grep discord2-data`: the project must be `server` and the volume `server_discord2-data`. Compose names volumes after the project directory, so run from the same `server` directory as today, or the database would appear empty (it isn't lost: the old volume is still there).
-   - Subnet free: `docker network inspect $(docker network ls -q) | grep -n 172.30.0` and `ip -4 route | grep 172.30.` must print nothing (except an existing `server_default` you're about to replace).
-   - `docker version --format '{{.Server.Version}}'`: 20.10 or newer (needed for `host-gateway`).
-   - If `sudo ufw status` says active, apply the firewall rules from the [checklist](#jetson-production-checklist) **before** deploying, including the Docker-subnet rule for 7880.
-5. **Deploy:**
+3. **Start public mode, then add the router forwards** (80, 443, 7881/tcp, 7882/udp to 192.168.68.65):
    ```bash
-   cd ~/Discord2.0 && git fetch origin && git checkout <approved branch> && git pull
-   cd server
-   docker compose down          # NOT "down -v": volumes (database, files) are kept. Needed once: the network and LiveKit's networking changed.
-   docker compose --profile public up -d --build
-   docker compose ps
-   docker compose logs server | grep -iE "migrat|listening|proxies|error"
-   docker compose logs caddy  | grep -iE "certificate|error"
-   docker compose exec server node dist/cli/admin.js verify   # directContainerMembers must be 0
-   # Backend -> LiveKit through the Docker host (host-gateway); must print OK:
-   docker compose exec server node -e "fetch('http://host.docker.internal:7880/').then(r=>r.text()).then(console.log,console.error)"
-   docker compose logs livekit | grep -iE "nodeIP|external|error"   # public IP found via STUN
+   sudo docker compose --profile public up -d
+   sudo docker compose logs caddy | grep -iE "certificate|error"    # certificate obtained once 80/443 are forwarded
+   sudo docker compose logs livekit | grep -iE "nodeIP|external|error"
    ```
-   Then join and leave a voice channel on the LAN: the member list must update within a second (webhook from LiveKit reached the backend).
-6. **Router:** add the four port forwards above (only now, after the server is hardened and running).
-7. **From outside the home network** (e.g. a phone hotspot on a laptop): `curl -s https://myhome.duckdns.org/api/meta` should show `"apiVersion":4` and a valid certificate. `curl -s http://myhome.duckdns.org/` should redirect to https.
-8. **Desktop:** set `RENDERER_VITE_SERVERS` as above and build `npm run build:win` where it isn't blocked (or via CI). Install on both PCs, then run the [remote two-PC test checklist](#remote-two-pc-test-checklist).
-9. When everyone runs 1.1, remove `ALLOW_NULL_ORIGIN=true` and run `docker compose up -d` again.
+4. **From outside the home network** (e.g. a laptop on a phone hotspot): `curl -s https://myhome.duckdns.org/api/meta` shows `"apiVersion":4` with a valid certificate, `curl -sI http://myhome.duckdns.org/` redirects to https, and ports 22, 3001 and 7880 are **not** reachable.
+5. **Desktop:** build 1.1 with `RENDERER_VITE_SERVERS` (see [server profiles](#desktop-server-profiles)) where it isn't blocked (CI), install, then run the [remote two-PC test checklist](#remote-two-pc-test-checklist).
+6. When every PC runs 1.1, remove `ALLOW_NULL_ORIGIN=true` and run `sudo docker compose --profile public up -d`.
+
+**Host firewall:** the preflight found none (`ufw` not installed, iptables `INPUT` policy ACCEPT). Today that's acceptable because the router forwards only the four ports above, but nothing on the Jetson itself filters them. LAN-only services such as SSH (22) and rpcbind (111, unused by Discord 2.0) are only safe because they're never forwarded. Adding a host firewall is optional hardening and a separate decision; if you add `ufw`, use the rules in the [checklist](#jetson-production-checklist), including the Docker-subnet rule for 7880.
 
 ## Backup and rollback
 
+Facts from the Stage A preflight (October 27, 2026): project `server` in `/home/lsaint06/Discord2.0/server`, volume `server_discord2-data` mounted at `/data` (host path `/var/lib/docker/volumes/server_discord2-data/_data`), database `/data/discord2.db` in **WAL mode** (the `-wal` file holds recent changes not yet in the main file), attachments in `/data/attachments`. `lsaint06` runs Docker through `sudo`.
+
 Before any deployment:
 
-1. **Database + attachments + profile images** (one volume, about 10 s of downtime):
+1. **Consistent backup** (about 10 s of downtime). The server is stopped, so `discord2.db`, `-wal` and `-shm` form a consistent set. Never copy the database file alone while the server runs.
    ```bash
-   cd ~/Discord2.0/server && docker compose stop server
-   docker run --rm -v server_discord2-data:/data -v "$PWD":/backup alpine tar czf /backup/discord2-pre-m11-$(date +%F).tgz -C /data .
-   docker compose start server
+   cd ~/Discord2.0/server
+   TS=$(date +%Y%m%d-%H%M%S); B=~/discord2-backups; install -d -m 700 "$B"
+   git rev-parse HEAD > "$B/commit-$TS.txt"; sudo docker compose images > "$B/images-$TS.txt"
+   install -m 600 .env "$B/env-pre-m11-$TS"                 # secrets: stays in this private folder
+   sudo docker compose stop server
+   sudo tar -C /var/lib/docker/volumes/server_discord2-data/_data -czf "$B/data-pre-m11-$TS.tgz" .
+   sudo docker compose start server
+   sudo chown "$USER" "$B/data-pre-m11-$TS.tgz" && chmod 600 "$B/data-pre-m11-$TS.tgz"
+   sudo docker tag discord2-server:dev discord2-server:m8-rollback   # current image, for a fast rollback
    ```
-2. **Verify the backup** (don't skip):
+2. **Verify the backup** (don't skip). Restore it into a scratch folder and open it with the current image, including the `-wal`, with no network:
    ```bash
-   tar tzf discord2-pre-m11-*.tgz | head            # discord2.db, attachments/, profile/
-   mkdir /tmp/verify && tar xzf discord2-pre-m11-*.tgz -C /tmp/verify discord2.db
-   docker run --rm -v /tmp/verify:/v alpine sh -c "apk add -q sqlite && sqlite3 /v/discord2.db 'PRAGMA integrity_check;'"   # ok
+   V=$(mktemp -d); sudo tar -xzf "$B/data-pre-m11-$TS.tgz" -C "$V"
+   sudo docker run --rm --network none --user 0:0 -v "$V":/v -e NODE_ENV=production -e DEV_AUTH=false -e DATABASE_URL=sqlite:/v/discord2.db \
+     discord2-server:m8-rollback node dist/cli/admin.js status      # counts must match the live server
+   echo "attachment files: backup $(sudo find "$V/attachments" -type f | wc -l), live $(sudo find /var/lib/docker/volumes/server_discord2-data/_data/attachments -type f | wc -l)"
+   sudo rm -rf "$V"
    ```
-   Copy the tarball off the Jetson (another PC or USB drive).
-3. **Record what's running:** `docker compose images` and `git rev-parse HEAD`.
+   Keep the backup private. Copy it only to your own devices, for example over SSH (`scp`) to a home PC or a USB drive; never to a cloud service.
+3. **Rehearse the migration on a copy** before it touches the live database. Build the new server image from a separate checkout, so the running deployment and its folder stay untouched:
+   ```bash
+   cd ~/Discord2.0 && git fetch origin && git worktree add ~/d2-m11 origin/milestone-11-connect
+   sudo docker build -t discord2-server:m11-rc ~/d2-m11/server
+   V=$(mktemp -d); sudo tar -xzf "$B/data-pre-m11-$TS.tgz" -C "$V"
+   sudo docker run --rm --network none --user 0:0 -v "$V":/v -e NODE_ENV=production -e DEV_AUTH=false -e DATABASE_URL=sqlite:/v/discord2.db \
+     discord2-server:m11-rc node dist/cli/admin.js verify            # must end with "OK", directContainerMembers 0
+   # Rollback compatibility: the old server must still open the migrated copy.
+   sudo docker run --rm --network none --user 0:0 -v "$V":/v -e NODE_ENV=production -e DEV_AUTH=false -e DATABASE_URL=sqlite:/v/discord2.db \
+     discord2-server:m8-rollback node dist/cli/admin.js status
+   sudo rm -rf "$V"
+   ```
 
-**Rollback:**
+**Rollback** (decision points; nothing here runs automatically, and never `docker compose down -v`):
 
-1. **Close exposure first:** remove the router port forwards.
-2. `docker compose --profile public down` (no `-v`), check out the previous commit, restore the old settings (`cp .env.pre-m11 .env`), then `docker compose up -d --build`.
-   - Milestone 10's migration is additive and its `@direct` guard holds for older servers (verified against Milestone 9 code).
-   - The previous compose file requires `LIVEKIT_NODE_IP` and a `ws://` LAN `LIVEKIT_PUBLIC_URL`: with the Milestone 11 `.env` it refuses to start, or would hand out the public address.
-   - The 1.1 desktop app only accepts its own origin from Milestone 11 servers; older servers accept it only if `CORS_ORIGINS` includes `app://discord2`, so roll the desktop app back too (or add that origin).
-3. **Full rollback:** restore the tarball into the volume (anything written since is lost).
-4. Reinstall the previous desktop app if needed.
+- **R0, before the new backend starts:** nothing has been migrated. The deploy script puts Milestone 8 back by itself: old branch, old `.env`, `m8-rollback` image.
+- **R1, new backend started but something is wrong** (default; keeps every message, account and file, including anything written after the deployment):
+  ```bash
+  cd ~/Discord2.0/server
+  sudo docker compose --profile public down                 # no -v
+  git checkout milestone-8-identity
+  install -m 600 ~/discord2-backups/cp2-deploy-<time>/env.pre-cp2 .env
+  sudo docker tag discord2-server:m8-rollback discord2-server:dev
+  sudo docker compose up -d --no-build --pull never
+  ```
+  The database stays at migration 5. Milestone 8 opens it (rehearsed in Checkpoint 1); friends, DMs and groups created meanwhile are kept but hidden until Milestone 10+ runs again. The `@direct` guard (database triggers) keeps working under Milestone 8.
+- **R2, close exposure first** (only after Checkpoint 3): remove the router port forwards before anything else.
+- **R3, damaged database only** (integrity check fails): stop, keep a copy of the damaged state, then restore the archive taken **immediately before** the deployment. Never an older backup over newer data: anything written since that archive is lost.
+  ```bash
+  sudo docker compose down
+  sudo tar -C /var/lib/docker/volumes/server_discord2-data/_data -czf ~/discord2-backups/damaged-$(date +%Y%m%d-%H%M%S).tgz .
+  sudo find /var/lib/docker/volumes/server_discord2-data/_data -mindepth 1 -delete
+  sudo tar -xzf ~/discord2-backups/cp2-deploy-<time>/data.tgz -C /var/lib/docker/volumes/server_discord2-data/_data
+  # then R1 (Milestone 8) or start Milestone 11 again, as decided
+  ```
+- The 1.1 desktop app only accepts its own origin from Milestone 11 servers; Milestone 8 accepts it only if `CORS_ORIGINS` includes `app://discord2`. After R1, use the 1.0 app.
 
 ## Jetson production checklist
 
@@ -332,13 +390,14 @@ Use PC A at home and PC B on a **different network**, for example tethered to a 
 - **Unsigned installer:** blocked by Smart App Control, warned by SmartScreen. See [distribution](#windows-installer-and-distribution).
 - The 1.1 update resets local per-PC settings once (see [server profiles](#desktop-server-profiles)).
 - Desktop 1.0 apps need `ALLOW_NULL_ORIGIN=true` on the server until updated.
-- The Jetson's host firewall state wasn't audited (no SSH access was used). If `ufw` is active, the Docker-subnet rule for port 7880 is required, or voice breaks (see the [checklist](#jetson-production-checklist)).
-- **Not yet run on a Docker Engine:** LiveKit with host networking and dropped capabilities, `host.docker.internal` from the backend (needs Docker 20.10+ and the default `docker0` bridge), and the webhook path. The Phase 2 steps include an explicit check for each.
+- **No host firewall on the Jetson** (Stage A preflight: `ufw` not installed, iptables `INPUT` policy ACCEPT). The router's port forwards are the only filter. If a firewall is added later, the Docker-subnet rule for port 7880 is required, or voice breaks (see the [checklist](#jetson-production-checklist)).
+- **Not yet run on a Docker Engine:** LiveKit with host networking and dropped capabilities, `host.docker.internal` from the backend, and the webhook path. The Jetson has Docker 29.5.2. `host-gateway` resolves to `docker0` (172.17.0.1), which has no link today because no container uses the default bridge; the host still owns that address, so delivery is expected to work. Checkpoint 2 checks it explicitly. If it fails, the fallback is mapping `host.docker.internal` to the project network's own gateway (`172.30.0.1`), which is a one-line Compose change.
 - **Home PCs on the public profile** depend on the router looping traffic back to its public address (hairpin NAT) for HTTPS and signaling; media still uses the LAN candidate. If the router doesn't support it, home PCs use the "Home network" profile.
 
 ## Operations
 
 - **Certificates:** renewed automatically by Caddy; watch `docker compose logs caddy` for errors. Port 80 must stay forwarded for renewals.
+- **Caddyfile permissions:** Caddy runs as root inside its container but with every capability dropped, so it can only read the bind-mounted `deploy/Caddyfile` if the file is world-readable (`644`). Check out or update the repository with a normal umask (`022`). A checkout under `umask 077` creates it as `600`, and Caddy then exits with `open /etc/caddy/Caddyfile: permission denied` (this happened once during Checkpoint 3b).
 - **DuckDNS:** the cron script refreshes it every 5 minutes. DuckDNS can expire idle accounts, so log in occasionally.
 - **Updates:**
   - server: `git pull`, then `docker compose --profile public up -d --build`;
