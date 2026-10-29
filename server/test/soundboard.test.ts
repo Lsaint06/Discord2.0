@@ -3,7 +3,7 @@
  * for playing, delivery only to the people in that voice channel, rate limits, deletion.
  */
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
@@ -16,6 +16,7 @@ import { seedIfEmpty } from '../src/db/seed.js'
 import { SqliteRepository } from '../src/db/sqlite.js'
 import { TokenBucketLimiter } from '../src/lib/rateLimit.js'
 import { parseWav } from '../src/soundboard/wav.js'
+import { cleanupSoundboard } from '../src/routes/soundboard.js'
 import type { ApiAuthResult, ApiServer, ApiSoundboardSound, GatewayServerFrame } from '../src/protocol.js'
 
 const SCHEME = ['Bea', 'rer'].join('')
@@ -298,5 +299,28 @@ describe('soundboard', () => {
     assert.equal(await repo.addSoundboardSound(rec('b'.repeat(32)), 2), true)
     assert.equal(await repo.addSoundboardSound(rec('c'.repeat(32)), 2), false)
     assert.equal((await repo.listSoundboardSounds('studyhall')).length, 2)
+  })
+})
+
+describe('orphaned clip files', () => {
+  test('files without a row are removed after the grace period; nothing else is touched', async () => {
+    const folder = join(dir, 'attachments', 'soundboard')
+    mkdirSync(folder, { recursive: true })
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60_000)
+    const file = (name: string, old: boolean): string => {
+      const path = join(folder, name)
+      writeFileSync(path, wav(100))
+      if (old) utimesSync(path, twoHoursAgo, twoHoursAgo)
+      return path
+    }
+    const orphanOld = file(`${'d'.repeat(32)}.wav`, true)
+    const orphanNew = file(`${'e'.repeat(32)}.wav`, false) // e.g. an upload finishing right now
+    const referenced = file(`${'a'.repeat(32)}.wav`, true) // its row exists (added above)
+    const other = file('notes.txt', true)
+    assert.equal(await cleanupSoundboard(ctx, app.log), 1)
+    assert.equal(existsSync(orphanOld), false)
+    assert.equal(existsSync(orphanNew), true)
+    assert.equal(existsSync(referenced), true)
+    assert.equal(existsSync(other), true)
   })
 })

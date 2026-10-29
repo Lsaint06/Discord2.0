@@ -6,10 +6,10 @@
  * people in that voice channel, whose apps play the clip locally at their own soundboard volume.
  */
 import type { MultipartFile } from '@fastify/multipart'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { randomBytes } from 'node:crypto'
 import { createReadStream, mkdirSync } from 'node:fs'
-import { readFile, rename, stat, unlink } from 'node:fs/promises'
+import { readdir, readFile, rename, rm, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AppContext } from '../context.js'
 import type { SoundboardSoundRecord } from '../db/repository.js'
@@ -54,6 +54,34 @@ export function normalizeSoundName(input: unknown): string {
     )
   }
   return name
+}
+
+/**
+ * Removes clip files that no longer have a database row (e.g. their server was deleted, which
+ * cascades to the rows), once older than the grace period. A clip being uploaded right now is
+ * moved into place just before its row is written, so it is always younger than the grace.
+ */
+export async function cleanupSoundboard(
+  ctx: AppContext,
+  log: FastifyBaseLogger,
+  now = Date.now(),
+  graceMs = 60 * 60_000
+): Promise<number> {
+  const dir = join(ctx.config.attachments.dir, 'soundboard')
+  const referenced = await ctx.repo.listSoundboardSoundIds()
+  let removed = 0
+  for (const name of await readdir(dir).catch(() => [] as string[])) {
+    const match = /^([a-f0-9]{32})\.wav$/.exec(name)
+    if (!match?.[1] || referenced.has(match[1])) continue
+    const path = join(dir, name)
+    const info = await stat(path).catch(() => undefined)
+    if (info && now - info.mtimeMs > graceMs) {
+      await rm(path, { force: true })
+      removed++
+    }
+  }
+  if (removed) log.info({ removed }, 'soundboard cleanup')
+  return removed
 }
 
 export function registerSoundboardRoutes(app: FastifyInstance, ctx: AppContext): void {

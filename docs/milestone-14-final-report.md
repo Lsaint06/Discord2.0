@@ -169,6 +169,10 @@ Part 1's acceptance list to these results.
 
 ## 10. Documents
 
+- [v1.4.0-release-readiness.md](v1.4.0-release-readiness.md) — v1.4.0 release readiness: audit,
+  migration and rollback rehearsal, compatibility, release candidate (with
+  [deployment plan](v1.4.0-deployment-and-rollback.md) and
+  [compatibility](v1.4.0-compatibility.md))
 - [milestone-14-execution-ledger.md](milestone-14-execution-ledger.md) — what was done, in order
 - [milestone-14-architecture.md](milestone-14-architecture.md) — design, data flow, threat model,
   migrations

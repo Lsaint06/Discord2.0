@@ -40,7 +40,7 @@ import { VoiceStateStore } from './voice/voiceStates.js'
 import { createGifProvider, type GifProvider } from './gifs/provider.js'
 import { registerGifRoutes } from './routes/gifs.js'
 import { cleanupLargeFiles, LARGE_CHUNK_BYTES, registerLargeUploadRoutes } from './routes/largeUploads.js'
-import { registerSoundboardRoutes } from './routes/soundboard.js'
+import { cleanupSoundboard, registerSoundboardRoutes } from './routes/soundboard.js'
 import { registerPersonalRoutes } from './routes/personal.js'
 
 export interface BuildOptions {
@@ -330,6 +330,7 @@ export async function buildApp(
         cleanupAttachments(ctx, app.log)
           .then(() => cleanupProfileMedia(ctx, app.log))
           .then(() => cleanupServerIcons(ctx, app.log))
+          .then(() => cleanupSoundboard(ctx, app.log))
           .catch((err: unknown) => app.log.error({ err }, 'attachment cleanup failed'))
         repo
           .purgeExpired(Date.now(), {
