@@ -1,0 +1,166 @@
+/*
+ * Discord 2.0 camera overlay (Milestone 14.5). Injected into the overlay window's own document,
+ * which doesn't have the app's stylesheet or theme. Compact, translucent, no big chrome.
+ */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: #f2f3f5;
+  user-select: none;
+}
+
+.overlay {
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.overlay.editing {
+  background: rgba(17, 18, 23, 0.72);
+  border: 2px dashed #8ab4ff;
+  border-radius: 12px;
+  padding: 4px;
+  -webkit-app-region: drag;
+}
+
+.overlay.editing.locked {
+  -webkit-app-region: no-drag;
+}
+
+.overlay-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.overlay-toolbar button {
+  -webkit-app-region: no-drag;
+  height: 24px;
+  min-width: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.overlay-toolbar button:hover,
+.overlay-toolbar button:focus-visible {
+  background: rgba(255, 255, 255, 0.22);
+  outline: none;
+}
+
+.overlay-toolbar .overlay-done {
+  margin-left: auto;
+  background: #5865f2;
+  border-color: #5865f2;
+  font-weight: 600;
+}
+
+.overlay-drag {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.85;
+  padding: 0 4px;
+}
+
+.overlay-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.overlay-tile {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(20, 21, 26, 0.9);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  opacity: var(--overlay-opacity, 1);
+}
+
+/* The outline is drawn above the video/placeholder (an inset shadow would be painted under them). */
+.overlay-tile::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.overlay.editing .overlay-tile {
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+}
+
+.overlay-tile.speaking::after {
+  box-shadow: inset 0 0 0 3px #3ba55d;
+}
+
+.overlay-tile.pinned::after {
+  box-shadow: inset 0 0 0 2px #8ab4ff;
+}
+
+.overlay-tile.pinned.speaking::after {
+  box-shadow:
+    inset 0 0 0 3px #3ba55d,
+    inset 0 0 0 5px #8ab4ff;
+}
+
+.overlay-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #0d0e11;
+}
+
+.overlay-tile video.mirrored {
+  transform: scaleX(-1);
+}
+
+.overlay-tile video.waiting {
+  visibility: hidden;
+}
+
+.overlay-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #2b2f4a, #1d4b4f);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.overlay-name {
+  position: absolute;
+  left: 6px;
+  bottom: 5px;
+  max-width: calc(100% - 12px);
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

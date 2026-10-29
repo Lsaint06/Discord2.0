@@ -1,12 +1,22 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { Channel, ChannelCategory, Server, User } from '../types'
 import Avatar from './Avatar'
-import { ChevronDownIcon, HashIcon, HeadphonesIcon, MicIcon, PlusIcon, SpeakerIcon } from './Icons'
+import {
+  CameraIcon,
+  ChevronDownIcon,
+  HashIcon,
+  HeadphonesIcon,
+  MicIcon,
+  PlusIcon,
+  SpeakerIcon
+} from './Icons'
 
 export interface VoiceUserDetails {
   speaking: boolean
   muted: boolean
   deafened: boolean
+  /** Milestone 14.5: their camera is on (known for the room you're in). */
+  camera?: boolean
 }
 
 interface ChannelSidebarProps {
@@ -254,8 +264,14 @@ function ChannelSidebar({
                                     />
                                   </span>
                                   <span className="voice-user-name">{user.name}</span>
-                                  {(details?.muted || details?.deafened) && (
+                                  {(details?.muted || details?.deafened || details?.camera) && (
                                     <span className="voice-user-flags">
+                                      {details.camera && (
+                                        <span className="voice-user-camera" title="Camera on">
+                                          <CameraIcon size={14} />
+                                          <span className="sr-only">Camera on</span>
+                                        </span>
+                                      )}
                                       {details.muted && <MicIcon size={14} slashed />}
                                       {details.deafened && <HeadphonesIcon size={14} slashed />}
                                     </span>

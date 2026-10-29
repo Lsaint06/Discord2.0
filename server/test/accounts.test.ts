@@ -728,9 +728,9 @@ describe('authorization', () => {
     assert.equal(grant.identity, member.user.id)
     const claims = await verifier.verify(grant.token)
     assert.equal(claims.sub, member.user.id)
-    assert.deepEqual(claims.video?.canPublishSources, ['microphone', 'screen_share', 'screen_share_audio'])
+    assert.deepEqual(claims.video?.canPublishSources, ['microphone', 'camera', 'screen_share', 'screen_share_audio'])
 
-    // Deny Stream for members: no screen-share sources.
+    // Deny Stream (shown as "Video") for members: no camera or screen-share sources.
     await json(await req(`/api/channels/${voiceId}/overrides/member`, { method: 'PUT', token: owner.token, json: { allow: 0, deny: Permissions.stream } }), 200)
     const noStream = await verifier.verify((await json<{ token: string }>(await req(`/api/voice/channels/${voiceId}/token`, { method: 'POST', token: member.token }), 200)).token)
     assert.deepEqual(noStream.video?.canPublishSources, ['microphone'])

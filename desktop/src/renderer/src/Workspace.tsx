@@ -119,6 +119,13 @@ import ScreenSharePicker from './components/ScreenSharePicker'
 import StreamViewer, { type ViewerMode } from './components/StreamViewer'
 import ShareHealthNote from './components/ShareHealthNote'
 import type { ScreenShareOptions, ScreenSource } from './media/ScreenShareController'
+import CallStage from './components/video/CallStage'
+import CameraStrip from './components/video/CameraStrip'
+import CameraOverlay from './components/video/CameraOverlay'
+import type { CameraAvailability } from './components/video/CameraButton'
+import type { TilePerson } from './components/video/VideoTile'
+import type { VoiceParticipant } from './media/MediaSession'
+import type { OverlaySettings } from './lib/overlay'
 
 const STAFF_ROLES: ServerRole[] = ['owner', 'admin', 'moderator']
 
@@ -221,6 +228,13 @@ function Workspace({
     narrowWindow ? setMembersOverlay((v) => !v) : setShowMembers((v) => !v)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<SectionId>('account')
+  // Milestone 14.5: the video view, and the overlay's session-only state (hidden with its
+  // shortcut, being moved, or being arranged from Settings). Nothing here starts a camera.
+  const [stageOpen, setStageOpen] = useState(false)
+  const [overlayHidden, setOverlayHidden] = useState(false)
+  const [overlayEditing, setOverlayEditing] = useState(false)
+  const [overlayArranging, setOverlayArranging] = useState(false)
+  const [cameraSupported, setCameraSupported] = useState<boolean | null>(null)
   const [popout, setPopout] = useState<{ userId: string; anchor: DOMRect } | null>(null)
   const [profileFor, setProfileFor] = useState<string | null>(null)
   const [customStatusOpen, setCustomStatusOpen] = useState(false)
@@ -467,6 +481,7 @@ function Workspace({
         // Milestone 14: private saved messages (the bookmark buttons appear once loaded).
         if (meta.savedMessages === true) void fetchSaved().catch(() => undefined)
         setUserNotesSupported(meta.userNotes === true)
+        setCameraSupported(meta.camera === true)
       })
       .catch(() => undefined)
     return () => {
@@ -601,6 +616,59 @@ function Workspace({
     ? backend.servers.find((s) => s.channels.some((c) => c.id === voiceChannelId))
     : undefined
   const canStream = hasPermission(voicePerms, Permissions.stream)
+
+  // ---- Camera (Milestone 14.5) ----
+  const cameraState = voice.state.camera
+  const cameraAvailability: CameraAvailability =
+    voiceStatus !== 'connected'
+      ? { ok: false, reason: 'Join a voice channel to turn on your camera.' }
+      : !canStream
+        ? { ok: false, reason: 'You don’t have permission to use video in this channel.' }
+        : voice.state.cameraAllowed === false
+          ? {
+              ok: false,
+              reason:
+                cameraSupported === false
+                  ? 'This server doesn’t support cameras yet (it needs the Discord 2.0 v1.4 server update).'
+                  : 'Cameras aren’t allowed in this voice channel.'
+            }
+          : { ok: true }
+  const toggleCamera = (): void => {
+    if (cameraState.status === 'on' || cameraState.status === 'starting') {
+      void voice.session.stopCamera()
+      return
+    }
+    if (!cameraAvailability.ok) {
+      setNotice(cameraAvailability.reason ?? 'Camera unavailable.')
+      return
+    }
+    // Show the call view so you can see what you're sending.
+    setStageOpen(true)
+    void voice.session.startCamera()
+  }
+  const camerasOn = voice.state.participants.filter((p) => p.cameraOn).length
+  const updateOverlay = useCallback(
+    (patch: Partial<OverlaySettings>) =>
+      setSettings((current) => ({ ...current, overlay: { ...current.overlay, ...patch } })),
+    []
+  )
+  const toggleOverlay = (): void => {
+    const enabled = !settings.overlay.enabled
+    updateOverlay({ enabled })
+    if (enabled) setOverlayHidden(false)
+    else setOverlayEditing(false)
+  }
+  // Leaving voice closes the video view and ends any overlay edit mode (not an arrange session).
+  // Adjusted while rendering (React's pattern for reacting to a changed value) rather than in an
+  // effect, so there's no extra render with stale state.
+  const [wasVoiceActive, setWasVoiceActive] = useState(voiceActive)
+  if (wasVoiceActive !== voiceActive) {
+    setWasVoiceActive(voiceActive)
+    if (!voiceActive) {
+      setStageOpen(false)
+      if (!overlayArranging) setOverlayEditing(false)
+    }
+  }
   useEffect(() => {
     voice.session.setMicState({
       // No Speak permission in this voice channel: the mic stays off (LiveKit would refuse it too).
@@ -779,10 +847,34 @@ function Workspace({
     (userId: string): VoiceUserDetails | undefined => {
       const p = voice.state.participants.find((x) => x.identity === userId)
       if (!p) return undefined
-      if (p.isLocal) return { speaking: p.speaking, muted: muted || deafened, deafened }
-      return { speaking: p.speaking, muted: !p.micEnabled, deafened: p.deafened }
+      if (p.isLocal)
+        return { speaking: p.speaking, muted: muted || deafened, deafened, camera: p.cameraOn }
+      return {
+        speaking: p.speaking,
+        muted: !p.micEnabled,
+        deafened: p.deafened,
+        camera: p.cameraOn
+      }
     },
     [voice.state.participants, muted, deafened]
+  )
+
+  /** A call participant as a video tile shows them (name, avatar, speaking, mute state). */
+  const tilePerson = useCallback(
+    (p: VoiceParticipant): TilePerson => {
+      const user = resolveUser(p.identity)
+      return {
+        identity: p.identity,
+        name: user.name,
+        avatarColor: user.avatarColor,
+        avatarId: user.avatarId,
+        isLocal: p.isLocal,
+        speaking: p.speaking,
+        muted: p.isLocal ? muted || deafened : !p.micEnabled,
+        deafened: p.isLocal ? deafened : p.deafened
+      }
+    },
+    [resolveUser, muted, deafened]
   )
 
   // ---- Screen sharing ----
@@ -875,6 +967,12 @@ function Workspace({
     if (channel.type === 'voice') {
       if (!hasPermission(channel.permissions, Permissions.connect)) {
         setNotice(`You don’t have permission to join ${channel.name}.`)
+        return
+      }
+      // Clicking the channel you're already in opens its video view (Milestone 14.5).
+      if (channel.id === voiceChannelId && voiceStatus === 'connected') {
+        setStageOpen(true)
+        if (watching) setViewerMode('mini')
         return
       }
       void voice.session.join(channel.id)
@@ -1198,6 +1296,23 @@ function Workspace({
       }
       setPickerOpen(true)
     },
+    toggleCamera: () => {
+      if (voiceActive) toggleCamera()
+    },
+    // Instant show/hide without touching the call; turns the overlay on if it was off.
+    toggleCameraOverlay: () => {
+      if (!settings.overlay.enabled) {
+        updateOverlay({ enabled: true })
+        setOverlayHidden(false)
+      } else {
+        setOverlayHidden((hidden) => !hidden)
+      }
+    },
+    overlayEditMode: () => {
+      if (!settings.overlay.enabled && !overlayArranging) return
+      setOverlayHidden(false)
+      setOverlayEditing((editing) => !editing)
+    },
     quickSwitcher: () => setQuickSwitchOpen(true),
     openSettings: () => openSettings(),
     toggleMembers,
@@ -1484,6 +1599,20 @@ function Workspace({
       onDismissShareMessage={() => voice.session.dismissScreenShareMessage()}
       onDismissDeviceNotice={() => voice.session.dismissDeviceNotice()}
       onStartAudio={() => void voice.session.startAudio()}
+      video={{
+        camera: cameraState,
+        availability: cameraAvailability,
+        cameraCount: camerasOn,
+        stageOpen: stageOpen && !(watching && viewerMode === 'focus'),
+        overlayEnabled: settings.overlay.enabled,
+        onToggleCamera: toggleCamera,
+        onDismissCamera: () => voice.session.dismissCameraMessage(),
+        onOpenView: () => {
+          setStageOpen((open) => !(open && !(watching && viewerMode === 'focus')))
+          if (watching) setViewerMode('mini')
+        },
+        onToggleOverlay: toggleOverlay
+      }}
       shareStatus={
         voice.state.screenShare.options ? (
           <ShareHealthNote
@@ -1766,10 +1895,48 @@ function Workspace({
                         onModeChange={setViewerMode}
                         onStopWatching={stopWatching}
                       />
+                      {viewerMode === 'focus' && (
+                        <CameraStrip
+                          session={voice.session}
+                          state={voice.state}
+                          person={tilePerson}
+                          mirror={settings.cameraMirror}
+                          hideSelf={settings.cameraHideSelf}
+                          onOpenCalls={() => {
+                            setStageOpen(true)
+                            setViewerMode('mini')
+                          }}
+                        />
+                      )}
                     </main>
                   )}
 
-                  {watching && viewerMode === 'focus' ? null : chatChannel ? (
+                  {stageOpen &&
+                  voiceStatus === 'connected' &&
+                  !(watching && viewerMode === 'focus') ? (
+                    <main className="chat-panel call-stage-main">
+                      <CallStage
+                        session={voice.session}
+                        state={voice.state}
+                        person={tilePerson}
+                        channelName={voiceNames?.channelName ?? 'Voice'}
+                        mirror={settings.cameraMirror}
+                        hideSelf={settings.cameraHideSelf}
+                        overlayEnabled={settings.overlay.enabled}
+                        cameraAvailability={cameraAvailability}
+                        onToggleCamera={toggleCamera}
+                        onToggleHideSelf={() =>
+                          updateSettings({ cameraHideSelf: !settings.cameraHideSelf })
+                        }
+                        onToggleOverlay={toggleOverlay}
+                        onWatchStream={(identity) => {
+                          setViewerMode('focus')
+                          voice.session.watch(identity)
+                        }}
+                        onClose={() => setStageOpen(false)}
+                      />
+                    </main>
+                  ) : watching && viewerMode === 'focus' ? null : chatChannel ? (
                     <ChatPanel
                       key={homeActive ? 'conversation' : 'channel'}
                       channel={chatChannel}
@@ -1932,8 +2099,37 @@ function Workspace({
                         onAppThemeChange: setAppTheme,
                         onPreviewTheme: setThemePreview
                       }}
+                      onArrangeOverlay={() => {
+                        closeSettings()
+                        setOverlayHidden(false)
+                        setOverlayArranging(true)
+                        setOverlayEditing(true)
+                      }}
                     />
                   )}
+
+                  <CameraOverlay
+                    session={voice.session}
+                    state={voice.state}
+                    person={tilePerson}
+                    settings={settings.overlay}
+                    mirror={settings.cameraMirror}
+                    hidden={overlayHidden}
+                    editing={overlayEditing}
+                    arranging={overlayArranging}
+                    onChange={updateOverlay}
+                    onEditDone={() => {
+                      setOverlayEditing(false)
+                      setOverlayArranging(false)
+                    }}
+                    onClosed={() => {
+                      setOverlayEditing(false)
+                      setOverlayArranging(false)
+                      // Closed from outside (e.g. Alt+F4): stay hidden until shown again.
+                      setOverlayHidden(true)
+                    }}
+                    onError={setNotice}
+                  />
 
                   {createServerOpen && (
                     <CreateServerModal

@@ -176,9 +176,21 @@ describe('subscription policy', () => {
     expect(shouldSubscribe('screen_share_audio', base)).toBe(false)
   })
 
-  it('never subscribes to cameras or unknown sources', () => {
+  it('receives cameras only when camera viewing is on (deafening does not affect video)', () => {
+    expect(shouldSubscribe('camera', base)).toBe(false)
+    expect(shouldSubscribe('camera', { ...base, cameras: true })).toBe(true)
+    expect(shouldSubscribe('camera', { ...base, cameras: true, deafened: true })).toBe(true)
+    expect(shouldSubscribe('camera', { ...base, cameras: false, watching: 'bob' })).toBe(false)
+  })
+
+  it('camera and screen share are independent sources', () => {
+    // Watching someone's stream never pulls in their camera by accident, and vice versa.
+    expect(shouldSubscribe('screen_share', { ...base, cameras: true })).toBe(false)
     expect(shouldSubscribe('camera', { ...base, watching: 'bob' })).toBe(false)
-    expect(shouldSubscribe('unknown', base)).toBe(false)
+  })
+
+  it('never subscribes to unknown sources', () => {
+    expect(shouldSubscribe('unknown', { ...base, cameras: true, watching: 'bob' })).toBe(false)
   })
 })
 

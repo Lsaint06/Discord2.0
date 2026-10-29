@@ -11,12 +11,27 @@ import {
   type AudioCaptureOptions,
   type LocalAudioTrack,
   type LocalTrackPublication,
+  type LocalVideoTrack,
   type Participant,
   type RemoteTrack,
   type RemoteTrackPublication
 } from 'livekit-client'
 import type { ApiVoiceToken } from '../net/protocol'
 import { GainProcessor } from './GainProcessor'
+import {
+  CameraController,
+  type CameraState,
+  type CameraStopReason,
+  type PublishedCamera
+} from './CameraController'
+import {
+  cameraAllowedBy,
+  cameraConstraints,
+  cameraEncodings,
+  namedError,
+  type CameraPreset,
+  type CameraPresetId
+} from './cameraProfiles'
 import {
   ScreenShareController,
   type CapturedScreen,
@@ -54,6 +69,8 @@ export interface VoiceParticipant {
   sharingScreen: boolean
   /** Publishing system audio with the screen share. */
   sharingAudio: boolean
+  /** Milestone 14.5: publishing a camera that isn't paused. */
+  cameraOn: boolean
 }
 
 export type ConnectionQualityLabel = 'excellent' | 'good' | 'poor' | 'lost' | 'unknown'
@@ -77,6 +94,10 @@ export interface MediaSnapshot {
   connectionQuality: ConnectionQualityLabel
   /** The browser blocked audio playback until a user gesture (rare in Electron). */
   audioBlocked: boolean
+  /** Milestone 14.5: your camera in this call (always 'off' on join; only you turn it on). */
+  camera: CameraState
+  /** Whether the voice grant allows a camera here (null = not connected / unknown yet). */
+  cameraAllowed: boolean | null
 }
 
 export interface MediaPreferences {
@@ -92,6 +113,11 @@ export interface MediaPreferences {
   streamVolumes: Record<string, number>
   /** Manual voice-activity threshold (noise gate). null = automatic (no gate). */
   inputSensitivityDb: number | null
+  /** Milestone 14.5: camera device ('' = system default) and quality, used when YOU turn it on. */
+  cameraDeviceId: string
+  cameraPresetId: CameraPresetId
+  /** Receive other people's cameras (on by default). */
+  receiveCameras: boolean
 }
 
 export interface MediaSessionDeps {
@@ -110,7 +136,9 @@ const INITIAL: MediaSnapshot = {
   streamRevision: 0,
   screenShare: { status: 'idle', audio: 'off' },
   connectionQuality: 'unknown',
-  audioBlocked: false
+  audioBlocked: false,
+  camera: { status: 'off', presetId: 'balanced' },
+  cameraAllowed: null
 }
 
 const QUALITY_LABELS: Record<ConnectionQuality, ConnectionQualityLabel> = {
@@ -167,6 +195,7 @@ export class MediaSession {
   private watching: string | null = null
   private streamRevision = 0
   private readonly screen: ScreenShareController
+  private readonly camera: CameraController
   private micState: MicState = {
     muted: false,
     deafened: false,
@@ -190,6 +219,19 @@ export class MediaSession {
         this.refreshParticipants()
       }
     )
+    this.camera = new CameraController(
+      {
+        capture: (deviceId, preset) => this.captureCamera(deviceId, preset),
+        publish: (track, preset) => this.publishCamera(track, preset),
+        allowed: () => this.cameraGrant()
+      },
+      (camera) => {
+        this.set({ camera })
+        this.refreshParticipants()
+      },
+      prefs.cameraPresetId
+    )
+    this.snapshot = { ...INITIAL, camera: this.camera.getState() }
   }
 
   /** Starts listening for network and device changes. Pair with deactivate(). */
@@ -244,6 +286,119 @@ export class MediaSession {
   /** True while a screen (or system-audio) capture is live. */
   isCapturingScreen(): boolean {
     return this.screen.isCapturing()
+  }
+
+  /** True while your camera device is open for the call. */
+  isCapturingCamera(): boolean {
+    return this.camera.isCapturing()
+  }
+
+  // ---- Camera (Milestone 14.5) ----
+
+  /** Turns your camera on in the current call. Never called automatically. */
+  async startCamera(): Promise<void> {
+    if (this.snapshot.status !== 'connected' || !this.room) return
+    await this.camera.start(this.prefs.cameraDeviceId, this.prefs.cameraPresetId)
+  }
+
+  /** Turns your camera off at once (the device is released before the publication is withdrawn). */
+  async stopCamera(): Promise<void> {
+    await this.camera.stop('user')
+  }
+
+  dismissCameraMessage(): void {
+    this.camera.dismiss()
+  }
+
+  /** The live device track while your camera is on (settings preview reuses it). */
+  getLocalCameraTrack(): MediaStreamTrack | null {
+    return this.camera.getTrack()
+  }
+
+  /**
+   * The camera track to render for someone in this room: your own while it's on, or a remote
+   * camera once it's subscribed. Undefined otherwise (render the avatar instead).
+   */
+  getCameraTrack(identity: string): Track | undefined {
+    const room = this.room
+    if (!room) return undefined
+    const participant =
+      identity === room.localParticipant.identity
+        ? room.localParticipant
+        : room.remoteParticipants.get(identity)
+    const pub = participant?.getTrackPublication(Track.Source.Camera)
+    if (!pub || pub.isMuted) return undefined
+    return pub.track ?? undefined
+  }
+
+  private cameraGrant(): boolean | null {
+    const room = this.room
+    if (!room || room.state !== ConnectionState.Connected) return null
+    const p = room.localParticipant.permissions
+    if (!p) return null
+    return cameraAllowedBy({
+      canPublish: p.canPublish,
+      canPublishSources: (p.canPublishSources ?? []).map((s) => Track.sourceFromProto(s))
+    })
+  }
+
+  private async captureCamera(
+    deviceId: string | undefined,
+    preset: CameraPreset
+  ): Promise<MediaStreamTrack> {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: cameraConstraints(preset, deviceId),
+      audio: false
+    })
+    for (const t of stream.getAudioTracks()) t.stop()
+    const [track] = stream.getVideoTracks()
+    if (!track) throw namedError('NotFoundError', 'No camera video was captured.')
+    track.contentHint = 'motion'
+    return track
+  }
+
+  private async publishCamera(
+    track: MediaStreamTrack,
+    preset: CameraPreset
+  ): Promise<PublishedCamera> {
+    const room = this.room
+    if (!room || room.state !== ConnectionState.Connected)
+      throw new Error('Not connected to voice.')
+    const s = track.getSettings()
+    const encodings = cameraEncodings(preset, {
+      width: s.width,
+      height: s.height,
+      fps: s.frameRate
+    })
+    const pub = await room.localParticipant.publishTrack(track, {
+      // Its own source: viewers can always tell a camera from a screen share.
+      source: Track.Source.Camera,
+      name: 'camera',
+      videoCodec: 'vp8',
+      backupCodec: false,
+      simulcast: encodings.layers.length > 0,
+      videoEncoding: { maxBitrate: encodings.maxBitrate, maxFramerate: encodings.maxFramerate },
+      videoSimulcastLayers: encodings.layers.map(
+        (l) => new VideoPreset(l.width, l.height, l.maxBitrate, l.fps)
+      ),
+      degradationPreference: 'balanced'
+    })
+    this.bumpStreams()
+    return {
+      replace: async (next) => {
+        const local = pub.track as LocalVideoTrack | undefined
+        if (!local) throw new Error('Your camera is no longer published.')
+        // true = we own the device track (the controller stops it), LiveKit won't restart it.
+        await local.replaceTrack(next, true)
+        this.bumpStreams()
+      },
+      unpublish: async () => {
+        if (pub.track && this.room === room) {
+          await room.localParticipant.unpublishTrack(pub.track, false).catch(() => undefined)
+        }
+        this.bumpStreams()
+      }
+    }
   }
 
   /** Current microphone level in dBFS (pre-gate), or null when not capturing. */
@@ -478,11 +633,12 @@ export class MediaSession {
     // You've left as soon as you ask to: the panel, your icon and the disconnect sound update now,
     // while the connection and devices are released in the background (closing the connection
     // can take a moment).
-    const teardown = this.teardownRoom('left')
-    this.set({ ...INITIAL, screenShare: this.screen.getState() })
+    const teardown = this.teardownRoom('left', 'left')
+    this.set({ ...INITIAL, screenShare: this.screen.getState(), camera: this.camera.getState() })
     await teardown
     // A join started meanwhile owns the state now.
-    if (seq === this.joinSeq) this.set({ screenShare: this.screen.getState() })
+    if (seq === this.joinSeq)
+      this.set({ screenShare: this.screen.getState(), camera: this.camera.getState() })
   }
 
   /** Retry after an error or a give-up. */
@@ -541,14 +697,30 @@ export class MediaSession {
     ) {
       this.applyVolumes()
     }
+    if (next.cameraDeviceId !== prev.cameraDeviceId)
+      void this.camera.switchDevice(next.cameraDeviceId)
+    if (next.cameraPresetId !== prev.cameraPresetId) {
+      void this.camera.setPreset(next.cameraPresetId, next.cameraDeviceId)
+    }
+    if (next.receiveCameras !== prev.receiveCameras) {
+      this.applySubscriptions()
+      this.bumpStreams()
+    }
   }
 
   // ---- Connection lifecycle ----
 
   private async connect(channelId: string): Promise<void> {
     const seq = ++this.joinSeq
-    // Switching channels (or rejoining) always ends any screen share from the previous room.
-    await this.teardownRoom(this.room ? 'left' : 'disconnected')
+    // Switching channels (or rejoining) always ends any screen share and camera from the previous
+    // room. The camera is never turned back on by itself: the user does that in the new room.
+    const cameraReason: CameraStopReason =
+      this.rejoinAttempt > 0
+        ? 'rejoin'
+        : this.snapshot.channelId && this.snapshot.channelId !== channelId
+          ? 'switch'
+          : 'left'
+    await this.teardownRoom(this.room ? 'left' : 'disconnected', cameraReason)
     if (seq !== this.joinSeq) return
 
     this.set({
@@ -556,7 +728,8 @@ export class MediaSession {
       channelId,
       retryInMs: undefined,
       participants: [],
-      connectionQuality: 'unknown'
+      connectionQuality: 'unknown',
+      cameraAllowed: null
     })
 
     let grant: ApiVoiceToken
@@ -611,7 +784,8 @@ export class MediaSession {
       error: undefined,
       micError: undefined,
       retryInMs: undefined,
-      audioBlocked: !room.canPlaybackAudio
+      audioBlocked: !room.canPlaybackAudio,
+      cameraAllowed: this.cameraGrant()
     })
     this.applyDeafen()
     this.applySubscriptions()
@@ -685,12 +859,22 @@ export class MediaSession {
         else refresh()
       })
       .on(RoomEvent.MediaDevicesError, (err: Error) => this.set({ micError: micErrorMessage(err) }))
+      .on(RoomEvent.ParticipantPermissionsChanged, (_prev: unknown, participant: Participant) => {
+        if (!participant.isLocal) return
+        const cameraAllowed = this.cameraGrant()
+        this.set({ cameraAllowed })
+        // Video permission removed mid-call (role change): the camera goes off at once.
+        if (cameraAllowed === false) void this.camera.stop('not-allowed')
+      })
   }
 
   private onDisconnected(room: Room, reason?: DisconnectReason): void {
     if (room !== this.room) return
     this.room = null
-    void this.teardownRoom(reason === DisconnectReason.CLIENT_INITIATED ? 'left' : 'disconnected')
+    void this.teardownRoom(
+      reason === DisconnectReason.CLIENT_INITIATED ? 'left' : 'disconnected',
+      reason === DisconnectReason.CLIENT_INITIATED ? 'left' : 'disconnected'
+    )
     if (this.desiredChannel && shouldAutoRejoin(reason)) {
       this.scheduleRejoin(describeDisconnect(reason))
       return
@@ -698,7 +882,7 @@ export class MediaSession {
     this.desiredChannel = null
     this.watching = null
     if (reason === DisconnectReason.CLIENT_INITIATED) {
-      this.set({ ...INITIAL, screenShare: this.screen.getState() })
+      this.set({ ...INITIAL, screenShare: this.screen.getState(), camera: this.camera.getState() })
     } else {
       this.set({
         status: 'disconnected',
@@ -733,8 +917,14 @@ export class MediaSession {
   private fail(message: string): void {
     this.desiredChannel = null
     this.clearRejoinTimer()
-    void this.teardownRoom('disconnected')
-    this.set({ status: 'error', error: message, retryInMs: undefined, participants: [] })
+    void this.teardownRoom('disconnected', 'disconnected')
+    this.set({
+      status: 'error',
+      error: message,
+      retryInMs: undefined,
+      participants: [],
+      cameraAllowed: null
+    })
   }
 
   private readonly onNetworkOnline = (): void => {
@@ -776,15 +966,22 @@ export class MediaSession {
   }
 
   /**
-   * Disconnects and releases every media resource: screen capture first (so it's cleanly
-   * unpublished), then the room, mic device, processors and audio elements.
+   * Disconnects and releases every media resource: the camera device first (its light goes out
+   * immediately), then the screen capture (so it's cleanly unpublished), then the room, mic
+   * device, processors and audio elements.
    */
-  private async teardownRoom(reason: 'left' | 'disconnected' = 'left'): Promise<void> {
+  private async teardownRoom(
+    reason: 'left' | 'disconnected' = 'left',
+    cameraReason: CameraStopReason = reason
+  ): Promise<void> {
+    // Synchronous part of stop(): the camera state and device are released before anything awaits.
+    const cameraStopped = this.camera.stop(cameraReason)
     // Detach the room first: events it fires while closing (e.g. the screen share ending) can no
     // longer touch the snapshot, which may already show that we've left.
     const room = this.room
     this.room = null
     await this.screen.stop(reason)
+    await cameraStopped
     if (room) {
       room.removeAllListeners()
       const localTracks = [...room.localParticipant.trackPublications.values()]
@@ -904,7 +1101,8 @@ export class MediaSession {
         const want = shouldSubscribe(pub.source, {
           identity: participant.identity,
           deafened: this.micState.deafened,
-          watching: this.watching
+          watching: this.watching,
+          cameras: this.prefs.receiveCameras
         })
         if (pub.isDesired !== want) pub.setSubscribed(want)
       }
@@ -930,15 +1128,19 @@ export class MediaSession {
     const room = this.room
     if (!room) return
     const speakers = new Set(room.activeSpeakers.map((p) => p.identity))
-    const describe = (p: Participant): VoiceParticipant => ({
-      identity: p.identity,
-      isLocal: p.isLocal,
-      speaking: speakers.has(p.identity),
-      micEnabled: p.isMicrophoneEnabled,
-      deafened: p.attributes?.deafened === '1',
-      sharingScreen: p.getTrackPublication(Track.Source.ScreenShare) !== undefined,
-      sharingAudio: p.getTrackPublication(Track.Source.ScreenShareAudio) !== undefined
-    })
+    const describe = (p: Participant): VoiceParticipant => {
+      const camera = p.getTrackPublication(Track.Source.Camera)
+      return {
+        identity: p.identity,
+        isLocal: p.isLocal,
+        speaking: speakers.has(p.identity),
+        micEnabled: p.isMicrophoneEnabled,
+        deafened: p.attributes?.deafened === '1',
+        sharingScreen: p.getTrackPublication(Track.Source.ScreenShare) !== undefined,
+        sharingAudio: p.getTrackPublication(Track.Source.ScreenShareAudio) !== undefined,
+        cameraOn: camera !== undefined && !camera.isMuted
+      }
+    }
     this.set({
       participants: [room.localParticipant, ...room.remoteParticipants.values()].map(describe)
     })

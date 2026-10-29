@@ -19,6 +19,9 @@ export type CommandId =
   | 'toggleDeafen'
   | 'leaveVoice'
   | 'toggleScreenShare'
+  | 'toggleCamera'
+  | 'toggleCameraOverlay'
+  | 'overlayEditMode'
   | 'quickSwitcher'
   | 'openSettings'
   | 'toggleMembers'
@@ -80,6 +83,31 @@ export const COMMANDS: readonly CommandInfo[] = [
     category: 'voice',
     defaultBinding: null,
     globalCapable: false
+  },
+  {
+    id: 'toggleCamera',
+    label: 'Camera on / off',
+    description: 'Turns your camera on or off in voice. Only while Discord 2.0 is focused.',
+    category: 'voice',
+    defaultBinding: null,
+    // Never system-wide: your camera only ever turns on while you're looking at the app.
+    globalCapable: false
+  },
+  {
+    id: 'toggleCameraOverlay',
+    label: 'Show / hide camera overlay',
+    description: 'Hides the floating camera tiles instantly (your call keeps going).',
+    category: 'voice',
+    defaultBinding: null,
+    globalCapable: true
+  },
+  {
+    id: 'overlayEditMode',
+    label: 'Move camera overlay',
+    description: 'Lets you drag the overlay; press again (or Done) to make it click-through.',
+    category: 'voice',
+    defaultBinding: null,
+    globalCapable: true
   },
   {
     id: 'quickSwitcher',

@@ -12,6 +12,11 @@ export interface SubscriptionContext {
   deafened: boolean
   /** Identity whose stream the local user is watching, if any. */
   watching: string | null
+  /**
+   * Receive other people's cameras (Milestone 14.5). Subscribing is cheap: with adaptive
+   * streaming LiveKit only sends a camera while a tile showing it is visible, at that tile's size.
+   */
+  cameras?: boolean
 }
 
 export function shouldSubscribe(
@@ -21,12 +26,13 @@ export function shouldSubscribe(
   switch (source) {
     case 'microphone':
       return !ctx.deafened
+    case 'camera':
+      return ctx.cameras === true
     case 'screen_share':
       return ctx.watching === ctx.identity
     case 'screen_share_audio':
       return ctx.watching === ctx.identity && !ctx.deafened
     default:
-      // Camera and unknown sources are never published by our clients (backend grants forbid it).
       return false
   }
 }

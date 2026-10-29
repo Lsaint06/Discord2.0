@@ -1,0 +1,450 @@
+/* ---------- Video calls (Milestone 14.5) ----------
+   Camera tiles, the call view, the strip under a screen share, and camera controls. Only theme
+   variables are used, so every app theme applies. Motion is limited to short colour/outline
+   transitions, which the global reduced-motion rules remove. */
+
+.mirrored {
+  transform: scaleX(-1);
+}
+
+/* One camera. The video is letterboxed (object-fit: contain), never stretched. */
+.video-tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--bg-floating);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  transition: box-shadow var(--motion-base) var(--ease-standard);
+}
+.video-tile.compact {
+  border-radius: var(--radius-md);
+}
+.video-tile.speaking {
+  box-shadow:
+    inset 0 0 0 2px var(--success),
+    0 0 0 1px var(--success);
+}
+.video-tile.focused {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.video-tile.focused.speaking {
+  box-shadow:
+    inset 0 0 0 2px var(--success),
+    0 0 0 2px var(--accent);
+}
+.video-tile-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.video-tile-video.hidden {
+  visibility: hidden;
+}
+.video-tile-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bg-secondary);
+}
+.video-tile-state {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.video-tile-label {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+}
+.video-tile.compact .video-tile-label {
+  left: 4px;
+  bottom: 4px;
+  max-width: calc(100% - 8px);
+  padding: 1px 6px;
+  font-size: 11px;
+}
+.video-tile-label svg {
+  flex-shrink: 0;
+  color: var(--danger);
+}
+.video-tile-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.video-tile-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-standard);
+}
+.video-tile:hover .video-tile-actions,
+.video-tile:focus-within .video-tile-actions {
+  opacity: 1;
+}
+.video-tile-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+}
+.video-tile-button:hover {
+  background: rgba(0, 0, 0, 0.85);
+}
+.video-tile-button:focus-visible,
+.video-tile-hit:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.video-tile-hit {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border-radius: inherit;
+}
+.video-tile:fullscreen {
+  border-radius: 0;
+}
+
+/* The call view replaces the chat while open. */
+.chat-panel.call-stage-main {
+  background: var(--bg-rail);
+}
+.call-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.call-stage-header {
+  height: 48px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.call-stage-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+}
+.call-stage-title h2 {
+  color: var(--text-strong);
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.call-stage-count {
+  font-size: 13px;
+  white-space: nowrap;
+}
+.call-stage-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.call-stage-streams {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 16px 0;
+}
+.call-stage-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  overflow: hidden;
+}
+.call-stage-grid {
+  display: grid;
+  gap: 8px;
+  justify-content: center;
+  align-content: center;
+}
+.call-stage-focus {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  justify-content: center;
+}
+.call-stage-strip,
+.camera-strip {
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+  flex-shrink: 0;
+  padding-bottom: 2px;
+}
+.call-stage-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 360px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.call-stage-empty-title {
+  color: var(--text-strong);
+  font-size: 18px;
+  font-weight: 600;
+}
+.call-stage-empty-text {
+  font-size: 14px;
+  line-height: 1.4;
+}
+.call-stage-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.call-stage-others {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px 8px;
+}
+.call-stage-person {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 3px 10px 3px 3px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-normal);
+  font-size: 13px;
+}
+.call-stage-person svg {
+  flex-shrink: 0;
+  color: var(--danger);
+}
+.call-stage-person.speaking .voice-avatar {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--success);
+}
+.call-stage-person-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.call-stage-controls {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 0 14px;
+  flex-shrink: 0;
+}
+
+/* Thumbnails under a focused screen share. */
+.camera-strip {
+  padding: 8px 12px;
+  background: var(--bg-rail);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Camera on/off. "unavailable" is disabled and says why in its tooltip and label. */
+.call-round-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--bg-input);
+  color: var(--text-strong);
+  transition: background-color var(--motion-fast) var(--ease-standard);
+}
+.call-round-button:hover:not(:disabled) {
+  background: var(--bg-active);
+}
+.call-round-button.camera-on {
+  background: var(--text-strong);
+  color: var(--bg-rail);
+}
+.call-round-button:focus-visible,
+.camera-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.camera-button {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-input);
+  color: var(--text-strong);
+}
+.camera-button:hover:not(:disabled) {
+  background: var(--bg-active);
+}
+.camera-button.camera-on {
+  background: var(--success);
+  color: #fff;
+}
+.camera-starting {
+  opacity: 0.85;
+}
+.camera-failed {
+  color: var(--danger);
+}
+.camera-button.camera-failed,
+.call-round-button.camera-failed {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+.camera-unavailable,
+.camera-button:disabled,
+.call-round-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.camera-live-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--bg-panel);
+}
+
+/* Voice panel: camera, video view and overlay buttons. */
+.voice-panel-video {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0;
+}
+.voice-panel-video .icon-button.small {
+  position: relative;
+  width: 30px;
+  height: 30px;
+}
+.voice-panel-count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+.voice-user-camera {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+/* Settings → Video & Overlay. */
+.camera-preview {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 16 / 9;
+  margin: 12px 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--bg-floating);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.camera-preview.mirrored {
+  transform: none;
+}
+.camera-preview video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.camera-preview.mirrored video {
+  transform: scaleX(-1);
+}
+.camera-preview video.hidden {
+  visibility: hidden;
+}
+.camera-preview-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.camera-preview-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.camera-preview-badge.live {
+  background: var(--danger);
+}
+.settings-note.warn {
+  color: var(--warning);
+}
+
+@media (forced-colors: active) {
+  .video-tile.speaking,
+  .video-tile.focused {
+    outline: 3px solid Highlight;
+  }
+}

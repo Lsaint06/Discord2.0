@@ -38,6 +38,7 @@ import { parseKeybinds, type CommandId } from '../lib/keybinds'
 import type { ServerNotificationChoice } from '../chat/unread'
 import PrivacySettings, { type PrivacyProps } from './PrivacySettings'
 import WindowsSettings from './WindowsSettings'
+import VideoSettings from './VideoSettings'
 
 export type SectionId =
   | 'account'
@@ -48,6 +49,7 @@ export type SectionId =
   | 'admin'
   | 'appearance'
   | 'voice'
+  | 'video'
   | 'streaming'
   | 'notifications'
   | 'sounds'
@@ -63,6 +65,7 @@ const sections: { id: SectionId; label: string; adminOnly?: boolean }[] = [
   { id: 'admin', label: 'Administration', adminOnly: true },
   { id: 'appearance', label: 'Appearance' },
   { id: 'voice', label: 'Voice & Audio' },
+  { id: 'video', label: 'Video & Overlay' },
   { id: 'streaming', label: 'Screen Share' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'sounds', label: 'Sounds' },
@@ -111,6 +114,8 @@ interface SettingsPanelProps {
   shortcutStatus?: Partial<Record<CommandId, boolean>>
   /** Milestone 14: themes and profile customization. */
   customization: CustomizationProps
+  /** Milestone 14.5: position the camera overlay (closes Settings and shows sample tiles). */
+  onArrangeOverlay: () => void
 }
 
 export interface CustomizationProps {
@@ -151,7 +156,8 @@ function SettingsPanel({
   onClose,
   privacy,
   shortcutStatus = {},
-  customization
+  customization,
+  onArrangeOverlay
 }: SettingsPanelProps): React.JSX.Element {
   const [section, setSection] = useState<SectionId>(initialSection)
   const [now] = useState(() => Date.now())
@@ -388,6 +394,16 @@ function SettingsPanel({
               onChange={onChange}
               onToggleMute={onToggleMute}
               onToggleDeafen={onToggleDeafen}
+            />
+          )}
+          {section === 'video' && (
+            <VideoSettings
+              session={voiceSession}
+              state={voiceState}
+              settings={settings}
+              onChange={onChange}
+              onArrangeOverlay={onArrangeOverlay}
+              pinnedName={settings.overlay.pinned ? userName(settings.overlay.pinned) : null}
             />
           )}
 

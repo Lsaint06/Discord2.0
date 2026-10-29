@@ -10,12 +10,16 @@ import type { ScreenShareState } from '../media/ScreenShareController'
 import { SCREEN_PROFILES, type ScreenProfileId } from '../media/screenProfiles'
 import Avatar from './Avatar'
 import { gradeConnection, type ConnectionSummary } from '../media/connectionStats'
+import type { CameraState } from '../media/CameraController'
+import CameraButton, { type CameraAvailability } from './video/CameraButton'
 import {
   EyeIcon,
   GearIcon,
+  GridIcon,
   HangUpIcon,
   HeadphonesIcon,
   MicIcon,
+  OverlayIcon,
   ScreenShareIcon,
   SignalIcon
 } from './Icons'
@@ -75,6 +79,18 @@ interface UserPanelProps {
   shareStatus?: ReactNode
   /** Milestone 14: the soundboard (shown while connected to voice). */
   soundboard?: ReactNode
+  /** Milestone 14.5: your camera and the video view / overlay quick controls. */
+  video?: {
+    camera: CameraState
+    availability: CameraAvailability
+    cameraCount: number
+    stageOpen: boolean
+    overlayEnabled: boolean
+    onToggleCamera: () => void
+    onDismissCamera: () => void
+    onOpenView: () => void
+    onToggleOverlay: () => void
+  }
 }
 
 const STATUS_LABEL: Record<VoiceStatus, string> = {
@@ -175,7 +191,8 @@ function UserPanel({
   onDismissDeviceNotice,
   onStartAudio,
   shareStatus,
-  soundboard
+  soundboard,
+  video
 }: UserPanelProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const micOff = muted || deafened
@@ -245,6 +262,52 @@ function UserPanel({
               stats={voice.stats}
               quality={voice.quality}
             />
+          )}
+
+          {voice.status === 'connected' && video && (
+            <div className="voice-panel-video">
+              <CameraButton
+                camera={video.camera}
+                availability={video.availability}
+                onToggle={video.onToggleCamera}
+              />
+              <button
+                type="button"
+                className={`icon-button small${video.stageOpen ? ' on' : ''}`}
+                onClick={video.onOpenView}
+                aria-label={`Open video view${video.cameraCount > 0 ? ` (${video.cameraCount} camera${video.cameraCount === 1 ? '' : 's'} on)` : ''}`}
+                title="Video view"
+              >
+                <GridIcon size={16} />
+                {video.cameraCount > 0 && (
+                  <span className="voice-panel-count">{video.cameraCount}</span>
+                )}
+              </button>
+              <button
+                type="button"
+                className={`icon-button small${video.overlayEnabled ? ' on' : ''}`}
+                onClick={video.onToggleOverlay}
+                aria-pressed={video.overlayEnabled}
+                aria-label={
+                  video.overlayEnabled ? 'Turn off camera overlay' : 'Turn on camera overlay'
+                }
+                title={
+                  video.overlayEnabled
+                    ? 'Camera overlay on — click to turn off'
+                    : 'Camera overlay off'
+                }
+              >
+                <OverlayIcon size={16} slashed={!video.overlayEnabled} />
+              </button>
+            </div>
+          )}
+          {video && (video.camera.error || video.camera.notice) && (
+            <div className={`voice-panel-message${video.camera.error ? ' error' : ''}`}>
+              <span>{video.camera.error ?? video.camera.notice}</span>
+              <button type="button" className="link-button" onClick={video.onDismissCamera}>
+                Dismiss
+              </button>
+            </div>
           )}
 
           {voice.status === 'connected' && share && (

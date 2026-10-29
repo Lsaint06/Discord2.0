@@ -48,7 +48,10 @@ export function useVoice({ fetchToken, settings }: UseVoiceOptions): Voice {
       inputSensitivityDb:
         settings.inputSensitivityAuto || settings.inputMode === 'push-to-talk'
           ? null
-          : settings.inputSensitivityDb
+          : settings.inputSensitivityDb,
+      cameraDeviceId: settings.cameraDeviceId,
+      cameraPresetId: settings.cameraPreset,
+      receiveCameras: settings.receiveCameras
     }),
     [
       settings.inputDeviceId,
@@ -62,7 +65,10 @@ export function useVoice({ fetchToken, settings }: UseVoiceOptions): Voice {
       settings.streamVolumes,
       settings.inputSensitivityAuto,
       settings.inputMode,
-      settings.inputSensitivityDb
+      settings.inputSensitivityDb,
+      settings.cameraDeviceId,
+      settings.cameraPreset,
+      settings.receiveCameras
     ]
   )
 

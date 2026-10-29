@@ -369,3 +369,41 @@ export function LogoIcon(props: IconProps): React.JSX.Element {
     </Svg>
   )
 }
+
+export function CameraIcon({
+  slashed,
+  ...props
+}: IconProps & { slashed?: boolean }): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="6.5" width="12.5" height="11" rx="2.5" fill="currentColor" />
+      <path d="M15.5 10.5 21 7.5v9l-5.5-3z" fill="currentColor" />
+      {slashed && <path className="icon-slash" d="M3.5 3.5l17 17" />}
+    </Svg>
+  )
+}
+
+export function GridIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="3.5" y="4.5" width="7.5" height="6.5" rx="1.5" />
+      <rect x="13" y="4.5" width="7.5" height="6.5" rx="1.5" />
+      <rect x="3.5" y="13" width="7.5" height="6.5" rx="1.5" />
+      <rect x="13" y="13" width="7.5" height="6.5" rx="1.5" />
+    </Svg>
+  )
+}
+
+export function OverlayIcon({
+  slashed,
+  ...props
+}: IconProps & { slashed?: boolean }): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="2.5" y="4" width="19" height="15" rx="2.5" />
+      <rect x="12.5" y="6.5" width="6.5" height="4.5" rx="1" fill="currentColor" />
+      <rect x="12.5" y="12.5" width="6.5" height="4.5" rx="1" fill="currentColor" />
+      {slashed && <path className="icon-slash" d="M3.5 3.5l17 17" />}
+    </Svg>
+  )
+}

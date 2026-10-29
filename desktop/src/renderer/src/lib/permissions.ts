@@ -70,7 +70,12 @@ export const PERMISSION_INFO: {
     channel: true
   },
   { name: 'speak', label: 'Speak', description: 'Use the microphone in voice.', channel: true },
-  { name: 'stream', label: 'Stream', description: 'Share a screen (Go Live).', channel: true },
+  {
+    name: 'stream',
+    label: 'Video',
+    description: 'Turn on a camera and share a screen (Go Live) in voice.',
+    channel: true
+  },
   {
     name: 'createInvites',
     label: 'Create invites',

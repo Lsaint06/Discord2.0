@@ -1,6 +1,7 @@
 import './assets/main.css'
 import './assets/themes.css'
 import './assets/profile-style.css'
+import './assets/video.css'
 
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'

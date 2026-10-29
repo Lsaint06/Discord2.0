@@ -3,6 +3,34 @@ import { defaultSettings } from '../data/defaults'
 import { migrateSoundSettings } from '../sound/soundPolicy'
 import { parseKeybinds } from '../lib/keybinds'
 import { parseWallpaper, parseWallpaperIntensity } from '../lib/wallpapers'
+import { parseOverlaySettings } from '../lib/overlay'
+import { parseCameraPreset } from '../media/cameraProfiles'
+
+/**
+ * Milestone 14.5 device settings for the camera and the overlay. Unknown keys (for example an
+ * old or hand-edited "cameraOn") are ignored: nothing stored can turn the camera on.
+ */
+export function parseCameraSettings(
+  parsed: Record<string, unknown>
+): Pick<
+  UserSettings,
+  | 'cameraDeviceId'
+  | 'cameraPreset'
+  | 'cameraMirror'
+  | 'cameraHideSelf'
+  | 'receiveCameras'
+  | 'overlay'
+> {
+  const id = parsed.cameraDeviceId
+  return {
+    cameraDeviceId: typeof id === 'string' && id.length <= 256 ? id : '',
+    cameraPreset: parseCameraPreset(parsed.cameraPreset),
+    cameraMirror: typeof parsed.cameraMirror === 'boolean' ? parsed.cameraMirror : true,
+    cameraHideSelf: parsed.cameraHideSelf === true,
+    receiveCameras: parsed.receiveCameras !== false,
+    overlay: parseOverlaySettings(parsed.overlay)
+  }
+}
 
 /**
  * Session storage. The bearer token is kept by the Electron main process, encrypted with the OS
@@ -112,7 +140,9 @@ export function loadSettings(): UserSettings {
           ? Math.min(100, Math.max(0, Math.round(parsed.soundboardVolume)))
           : defaultSettings.soundboardVolume,
       chatWallpaper: parseWallpaper(parsed.chatWallpaper),
-      chatWallpaperIntensity: parseWallpaperIntensity(parsed.chatWallpaperIntensity)
+      chatWallpaperIntensity: parseWallpaperIntensity(parsed.chatWallpaperIntensity),
+      // Milestone 14.5: validated camera and overlay choices (never a stored "camera on").
+      ...parseCameraSettings(parsed)
     }
   } catch {
     return { ...defaultSettings }

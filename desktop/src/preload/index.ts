@@ -7,6 +7,8 @@ import type {
   EncoderFlagsState,
   LifecycleState,
   MicrophoneAccess,
+  OverlayDisplay,
+  OverlayUpdateResult,
   ScreenCaptureCapabilities,
   ScreenSelectResult,
   ScreenSourceInfo,
@@ -38,7 +40,45 @@ const d2: D2DesktopApi = {
   },
   media: {
     getMicrophoneAccess: () => ipcRenderer.invoke('d2:mic-access') as Promise<MicrophoneAccess>,
-    openMicrophoneSettings: () => ipcRenderer.invoke('d2:open-mic-settings') as Promise<boolean>
+    openMicrophoneSettings: () => ipcRenderer.invoke('d2:open-mic-settings') as Promise<boolean>,
+    getCameraAccess: () => ipcRenderer.invoke('d2:camera-access') as Promise<MicrophoneAccess>,
+    openCameraSettings: () => ipcRenderer.invoke('d2:open-camera-settings') as Promise<boolean>
+  },
+  overlay: {
+    getDisplays: () =>
+      ipcRenderer.invoke('d2:overlay-displays') as Promise<OverlayDisplay[] | null>,
+    update: (command) =>
+      ipcRenderer.invoke('d2:overlay-update', {
+        visible: command.visible === true,
+        mode: command.mode === 'edit' ? 'edit' : 'view',
+        bounds: {
+          x: Number(command.bounds.x),
+          y: Number(command.bounds.y),
+          width: Number(command.bounds.width),
+          height: Number(command.bounds.height)
+        }
+      }) as Promise<OverlayUpdateResult | null>,
+    close: () => ipcRenderer.invoke('d2:overlay-close') as Promise<void>,
+    onEvent: (callback) => {
+      const listener = (_event: unknown, payload: unknown): void => {
+        const p = payload as { type?: unknown; bounds?: Record<string, unknown> } | null
+        if (p?.type === 'moved' && p.bounds) {
+          callback({
+            type: 'moved',
+            bounds: {
+              x: Number(p.bounds.x) || 0,
+              y: Number(p.bounds.y) || 0,
+              width: Number(p.bounds.width) || 0,
+              height: Number(p.bounds.height) || 0
+            }
+          })
+        } else if (p?.type === 'displays' || p?.type === 'closed') {
+          callback({ type: p.type })
+        }
+      }
+      ipcRenderer.on('d2:overlay-event', listener)
+      return () => ipcRenderer.removeListener('d2:overlay-event', listener)
+    }
   },
   screen: {
     getCapabilities: () =>
@@ -149,4 +189,5 @@ const d2: D2DesktopApi = {
 }
 
 // Context isolation is always on (Electron default); the bridge is the only thing exposed.
-contextBridge.exposeInMainWorld('d2', d2)
+// Not in the camera overlay window (about:blank, opened by the app itself): it never needs it.
+if (location.href !== 'about:blank') contextBridge.exposeInMainWorld('d2', d2)

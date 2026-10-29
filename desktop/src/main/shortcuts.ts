@@ -7,7 +7,7 @@ import { ACCELERATOR } from './media'
  * renderer, and only through Electron's globalShortcut — never a keyboard hook. Everything is
  * unregistered when the window closes or the app quits.
  */
-const ALLOWED = new Set(['toggleMute', 'toggleDeafen'])
+const ALLOWED = new Set(['toggleMute', 'toggleDeafen', 'toggleCameraOverlay', 'overlayEditMode'])
 const MAX_SHORTCUTS = ALLOWED.size
 
 const registered = new Map<string, string>()

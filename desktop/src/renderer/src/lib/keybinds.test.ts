@@ -142,3 +142,29 @@ describe('keybinds', () => {
     })
   })
 })
+
+describe('camera keybinds (Milestone 14.5)', () => {
+  it('are unbound by default, so nothing toggles a camera until you choose a key', () => {
+    for (const id of ['toggleCamera', 'toggleCameraOverlay', 'overlayEditMode'] as const) {
+      expect(effectiveBinding({}, id)).toBeNull()
+    }
+  })
+
+  it('never lets the camera toggle become system-wide', () => {
+    const keybinds: Keybinds = {
+      toggleCamera: { binding: k('KeyV', { ctrl: true }), global: true }
+    }
+    expect(COMMANDS.find((c) => c.id === 'toggleCamera')?.globalCapable).toBe(false)
+    expect(isGlobal(keybinds, 'toggleCamera')).toBe(false)
+  })
+
+  it('allows the overlay show/hide and move commands to be global', () => {
+    const keybinds: Keybinds = {
+      toggleCameraOverlay: { binding: k('KeyO', { ctrl: true, shift: true }), global: true },
+      overlayEditMode: { binding: k('KeyM', { ctrl: true, shift: true }), global: true }
+    }
+    expect(isGlobal(keybinds, 'toggleCameraOverlay')).toBe(true)
+    expect(isGlobal(keybinds, 'overlayEditMode')).toBe(true)
+    expect(parseKeybinds(keybinds)).toEqual(keybinds)
+  })
+})

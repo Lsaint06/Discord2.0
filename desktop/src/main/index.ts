@@ -2,7 +2,8 @@ import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { setupMediaIntegration } from './media'
+import { setupMediaIntegration, setCameraWindow } from './media'
+import { overlayOpenResponse, setupCameraOverlay } from './overlay'
 import { setupScreenCapture } from './screenCapture'
 import { applyEncoderFlags, setupEncoderFlagsIpc } from './encoderFlags'
 import { isAppUrl, isWebUrl } from './appUrl'
@@ -81,9 +82,15 @@ function createWindow(): void {
   })
 
   attachUiZoom(mainWindow.webContents)
+  // Milestone 14.5: only this window's page may use a camera; it may open the camera overlay.
+  setCameraWindow(mainWindow.webContents.id)
+  setupCameraOverlay(mainWindow, isAppUrl)
 
-  // Links in messages open in the system browser, but only plain web URLs.
+  // Links in messages open in the system browser, but only plain web URLs. The only window the
+  // app itself may open is its own camera overlay (validated in overlay.ts).
   mainWindow.webContents.setWindowOpenHandler((details) => {
+    const overlay = overlayOpenResponse(details, isAppUrl(mainWindow.webContents.getURL()))
+    if (overlay) return overlay
     if (isWebUrl(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
   })

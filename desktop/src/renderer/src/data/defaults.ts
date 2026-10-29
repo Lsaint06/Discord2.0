@@ -1,6 +1,8 @@
 import type { UserSettings } from '../types'
 import { DEFAULT_SOUND_EVENTS, DEFAULT_SOUND_VOLUME } from '../sound/soundPolicy'
 import { DEFAULT_WALLPAPER_INTENSITY } from '../lib/wallpapers'
+import { DEFAULT_OVERLAY } from '../lib/overlay'
+import { DEFAULT_CAMERA_PRESET } from '../media/cameraProfiles'
 
 export const defaultSettings: UserSettings = {
   fontSize: 15,
@@ -44,7 +46,13 @@ export const defaultSettings: UserSettings = {
   soundPack: 'signature',
   soundboardVolume: 70,
   chatWallpaper: null,
-  chatWallpaperIntensity: DEFAULT_WALLPAPER_INTENSITY
+  chatWallpaperIntensity: DEFAULT_WALLPAPER_INTENSITY,
+  cameraDeviceId: '',
+  cameraPreset: DEFAULT_CAMERA_PRESET,
+  cameraMirror: true,
+  cameraHideSelf: false,
+  receiveCameras: true,
+  overlay: DEFAULT_OVERLAY
 }
 
 export const DEFAULT_ACCENT = '#6d72f6'

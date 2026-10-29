@@ -69,6 +69,24 @@ export interface D2DesktopApi {
     getMicrophoneAccess: () => Promise<MicrophoneAccess>
     /** Opens the OS microphone privacy settings page. */
     openMicrophoneSettings: () => Promise<boolean>
+    /** Milestone 14.5: OS-level camera privacy status (Windows/macOS); 'unknown' elsewhere. */
+    getCameraAccess: () => Promise<MicrophoneAccess>
+    /** Opens the OS camera privacy settings page. */
+    openCameraSettings: () => Promise<boolean>
+  }
+  /** Milestone 14.5: the in-game camera overlay window (see main/overlay.ts). */
+  overlay: {
+    /** Monitors (DIP bounds, work areas, scale factors) for placing the overlay. */
+    getDisplays: () => Promise<OverlayDisplay[] | null>
+    /**
+     * Positions/shows the overlay window opened with window.open('about:blank',
+     * 'd2-camera-overlay'). 'view' = click-through and never focused; 'edit' = draggable.
+     */
+    update: (command: OverlayCommand) => Promise<OverlayUpdateResult | null>
+    /** Destroys the overlay window. */
+    close: () => Promise<void>
+    /** moved (edit mode drag), displays (monitors changed), closed (window gone). */
+    onEvent: (callback: (event: OverlayEvent) => void) => () => void
   }
   screen: {
     getCapabilities: () => Promise<ScreenCaptureCapabilities | null>
@@ -173,3 +191,34 @@ export interface UiZoomState {
 }
 
 export type SystemIdleState = 'active' | 'idle' | 'locked' | 'unknown'
+
+export interface OverlayRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface OverlayDisplay {
+  id: number
+  bounds: OverlayRect
+  workArea: OverlayRect
+  scaleFactor: number
+  primary: boolean
+  label: string
+}
+
+export interface OverlayCommand {
+  visible: boolean
+  mode: 'view' | 'edit'
+  bounds: OverlayRect
+}
+
+export interface OverlayUpdateResult {
+  bounds: OverlayRect
+  visible: boolean
+  mode: 'view' | 'edit'
+}
+
+export type OverlayEvent =
+  { type: 'moved'; bounds: OverlayRect } | { type: 'displays' } | { type: 'closed' }

@@ -272,6 +272,9 @@ export async function buildApp(
     // Milestone 14: private saved messages and private notes about people.
     savedMessages: true,
     userNotes: true,
+    // Milestone 14.5: voice tokens may publish a camera (with the Stream/"Video" permission).
+    // Older servers never grant it; clients also check the grant LiveKit reports.
+    camera: true,
     // Milestone 13: GIF picker through this server (null = not set up).
     gifs: gifProvider ? { provider: gifProvider.name, attribution: gifProvider.attribution } : null,
     // Milestone 13: chunked uploads of large files (null = off; the default).

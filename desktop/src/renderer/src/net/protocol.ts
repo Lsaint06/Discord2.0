@@ -317,7 +317,7 @@ export const Permissions = {
   /** Join voice channels. */
   connect: 1 << 6,
   speak: 1 << 7,
-  /** Share a screen (Go Live) in voice. */
+  /** "Video" in the app: turn on a camera (Milestone 14.5) and share a screen (Go Live) in voice. */
   stream: 1 << 8,
   manageChannels: 1 << 9,
   createInvites: 1 << 10,

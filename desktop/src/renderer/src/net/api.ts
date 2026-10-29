@@ -118,6 +118,8 @@ export interface ServerMeta {
   savedMessages?: boolean
   /** Milestone 14+: private notes about people. */
   userNotes?: boolean
+  /** Milestone 14.5: voice tokens may publish a camera (Video permission). */
+  camera?: boolean
   /** Milestone 13+: GIF picker through the server (null/absent = not set up). */
   gifs?: { provider: string; attribution: { text: string; url: string } } | null
   /** Milestone 13+: chunked uploads of large files (null/absent = off). */

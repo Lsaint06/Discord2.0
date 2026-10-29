@@ -10,15 +10,23 @@ import {
 } from 'electron'
 import { takeDisplayCapturePermission } from './screenCapture'
 import { isAppUrl } from './appUrl'
+import { mediaCheckAllowed, mediaRequestAllowed } from './overlayLogic'
 
 /**
  * Narrowly scoped main-process media integration:
- * - grants microphone (audio-only) capture and notifications to our own renderer, denies every other permission
- * - reports the OS microphone privacy state (Windows/macOS)
+ * - grants microphone capture and notifications to our own renderer, and the camera (Milestone
+ *   14.5) only to the main app window's top-level page; denies every other permission
+ * - reports the OS microphone/camera privacy state (Windows/macOS)
  * - optional system-wide push-to-talk via a single Electron globalShortcut (no keyboard hooks)
  */
 
 export type MicrophoneAccess = 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown'
+
+/** The main app window's renderer (the only one that may use a camera). */
+let mainWebContentsId: number | null = null
+export function setCameraWindow(webContentsId: number): void {
+  mainWebContentsId = webContentsId
+}
 
 /** Accelerators we accept for global push-to-talk: optional modifiers + one key. */
 export const ACCELERATOR =
@@ -45,8 +53,15 @@ export function setupMediaIntegration(): void {
       // Display capture (getDisplayMedia, or legacy chromeMediaSource constraints) arrives with
       // no media types: allow it only for an explicit, armed picker selection from this window.
       if (types.length === 0) return callback(takeDisplayCapturePermission(webContents.id))
-      // getUserMedia: microphone only. Camera is never granted.
-      return callback(types.every((t) => t === 'audio'))
+      // getUserMedia: microphone, and the camera only for the main window's own page.
+      return callback(
+        mediaRequestAllowed({
+          appUrl: true,
+          mediaTypes: types,
+          isMainFrame: details.isMainFrame,
+          isMainWindow: webContents.id === mainWebContentsId
+        })
+      )
     }
     // display-capture is still gated by the one-time selection in screenCapture.ts;
     // fullscreen is used by the stream viewer.
@@ -58,7 +73,7 @@ export function setupMediaIntegration(): void {
     )
   })
 
-  ses.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
+  ses.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     if (
       permission !== 'media' &&
       permission !== 'display-capture' &&
@@ -67,9 +82,36 @@ export function setupMediaIntegration(): void {
     ) {
       return false
     }
-    // Never expose cameras (this also hides them from enumerateDevices).
-    if (permission === 'media' && details?.mediaType === 'video') return false
+    if (permission === 'media') {
+      // Cameras (and their names in enumerateDevices) only for the main app window.
+      return mediaCheckAllowed({
+        appUrl: isAppUrl(requestingOrigin),
+        mediaType: details?.mediaType,
+        isMainWindow: webContents !== null && webContents.id === mainWebContentsId
+      })
+    }
     return isAppUrl(requestingOrigin)
+  })
+
+  ipcMain.handle('d2:camera-access', (event): MicrophoneAccess => {
+    if (!fromApp(event)) return 'unknown'
+    if (process.platform !== 'win32' && process.platform !== 'darwin') return 'unknown'
+    return systemPreferences.getMediaAccessStatus('camera') as MicrophoneAccess
+  })
+
+  ipcMain.handle('d2:open-camera-settings', async (event): Promise<boolean> => {
+    if (!fromApp(event)) return false
+    if (process.platform === 'win32') {
+      await shell.openExternal('ms-settings:privacy-webcam')
+      return true
+    }
+    if (process.platform === 'darwin') {
+      await shell.openExternal(
+        'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera'
+      )
+      return true
+    }
+    return false
   })
 
   ipcMain.handle('d2:mic-access', (event): MicrophoneAccess => {

@@ -12,9 +12,13 @@ import type { ApiVoiceState, ApiVoiceToken, GatewayServerFrame } from '../src/pr
 import {
   authorizeVoiceJoin,
   channelIdFromRoom,
+  publishSourcesFor,
   roomNameForChannel,
+  voiceGrant,
   VOICE_TOKEN_TTL_SECONDS
 } from '../src/voice/access.js'
+import { Permissions } from '../src/protocol.js'
+import { TrackSource } from 'livekit-server-sdk'
 import { VoiceStateStore } from '../src/voice/voiceStates.js'
 
 const API_KEY = 'test-key'
@@ -192,6 +196,43 @@ describe('voice: rooms and state store', () => {
   })
 })
 
+describe('voice: camera grant (Milestone 14.5)', () => {
+  test('Stream ("Video") grants camera and screen share; Speak alone grants only the microphone', () => {
+    const base = Permissions.connect
+    assert.deepEqual(publishSourcesFor(base | Permissions.speak), [TrackSource.MICROPHONE])
+    assert.deepEqual(publishSourcesFor(base | Permissions.stream), [
+      TrackSource.CAMERA,
+      TrackSource.SCREEN_SHARE,
+      TrackSource.SCREEN_SHARE_AUDIO
+    ])
+    assert.deepEqual(publishSourcesFor(base | Permissions.speak | Permissions.stream), [
+      TrackSource.MICROPHONE,
+      TrackSource.CAMERA,
+      TrackSource.SCREEN_SHARE,
+      TrackSource.SCREEN_SHARE_AUDIO
+    ])
+  })
+
+  test('without Speak or Stream nothing may be published (listen-only), but cameras can be watched', () => {
+    const grant = voiceGrant('voice_x', Permissions.connect)
+    assert.equal(grant.canPublish, false)
+    assert.deepEqual(grant.canPublishSources, [])
+    assert.equal(grant.canSubscribe, true)
+    assert.equal(grant.canPublishData, false)
+  })
+
+  test('meta advertises camera support', async () => {
+    const server = await start(LIVEKIT_ENV)
+    try {
+      const meta = (await (await fetch(`${server.base}/api/meta`)).json()) as { camera?: boolean }
+      assert.equal(meta.camera, true)
+    } finally {
+      await server.app.close()
+      await server.repo.close()
+    }
+  })
+})
+
 describe('voice: token endpoint', () => {
   let server: Running
 
@@ -232,13 +273,13 @@ describe('voice: token endpoint', () => {
     assert.equal(claims.video?.roomCreate, undefined)
     assert.equal(claims.video?.roomList, undefined)
     assert.equal(claims.video?.canPublishData, false)
-    // Microphone + screen share (video and system audio); never camera.
+    // Microphone, camera and screen share (video and system audio).
     assert.deepEqual(claims.video?.canPublishSources, [
       'microphone',
+      'camera',
       'screen_share',
       'screen_share_audio'
     ])
-    assert.equal(claims.video?.canPublishSources?.includes('camera'), false)
     const lifetime = (claims.exp as number) - (claims.nbf as number)
     assert.ok(lifetime <= VOICE_TOKEN_TTL_SECONDS, `token lives ${lifetime}s`)
 
@@ -329,12 +370,18 @@ describe('voice: presence via LiveKit webhooks', () => {
     const base = { room: { name: 'voice_hangout-lounge' }, participant: { identity: alice.userId } }
 
     await postWebhook(server.base, { ...base, event: 'participant_joined', id: 's-1' })
-    // Microphone publications don't make anyone "live".
+    // Microphone and camera publications don't make anyone "live" (only a screen share does).
     await postWebhook(server.base, {
       ...base,
       event: 'track_published',
       id: 's-2',
       track: { sid: 'TR_mic', source: 'MICROPHONE', type: 'AUDIO' }
+    })
+    await postWebhook(server.base, {
+      ...base,
+      event: 'track_published',
+      id: 's-2b',
+      track: { sid: 'TR_cam', source: 'CAMERA', type: 'VIDEO' }
     })
     const published = await postWebhook(server.base, {
       ...base,
@@ -349,7 +396,7 @@ describe('voice: presence via LiveKit webhooks', () => {
     )
     const streamingFrames = () =>
       gw.frames.filter((f) => f.op === 'voice_state_update' && f.d.streaming !== undefined)
-    assert.equal(streamingFrames().length, 1, 'mic publish must not toggle streaming')
+    assert.equal(streamingFrames().length, 1, 'mic or camera publish must not toggle streaming')
 
     const states = (await (
       await fetch(`${server.base}/api/voice/states`, {

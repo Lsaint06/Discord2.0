@@ -12,21 +12,25 @@ const ROOM_PREFIX = 'voice_'
 export const VOICE_TOKEN_TTL_SECONDS = 5 * 60
 
 /**
- * Everything a voice participant may ever publish: microphone plus screen sharing (video and its
- * system audio). Camera is intentionally excluded. The actual grant is narrowed by permissions.
+ * Everything a voice participant may ever publish: microphone, camera (Milestone 14.5) and screen
+ * sharing (video and its system audio). The actual grant is narrowed by permissions.
  */
 export const VOICE_PUBLISH_SOURCES: TrackSource[] = [
   TrackSource.MICROPHONE,
+  TrackSource.CAMERA,
   TrackSource.SCREEN_SHARE,
   TrackSource.SCREEN_SHARE_AUDIO
 ]
 
-/** Publish sources allowed by channel permissions: Speak → microphone, Stream → screen share. */
+/**
+ * Publish sources allowed by channel permissions: Speak → microphone; Stream (shown as "Video")
+ * → camera and screen share, like Discord's Video permission which covers both.
+ */
 export function publishSourcesFor(permissions: number): TrackSource[] {
   const sources: TrackSource[] = []
   if (has(permissions, Permissions.speak)) sources.push(TrackSource.MICROPHONE)
   if (has(permissions, Permissions.stream)) {
-    sources.push(TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO)
+    sources.push(TrackSource.CAMERA, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO)
   }
   return sources
 }

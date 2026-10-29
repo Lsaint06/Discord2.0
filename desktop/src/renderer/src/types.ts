@@ -2,6 +2,8 @@ import type { SoundEvent } from './sound/sounds'
 import type { SoundGroup } from './sound/soundPolicy'
 import type { Keybinds } from './lib/keybinds'
 import type { ChatWallpaperId } from './lib/wallpapers'
+import type { OverlaySettings } from './lib/overlay'
+import type { CameraPresetId } from './media/cameraProfiles'
 import type {
   ScreenCodec,
   ScreenContentHint,
@@ -195,4 +197,18 @@ export interface UserSettings {
   chatWallpaper: ChatWallpaperId | null
   /** Milestone 14: wallpaper strength, 10–100 percent. */
   chatWallpaperIntensity: number
+  /**
+   * Milestone 14.5 camera choices on this device. There is deliberately no "camera on" setting:
+   * your camera always starts off and only turns on when you press the camera button in a call.
+   */
+  cameraDeviceId: string
+  cameraPreset: CameraPresetId
+  /** Mirror your own self-view and preview (only for you; others see you unmirrored). */
+  cameraMirror: boolean
+  /** Hide your own tile in the gallery (your camera keeps sending). */
+  cameraHideSelf: boolean
+  /** Receive other people's cameras (turn off to save bandwidth). */
+  receiveCameras: boolean
+  /** The in-game camera overlay (off by default). */
+  overlay: OverlaySettings
 }
