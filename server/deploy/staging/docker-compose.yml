@@ -1,0 +1,138 @@
+# Discord 2.0 STAGING (synthetic data only), side by side with production on the Jetson.
+#
+# Self-contained: never merged with ../../docker-compose.yml, so no project, volume, network, image
+# tag, port or LiveKit key is shared with production. Always run it through ./stg.sh from the
+# separate release checkout (~/d2-v140), never from production's ~/Discord2.0/server.
+#
+#              production (untouched)                         staging (this file)
+#   project    server                                         d2staging
+#   volume     server_discord2-data (DB + attachments)        d2staging_staging-data (DB + attachments)
+#   network    172.30.0.0/24                                  d2staging_default, 172.30.99.0/24
+#   image      discord2-server:dev                            discord2-server:1.4.0-rc1 (or :m11-rollback)
+#   ports      3001, 80/443 (Caddy), 7880, 7881/tcp, 7882/udp 3901, 7980, 7981/tcp, 7982/udp (LAN only)
+#   LiveKit    production keys                                staging keys from .env.staging
+#
+# LAN only: no Caddy, no public hostname, no router forward. See docs/v1.4.0-staging-plan.md.
+name: d2staging
+
+services:
+  server:
+    # Built on the Jetson beforehand by `stg.sh build`; never pulled or built here. stg.sh sets
+    # STAGING_SERVER_IMAGE to discord2-server:m11-rollback (API 4) or discord2-server:1.4.0-rc1
+    # (API 6) and refuses anything else (in particular production's :dev tag).
+    image: ${STAGING_SERVER_IMAGE:-discord2-server:1.4.0-rc1}
+    pull_policy: never
+    # A reboot must not bring staging back by itself.
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      NODE_ENV: production
+      DEV_AUTH: "false"
+      CORS_ORIGINS: ""
+      LOG_LEVEL: info
+      # Staging's own LiveKit credentials (never production's).
+      LIVEKIT_API_KEY: ${STAGING_LIVEKIT_API_KEY:?set STAGING_LIVEKIT_API_KEY in .env.staging}
+      LIVEKIT_API_SECRET: ${STAGING_LIVEKIT_API_SECRET:?set STAGING_LIVEKIT_API_SECRET in .env.staging}
+      # The backend reaches the staging LiveKit through the Docker host (LiveKit uses host networking).
+      LIVEKIT_URL: http://host.docker.internal:7980
+      # What both PCs use for signaling: the Jetson's LAN address, plain ws:// (private network only).
+      LIVEKIT_PUBLIC_URL: ws://${STAGING_LAN_IP:?set STAGING_LAN_IP in .env.staging}:7980
+      # Milestone 13 features at their release defaults (as production after the upgrade).
+      REGISTRATION_MODE: invite
+      MAIL_TRANSPORT: none
+      GIF_PROVIDER: none
+      UPLOAD_LARGE_FILES: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # LAN address only (never 0.0.0.0); production's 3001 is not touched.
+      - "${STAGING_LAN_IP:?set STAGING_LAN_IP in .env.staging}:3901:3001"
+    volumes:
+      # Database and attachments (incl. soundboard clips) live together, as in production.
+      - staging-data:/data
+    # Leave production its headroom on the 8 GB Orin Nano.
+    mem_limit: 1g
+    cpus: 2
+    depends_on:
+      - livekit
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  livekit:
+    # The exact image production runs (already on the Jetson; never pulled here).
+    image: livekit/livekit-server:v1.13.11
+    pull_policy: never
+    restart: "no"
+    # Host networking like production, so the advertised ICE candidates are the Jetson's LAN address.
+    network_mode: host
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    environment:
+      LIVEKIT_CONFIG: |
+        port: 7980
+        rtc:
+          # ICE over TCP 7981 and a single multiplexed UDP port 7982 (both reachable on the LAN).
+          tcp_port: 7981
+          udp_port: 7982
+          # LAN mode: no STUN lookup of the public address; candidates use the LAN address only.
+          use_external_ip: false
+          node_ip: ${STAGING_LAN_IP}
+          ips:
+            includes:
+              - ${STAGING_LAN_IP}/32
+        keys:
+          ${STAGING_LIVEKIT_API_KEY}: ${STAGING_LIVEKIT_API_SECRET}
+        webhook:
+          api_key: ${STAGING_LIVEKIT_API_KEY}
+          urls:
+            - http://${STAGING_LAN_IP}:3901/api/livekit/webhook
+        room:
+          auto_create: true
+          empty_timeout: 300
+          departure_timeout: 20
+          max_participants: 10
+          # Same codec list as production (H.264 42001f for hardware encoding on Windows).
+          enabled_codecs:
+            - mime: audio/pcmu
+            - mime: audio/pcma
+            - mime: audio/opus
+            - mime: audio/red
+            - mime: video/vp8
+            - mime: video/h264
+              fmtp_line: level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f
+            - mime: video/h264
+            - mime: video/vp9
+            - mime: video/av1
+            - mime: video/h265
+            - mime: video/rtx
+        logging:
+          level: info
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7980/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    mem_limit: 1g
+    cpus: 2
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  default:
+    # Pinned so Docker can't pick a range that overlaps the home LAN (192.168.68.0/22) or production
+    # (172.30.0.0/24). `stg.sh preflight` checks that nothing on the Jetson uses it yet.
+    ipam:
+      config:
+        - subnet: 172.30.99.0/24
+
+volumes:
+  staging-data:

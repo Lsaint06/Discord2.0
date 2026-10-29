@@ -3,3 +3,6 @@ dist
 data
 .env
 *.log
+.env.staging
+# Staging work files (state with synthetic passwords/tokens, backups) never live in the repo
+deploy/staging/work/
