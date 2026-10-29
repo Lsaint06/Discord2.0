@@ -40,6 +40,7 @@ export type AuditAction =
   | 'admin.profile_media_removed'
   | 'server.create'
   | 'server.update'
+  | 'server.delete'
   | 'server.invite_created'
   | 'server.invite_revoked'
   | 'server.join'

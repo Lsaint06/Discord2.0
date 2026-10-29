@@ -134,7 +134,7 @@ Architecture, sound rules, verification and limitations: [docs/milestone-9-atmos
 
 - **Sign in / Create an account / Forgot your password?** on the sign-in screen. Registration needs a code from an administrator. Recovery uses a recovery code (shown once at registration) or an administrator reset code.
 - **Settings → Security:** change password, regenerate recovery codes, see how the token is stored. **Settings → Devices:** sign out one device, all others, or everywhere. **Settings → Administration** (instance administrators): registration codes, claim codes for development identities, reset codes, disabling accounts, security log.
-- **Server menu** (click the server name): *Invite People* (moderators and up), *Server Settings* (members and roles, invites, bans, role permissions, channel permission overrides, audit log, ownership transfer), *Leave Server*. Join a server from the **+** button → *Join*.
+- **Server menu** (click the server name, or right-click its icon in the server list): *Invite People* (moderators and up), *Server Settings* (members and roles, invites, bans, role permissions, channel permission overrides, audit log, ownership transfer), *Leave Server*. Owners can leave too (pick who takes over, confirm with your password) and have *Delete Server* (type the server name and your password; removes it for everyone). Join a server from the **+** button → *Join*.
 
 Migrating existing development identities, the security design, the Jetson deployment/backup/rollback procedure and the two-PC checklist: [docs/milestone-7-security.md](docs/milestone-7-security.md).
 

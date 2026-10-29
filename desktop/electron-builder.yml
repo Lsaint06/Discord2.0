@@ -53,4 +53,7 @@ appImage:
 npmRebuild: false
 # No auto-update feed: new versions are distributed as installers (see
 # docs/milestone-11-project-connect.md). A newer installer upgrades in place (same appId).
-publish: null
+publish:
+  provider: github
+  owner: Lsaint06
+  repo: Discord2.0

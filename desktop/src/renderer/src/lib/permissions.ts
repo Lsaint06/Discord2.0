@@ -21,6 +21,27 @@ export const ROLE_COLORS: Record<ServerRole, string | undefined> = {
   member: undefined
 }
 
+const SUCCESSION_RANK: Record<ServerRole, number> = { owner: 3, admin: 0, moderator: 1, member: 2 }
+
+/**
+ * Who inherits a server when its owner leaves, matching the server's rule: highest role first,
+ * then the longest-standing member. Bots never inherit. Undefined if nobody else is eligible.
+ */
+export function ownerSuccessor<M extends { userId: string; role: ServerRole; joinedAt: number }>(
+  members: M[],
+  ownerId: string,
+  isBot: (userId: string) => boolean
+): M | undefined {
+  return members
+    .filter((m) => m.userId !== ownerId && m.role !== 'owner' && !isBot(m.userId))
+    .sort(
+      (a, b) =>
+        SUCCESSION_RANK[a.role] - SUCCESSION_RANK[b.role] ||
+        a.joinedAt - b.joinedAt ||
+        (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0)
+    )[0]
+}
+
 export const PERMISSION_INFO: {
   name: PermissionName
   label: string

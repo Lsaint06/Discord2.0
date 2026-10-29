@@ -121,21 +121,58 @@ export function registerMemberRoutes(app: FastifyInstance, ctx: AppContext): voi
   )
 
   // ---- Leave ----
-  app.post<{ Params: { serverId: string } }>(
+  // Owners may leave too: ownership passes to `newOwnerId` (or the best successor, see
+  // ownerSuccessor) and, like a transfer, it needs the password. The body is optional and
+  // validated here so older clients that send none keep working.
+  app.post<{ Params: { serverId: string }; Body: { password?: unknown; newOwnerId?: unknown } | undefined }>(
     '/api/servers/:serverId/leave',
     { schema: { params: serverParams } },
     async (request, reply) => {
       const user = await requireUser(ctx, request)
       rate(user.id)
       const access = await ctx.access.requireServer(user, request.params.serverId)
-      // Prevents an ownerless server: the owner must transfer ownership first.
+      const serverId = access.server.id
       if (access.role === 'owner') {
-        throw badRequest('Transfer ownership to someone else before leaving.', 'owner_cannot_leave')
+        const body = request.body && typeof request.body === 'object' ? request.body : {}
+        const { password, newOwnerId } = body
+        if (typeof password !== 'string' || !password || password.length > LIMITS.passwordMaxLength * 4) {
+          throw badRequest('Enter your password to leave a server you own.', 'owner_password_required')
+        }
+        if (newOwnerId !== undefined && (typeof newOwnerId !== 'string' || newOwnerId.length > 64)) {
+          throw badRequest('Invalid new owner')
+        }
+        await requirePassword(ctx, user, password, request)
+        let successorId: string | undefined
+        if (newOwnerId !== undefined) {
+          const target = await ctx.repo.getMember(serverId, newOwnerId)
+          const targetUser = target && (await ctx.repo.getUser(target.userId))
+          if (!target || !targetUser || targetUser.bot || targetUser.disabledAt || target.userId === user.id) {
+            throw notFound('Member not found')
+          }
+          successorId = target.userId
+        } else {
+          successorId = await ctx.repo.ownerSuccessor(serverId, user.id)
+        }
+        if (!successorId) {
+          throw badRequest('You’re the only member. Delete the server instead.', 'last_member')
+        }
+        if (!(await ctx.repo.leaveAsOwner(serverId, user.id, successorId))) {
+          throw badRequest('Ownership could not be transferred.')
+        }
+        await ctx.audit.record({
+          action: 'server.ownership_transferred',
+          actorId: user.id,
+          targetUserId: successorId,
+          serverId,
+          request,
+          detail: { reason: 'left' }
+        })
+      } else {
+        await ctx.repo.removeMember(serverId, user.id)
       }
-      await ctx.repo.removeMember(access.server.id, user.id)
-      await ctx.audit.record({ action: 'server.leave', actorId: user.id, serverId: access.server.id, request })
-      ctx.hub.sendToUser(user.id, { op: 'server_remove', d: { serverId: access.server.id, reason: 'left' } })
-      await afterAccessChange(ctx, access.server.id)
+      await ctx.audit.record({ action: 'server.leave', actorId: user.id, serverId, request })
+      ctx.hub.sendToUser(user.id, { op: 'server_remove', d: { serverId, reason: 'left' } })
+      await afterAccessChange(ctx, serverId)
       reply.code(204)
     }
   )

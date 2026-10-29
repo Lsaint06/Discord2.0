@@ -723,6 +723,20 @@ export interface Repository {
   setMemberRole(serverId: string, userId: string, role: Exclude<ServerRole, 'owner'>): Promise<boolean>
   /** Atomically makes `toUserId` the owner and demotes the previous owner to admin. */
   transferOwnership(serverId: string, fromUserId: string, toUserId: string): Promise<boolean>
+  /**
+   * The member who inherits a server when its owner leaves: highest role first (admin, then
+   * moderator, then member), longest-standing within a role. Never a bot or disabled account.
+   */
+  ownerSuccessor(serverId: string, ownerId: string): Promise<string | undefined>
+  /** Atomically makes `toUserId` the owner and removes the previous owner's membership. */
+  leaveAsOwner(serverId: string, ownerId: string, toUserId: string): Promise<boolean>
+  /**
+   * Deletes a server and everything in it (channels, messages, members, invites, bans, icons,
+   * sounds). Returns the member ids and the files to remove from disk, or undefined if unknown.
+   */
+  deleteServer(
+    serverId: string
+  ): Promise<{ memberIds: string[]; attachmentIds: string[]; iconIds: string[] } | undefined>
   /** Local CLI only: makes a user the owner (joining if needed); the previous owner becomes admin. */
   setOwner(serverId: string, userId: string, now: number): Promise<void>
   /** Removes the membership and records a ban (one transaction). */

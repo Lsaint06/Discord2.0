@@ -25,6 +25,7 @@ import {
   type ApiVoiceToken,
   type ProfileImageKind,
   type RelationshipType,
+  type ServerRemoveReason,
   DEFAULT_PREFERENCES
 } from '../net/protocol'
 import {
@@ -84,8 +85,8 @@ interface Options {
   onSessionInvalid: () => void
   /** Called for every new message from the gateway (notifications). */
   onIncomingMessage?: (message: Message) => void
-  /** You were removed from a server (left, kicked or banned). */
-  onServerRemoved?: (serverId: string, reason: 'left' | 'kicked' | 'banned') => void
+  /** You were removed from a server (left, kicked, banned, or its owner deleted it). */
+  onServerRemoved?: (serverId: string, reason: ServerRemoveReason) => void
   /** Someone's relationship with you changed (e.g. a new incoming friend request). */
   onRelationshipChanged?: (
     userId: string,

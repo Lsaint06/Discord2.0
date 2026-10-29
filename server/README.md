@@ -160,7 +160,8 @@ Codes and passwords are always sent in request bodies, never in URLs. Full desig
 | `GET /api/servers/:serverId/members` | Member |
 | `PATCH /api/servers/:serverId/members/:userId` `{ role }` | Manage Roles (only below your own role) |
 | `DELETE /api/servers/:serverId/members/:userId` | Kick Members (only below your own role) |
-| `POST /api/servers/:serverId/leave` | Member (not the owner) |
+| `POST /api/servers/:serverId/leave` `{ password, newOwnerId? }` | Member. The owner must send their password; ownership passes to `newOwnerId` or, if omitted, the highest-ranked longest-standing member (`last_member` if nobody else is eligible: delete instead) |
+| `POST /api/servers/:serverId/delete` `{ password }` | Owner. Deletes the server, its channels, messages and files for everyone (`server_remove` with reason `deleted`) |
 | `GET …/bans` · `PUT`/`DELETE …/bans/:userId` | Ban Members |
 | `GET …/roles` · `PUT …/roles/:role` `{ permissions \| null }` | Manage Roles (roles below yours; only bits you hold; `null` resets) |
 | `POST …/transfer` `{ userId, password }` | Owner |

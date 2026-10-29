@@ -120,6 +120,8 @@ export interface ServerMeta {
   userNotes?: boolean
   /** Milestone 14.5: voice tokens may publish a camera (Video permission). */
   camera?: boolean
+  /** Owners can leave a server (ownership passes on) and delete one. */
+  serverDelete?: boolean
   /** Milestone 13+: GIF picker through the server (null/absent = not set up). */
   gifs?: { provider: string; attribution: { text: string; url: string } } | null
   /** Milestone 13+: chunked uploads of large files (null/absent = off). */
@@ -691,8 +693,14 @@ export class ApiClient {
     )
   }
 
-  leaveServer(serverId: string): Promise<void> {
-    return this.request('POST', `/api/servers/${encodeURIComponent(serverId)}/leave`)
+  /** Owners must confirm with their password; ownership goes to `newOwnerId` or the best successor. */
+  leaveServer(serverId: string, owner?: { password: string; newOwnerId?: string }): Promise<void> {
+    return this.request('POST', `/api/servers/${encodeURIComponent(serverId)}/leave`, owner)
+  }
+
+  /** Owner only: deletes the server and everything in it, for every member. */
+  deleteServer(serverId: string, password: string): Promise<void> {
+    return this.request('POST', `/api/servers/${encodeURIComponent(serverId)}/delete`, { password })
   }
 
   bans(serverId: string): Promise<ApiBan[]> {

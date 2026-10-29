@@ -275,6 +275,9 @@ export async function buildApp(
     // Milestone 14.5: voice tokens may publish a camera (with the Stream/"Video" permission).
     // Older servers never grant it; clients also check the grant LiveKit reports.
     camera: true,
+    // Owners can leave a server (ownership passes on) and delete one. Older servers refuse
+    // both, so clients only offer them when this is set.
+    serverDelete: true,
     // Milestone 13: GIF picker through this server (null = not set up).
     gifs: gifProvider ? { provider: gifProvider.name, attribution: gifProvider.attribution } : null,
     // Milestone 13: chunked uploads of large files (null = off; the default).

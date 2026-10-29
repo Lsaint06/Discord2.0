@@ -696,6 +696,8 @@ export type GatewayClientFrame =
   | { op: 'set_idle'; d: { idle: boolean } }
 
 /** Server → client gateway frames. */
+export type ServerRemoveReason = 'left' | 'kicked' | 'banned' | 'deleted'
+
 export type GatewayServerFrame =
   | { op: 'hello'; d: { heartbeatIntervalMs: number } }
   | { op: 'ready'; d: { user: ApiMe; users: ApiUser[]; voiceStates: ApiVoiceState[] } }
@@ -742,8 +744,11 @@ export type GatewayServerFrame =
   | { op: 'server_create'; d: ApiServer }
   /** Your access to a server changed (channels, roles, members, permissions): refetch it. */
   | { op: 'server_update'; d: { serverId: string } }
-  /** You are no longer a member (left, kicked or banned). */
-  | { op: 'server_remove'; d: { serverId: string; reason: 'left' | 'kicked' | 'banned' } }
+  /**
+   * You are no longer a member (left, kicked, banned, or the owner deleted the server).
+   * Clients older than 'deleted' treat any unknown reason like a removal.
+   */
+  | { op: 'server_remove'; d: { serverId: string; reason: ServerRemoveReason } }
   /** channelId null = the user left voice. `streaming` is included when share state changed. */
   | {
       op: 'voice_state_update'

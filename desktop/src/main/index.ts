@@ -1,3 +1,4 @@
+import { setupAutoUpdates } from './autoUpdates'
 import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -63,7 +64,7 @@ function createWindow(): void {
   if (profile) {
     mainWindow.on('page-title-updated', (event, title) => {
       event.preventDefault()
-      mainWindow.setTitle(`${title} — ${profile}`)
+      mainWindow.setTitle(`${title} â€” ${profile}`)
     })
   }
 
@@ -140,6 +141,7 @@ app.whenReady().then(() => {
   loadLifecyclePrefs()
 
   createWindow()
+  setupAutoUpdates()
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

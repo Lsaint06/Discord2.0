@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { VisibleServer } from '../access.js'
+import { requirePassword } from '../auth/reauth.js'
 import type { AppContext } from '../context.js'
 import type { ChannelRecord, ServerRecord } from '../db/repository.js'
 import { requireUser } from '../lib/auth.js'
@@ -216,6 +217,49 @@ export function registerServerRoutes(app: FastifyInstance, ctx: AppContext): voi
       })
       await publishServerChanged(ctx, server.id)
       return serverView(ctx, user.id, server.id)
+    }
+  )
+
+  // ---- Delete the server (owner only, re-enter password) ----
+  app.post<{ Params: { serverId: string }; Body: { password: string } }>(
+    '/api/servers/:serverId/delete',
+    {
+      schema: {
+        params: { type: 'object', properties: { serverId: idParam } },
+        body: {
+          type: 'object',
+          required: ['password'],
+          additionalProperties: false,
+          properties: { password: { type: 'string', maxLength: LIMITS.passwordMaxLength * 4 } }
+        }
+      }
+    },
+    async (request, reply) => {
+      const user = await requireUser(ctx, request)
+      rate(ctx.limiters.moderationPerUser, user.id)
+      const access = await ctx.access.requireServer(user, request.params.serverId)
+      if (access.role !== 'owner') throw forbidden('Only the owner can delete this server.', 'not_owner')
+      await requirePassword(ctx, user, request.body.password, request)
+      const server = access.server
+      const removed = await ctx.repo.deleteServer(server.id)
+      if (!removed) throw notFound('Server not found')
+      await Promise.all(removed.attachmentIds.map((id) => ctx.attachments.remove(id)))
+      await Promise.all(removed.iconIds.map((id) => ctx.serverIcons.remove(id)))
+      // Soundboard clip files are swept by cleanupSoundboard once their rows are gone.
+      await ctx.audit.record({
+        action: 'server.delete',
+        actorId: user.id,
+        serverId: server.id,
+        request,
+        detail: { name: server.name, members: removed.memberIds.length, attachments: removed.attachmentIds.length }
+      })
+      ctx.hub.sendToUsers(new Set(removed.memberIds), {
+        op: 'server_remove',
+        d: { serverId: server.id, reason: 'deleted' }
+      })
+      // Its voice channels are gone, so anyone still connected to one is disconnected.
+      await enforceVoiceAccess(ctx, { serverId: server.id })
+      reply.code(204)
     }
   )
 

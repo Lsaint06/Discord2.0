@@ -1,6 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ALL_PERMISSIONS, Permissions } from '../net/protocol'
-import { PERMISSION_INFO, bit, hasPermission } from './permissions'
+import { PERMISSION_INFO, bit, hasPermission, ownerSuccessor } from './permissions'
+
+describe('ownerSuccessor', () => {
+  type Role = 'owner' | 'admin' | 'moderator' | 'member'
+  const m = (
+    userId: string,
+    role: Role,
+    joinedAt: number
+  ): { userId: string; role: Role; joinedAt: number } => ({ userId, role, joinedAt })
+
+  it('picks the highest role, then the longest-standing member, never a bot or the owner', () => {
+    const members = [
+      m('owner', 'owner', 0),
+      m('early', 'member', 1),
+      m('mod-late', 'moderator', 9),
+      m('mod-early', 'moderator', 5),
+      m('bot', 'admin', 2)
+    ]
+    const isBot = (id: string): boolean => id === 'bot'
+    expect(ownerSuccessor(members, 'owner', isBot)?.userId).toBe('mod-early')
+    expect(ownerSuccessor([...members, m('admin', 'admin', 10)], 'owner', isBot)?.userId).toBe(
+      'admin'
+    )
+    expect(
+      ownerSuccessor([m('owner', 'owner', 0), m('bot', 'admin', 1)], 'owner', isBot)
+    ).toBeUndefined()
+  })
+})
 
 describe('hasPermission', () => {
   it('checks bits and treats unknown (older server) as allowed', () => {

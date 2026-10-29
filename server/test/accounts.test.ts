@@ -669,8 +669,9 @@ describe('authorization', () => {
     // Reset and demote back.
     await json(await req(`/api/servers/${serverId}/roles/admin`, { method: 'PUT', token: owner.token, json: { permissions: null } }), 200)
     await json(await req(`/api/servers/${serverId}/members/${mod.user.id}`, { method: 'PATCH', token: owner.token, json: { role: 'moderator' } }), 200)
-    // Owner can't leave (no ownerless servers); ownership transfer needs the password.
-    assert.equal(await errorCode(await req(`/api/servers/${serverId}/leave`, { method: 'POST', token: owner.token })), 'owner_cannot_leave')
+    // An owner leaving hands the server on, so (like a transfer) it needs the password.
+    assert.equal(await errorCode(await req(`/api/servers/${serverId}/leave`, { method: 'POST', token: owner.token })), 'owner_password_required')
+    assert.equal(await errorCode(await req(`/api/servers/${serverId}/leave`, { method: 'POST', token: owner.token, json: { password: 'nope-nope-nope' } })), 'wrong_password')
     assert.equal(await errorCode(await req(`/api/servers/${serverId}/transfer`, { method: 'POST', token: owner.token, json: { userId: mod.user.id, password: 'nope-nope-nope' } })), 'wrong_password')
     assert.equal((await req(`/api/servers/${serverId}/transfer`, { method: 'POST', token: mod.token, json: { userId: mod.user.id, password: PASSWORD } })).status, 403)
   })
@@ -780,6 +781,108 @@ describe('authorization', () => {
     const ids = visible.map((u) => u.id)
     assert.ok(ids.includes(loner.user.id))
     assert.ok(!ids.includes(member.user.id))
+  })
+})
+
+// ======================================================================
+describe('leaving and deleting servers', () => {
+  async function serverWith(ownerName: string, others: string[]) {
+    const owner = await register(ownerName, null)
+    const people = await Promise.all(others.map((name) => register(name, null)))
+    const server = await json<ApiServer>(
+      await req('/api/servers', { method: 'POST', token: owner.token, json: { name: `${ownerName} test`, color: '#445566' } }),
+      201
+    )
+    const invite = await json<ApiServerInvite>(
+      await req(`/api/servers/${server.id}/invites`, { method: 'POST', token: owner.token, json: {} }),
+      201
+    )
+    // One at a time so join order (seniority) is deterministic.
+    for (const p of people) {
+      await json(await req('/api/invites/accept', { method: 'POST', token: p.token, json: { code: invite.code } }), 200)
+    }
+    return { owner, people, server, invite }
+  }
+  const membersOf = async (serverId: string, token: string) =>
+    json<{ userId: string; role: string }[]>(await req(`/api/servers/${serverId}/members`, { token }), 200)
+
+  test('an owner can leave: ownership passes to the highest role, then the longest-standing member', async () => {
+    const { owner, people, server } = await serverWith('leave-owner', ['leave-early', 'leave-mod', 'leave-admin'])
+    const [early, mod, admin] = people as [ApiAuthResult, ApiAuthResult, ApiAuthResult]
+    await json(await req(`/api/servers/${server.id}/members/${mod.user.id}`, { method: 'PATCH', token: owner.token, json: { role: 'moderator' } }), 200)
+    await json(await req(`/api/servers/${server.id}/members/${admin.user.id}`, { method: 'PATCH', token: owner.token, json: { role: 'admin' } }), 200)
+    assert.equal(await s.repo.ownerSuccessor(server.id, owner.user.id), admin.user.id, 'admin beats seniority')
+
+    const outsider = await register('leave-outsider', null)
+    assert.equal((await req(`/api/servers/${server.id}/leave`, { method: 'POST', token: owner.token, json: { password: PASSWORD, newOwnerId: outsider.user.id } })).status, 404, 'new owner must be a member')
+    assert.equal((await req(`/api/servers/${server.id}/leave`, { method: 'POST', token: owner.token, json: { password: PASSWORD, newOwnerId: owner.user.id } })).status, 404, 'not yourself')
+
+    const gw = gateway(owner.token)
+    await gw.waitFor((f) => f.op === 'ready')
+    await json(await req(`/api/servers/${server.id}/leave`, { method: 'POST', token: owner.token, json: { password: PASSWORD } }), 204)
+    await gw.waitFor((f) => f.op === 'server_remove' && f.d.serverId === server.id && f.d.reason === 'left')
+    gw.ws.close()
+    assert.equal((await req(`/api/servers/${server.id}`, { token: owner.token })).status, 404)
+    const after = await membersOf(server.id, admin.token)
+    assert.ok(!after.some((m) => m.userId === owner.user.id))
+    assert.equal(after.find((m) => m.userId === admin.user.id)?.role, 'owner')
+    assert.equal(after.filter((m) => m.role === 'owner').length, 1)
+    assert.equal((await json<ApiServer>(await req(`/api/servers/${server.id}`, { token: admin.token }), 200)).ownerId, admin.user.id)
+
+    // An owner may also choose who takes over.
+    await json(await req(`/api/servers/${server.id}/leave`, { method: 'POST', token: admin.token, json: { password: PASSWORD, newOwnerId: early.user.id } }), 204)
+    const final = await membersOf(server.id, early.token)
+    assert.deepEqual(final.map((m) => [m.userId, m.role]).sort(), [[early.user.id, 'owner'], [mod.user.id, 'moderator']].sort())
+    // Members (and moderators) still leave without a password.
+    await json(await req(`/api/servers/${server.id}/leave`, { method: 'POST', token: mod.token }), 204)
+    // Now alone: leaving would orphan the server, so it has to be deleted instead.
+    assert.equal(await errorCode(await req(`/api/servers/${server.id}/leave`, { method: 'POST', token: early.token, json: { password: PASSWORD } })), 'last_member')
+    assert.equal((await membersOf(server.id, early.token)).length, 1)
+  })
+
+  test('deleting needs the owner and the password, and removes the server for everyone', async () => {
+    const { owner, people, server, invite } = await serverWith('delete-owner', ['delete-member'])
+    const [member] = people as [ApiAuthResult]
+    const textId = server.channels.find((c) => c.type === 'text')!.id
+    const voiceId = server.channels.find((c) => c.type === 'voice')!.id
+    const form = new FormData()
+    form.append('file', new Blob(['doomed']), 'doomed.txt')
+    const up = await fetch(`${s.base}/api/channels/${textId}/attachments`, { method: 'POST', headers: { Authorization: `${SCHEME} ${member.token}` }, body: form })
+    const [file] = await json<{ id: string }[]>(up, 201)
+    await json(await req(`/api/channels/${textId}/messages`, { method: 'POST', token: member.token, json: { content: 'bye', attachmentIds: [file!.id] } }), 201)
+
+    assert.equal(await errorCode(await req(`/api/servers/${server.id}/delete`, { method: 'POST', token: member.token, json: { password: PASSWORD } })), 'not_owner')
+    const outsider = await register('delete-outsider', null)
+    assert.equal((await req(`/api/servers/${server.id}/delete`, { method: 'POST', token: outsider.token, json: { password: PASSWORD } })).status, 404)
+    assert.equal(await errorCode(await req(`/api/servers/${server.id}/delete`, { method: 'POST', token: owner.token, json: { password: 'nope-nope-nope' } })), 'wrong_password')
+    assert.equal((await req(`/api/servers/${server.id}/delete`, { method: 'POST', token: owner.token, json: {} })).status, 400)
+    assert.equal((await req('/api/servers/@direct/delete', { method: 'POST', token: owner.token, json: { password: PASSWORD } })).status, 404)
+
+    const gw = gateway(member.token)
+    await gw.waitFor((f) => f.op === 'ready')
+    s.ctx.voice.store.join(member.user.id, voiceId)
+    await json(await req(`/api/servers/${server.id}/delete`, { method: 'POST', token: owner.token, json: { password: PASSWORD } }), 204)
+    await gw.waitFor((f) => f.op === 'server_remove' && f.d.serverId === server.id && f.d.reason === 'deleted')
+    gw.ws.close()
+
+    assert.equal(s.ctx.voice.store.channelOf(member.user.id), undefined, 'disconnected from its voice channel')
+    for (const who of [owner, member]) {
+      assert.equal((await req(`/api/servers/${server.id}`, { token: who.token })).status, 404)
+      const list = await json<ApiServer[]>(await req('/api/servers', { token: who.token }), 200)
+      assert.ok(!list.some((x) => x.id === server.id))
+    }
+    assert.equal(await s.repo.getChannel(textId), undefined)
+    assert.equal((await req(`/api/attachments/${file!.id}`, { token: member.token })).status, 404)
+    assert.equal((await req('/api/invites/accept', { method: 'POST', token: outsider.token, json: { code: invite.code } })).status, 404)
+    assert.equal((await req(`/api/servers/${server.id}/delete`, { method: 'POST', token: owner.token, json: { password: PASSWORD } })).status, 404)
+    const audit = new DatabaseSync(dbFile, { readOnly: true })
+    try {
+      const row = audit.prepare("SELECT detail FROM audit_events WHERE action = 'server.delete' AND server_id = ?").get(server.id) as { detail: string } | undefined
+      assert.ok(row, 'deletion is audit-logged')
+      assert.equal(JSON.parse(row.detail).attachments, 1)
+    } finally {
+      audit.close()
+    }
   })
 })
 

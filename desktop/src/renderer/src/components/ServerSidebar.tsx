@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { Server } from '../types'
 import { initials } from '../lib/format'
 import { useServerIcon } from '../lib/profileMedia'
+import ContextMenu, { type MenuItem } from './chat/ContextMenu'
 import { LogoIcon, PlusIcon } from './Icons'
 
 /** The server's picture if it has one (and it loaded), otherwise its initials. */
@@ -30,6 +31,8 @@ interface ServerSidebarProps {
   mentionsByServer?: Record<string, number>
   onSelectServer: (id: string) => void
   onAddServer: () => void
+  /** Right-click (or the context-menu key) on a server icon: Invite, Settings, Leave… */
+  serverMenu?: (server: Server) => MenuItem[]
 }
 
 interface Tooltip {
@@ -46,15 +49,33 @@ function ServerSidebar({
   unreadServerIds,
   mentionsByServer,
   onSelectServer,
-  onAddServer
+  onAddServer,
+  serverMenu
 }: ServerSidebarProps): React.JSX.Element {
   const [tooltip, setTooltip] = useState<Tooltip | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  const closeMenu = useCallback(() => setMenu(null), [])
 
   const showTooltip = (label: string) => (event: React.SyntheticEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect()
     setTooltip({ label, top: rect.top + rect.height / 2 })
   }
   const hideTooltip = (): void => setTooltip(null)
+
+  const openMenu = (server: Server) => (event: React.MouseEvent<HTMLElement>) => {
+    const items = serverMenu?.(server) ?? []
+    if (items.length === 0) return
+    event.preventDefault()
+    hideTooltip()
+    // Opened from the keyboard (context-menu key / Shift+F10): place it beside the icon.
+    const rect = event.currentTarget.getBoundingClientRect()
+    const fromKeyboard = event.clientX === 0 && event.clientY === 0
+    setMenu({
+      x: fromKeyboard ? rect.right + 8 : event.clientX,
+      y: fromKeyboard ? rect.top : event.clientY,
+      items
+    })
+  }
 
   return (
     <nav className="server-sidebar" aria-label="Servers">
@@ -101,6 +122,8 @@ function ServerSidebar({
                 className="server-icon"
                 style={{ '--server-color': server.color } as React.CSSProperties}
                 onClick={() => onSelectServer(server.id)}
+                onContextMenu={openMenu(server)}
+                aria-haspopup={serverMenu ? 'menu' : undefined}
                 onMouseEnter={showTooltip(server.name)}
                 onMouseLeave={hideTooltip}
                 onFocus={showTooltip(server.name)}
@@ -145,6 +168,7 @@ function ServerSidebar({
           {tooltip.label}
         </div>
       )}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={closeMenu} />}
     </nav>
   )
 }

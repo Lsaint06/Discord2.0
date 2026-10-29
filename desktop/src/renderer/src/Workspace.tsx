@@ -69,6 +69,7 @@ import type {
   ApiServer,
   ApiUser,
   RelationshipType,
+  ServerRemoveReason,
   ServerRole
 } from './net/protocol'
 import {
@@ -112,6 +113,7 @@ import type { RelationshipHandlers } from './components/profile/RelationshipActi
 import CustomStatusModal from './components/profile/CustomStatusModal'
 import CreateServerModal from './components/CreateServerModal'
 import ServerSettingsModal from './components/manage/ServerSettingsModal'
+import ServerExitModal, { type ServerExitMode } from './components/manage/ServerExitModal'
 import { InviteModal } from './components/manage/InviteModal'
 import CreateChannelModal, { type NewChannelType } from './components/manage/CreateChannelModal'
 import ConnectionBanner from './components/ConnectionBanner'
@@ -274,6 +276,12 @@ function Workspace({
   )
   const [serverSettingsFor, setServerSettingsFor] = useState<string | null>(null)
   const [inviteFor, setInviteFor] = useState<string | null>(null)
+  // An owner leaving (ownership passes on) or deleting a server.
+  const [serverExit, setServerExit] = useState<{ serverId: string; mode: ServerExitMode } | null>(
+    null
+  )
+  // The backend supports owners leaving and deleting servers (older ones refuse both).
+  const [serverDeleteSupported, setServerDeleteSupported] = useState(false)
   // The + next to a category in the channel list.
   const [createChannelIn, setCreateChannelIn] = useState<{
     serverId: string
@@ -300,12 +308,11 @@ function Workspace({
   )
   const notifyRef = useRef<(m: Message) => void>(() => undefined)
   const onIncomingMessage = useCallback((m: Message) => notifyRef.current(m), [])
-  const serverRemovedRef = useRef<(serverId: string, reason: 'left' | 'kicked' | 'banned') => void>(
+  const serverRemovedRef = useRef<(serverId: string, reason: ServerRemoveReason) => void>(
     () => undefined
   )
   const onServerRemoved = useCallback(
-    (serverId: string, reason: 'left' | 'kicked' | 'banned') =>
-      serverRemovedRef.current(serverId, reason),
+    (serverId: string, reason: ServerRemoveReason) => serverRemovedRef.current(serverId, reason),
     []
   )
   const relationshipChangedRef = useRef<
@@ -482,6 +489,7 @@ function Workspace({
         if (meta.savedMessages === true) void fetchSaved().catch(() => undefined)
         setUserNotesSupported(meta.userNotes === true)
         setCameraSupported(meta.camera === true)
+        setServerDeleteSupported(meta.serverDelete === true)
       })
       .catch(() => undefined)
     return () => {
@@ -1378,7 +1386,7 @@ function Workspace({
     }
   })
 
-  // Removed from a server (left, kicked, banned): leave its voice channel and say why.
+  // Removed from a server (left, kicked, banned, deleted): leave its voice channel and say why.
   useEffect(() => {
     serverRemovedRef.current = (serverId, reason) => {
       const server = serversRef.current.find((s) => s.id === serverId)
@@ -1387,7 +1395,13 @@ function Workspace({
       )
       if (inVoice) leaveVoice()
       if (serverSettingsFor === serverId) setServerSettingsFor(null)
-      if (reason !== 'left') {
+      if (inviteFor === serverId) setInviteFor(null)
+      if (serverExit?.serverId === serverId) setServerExit(null)
+      if (reason === 'deleted') {
+        // No notice for the owner who just deleted it (or once it's already gone from the list).
+        if (server && server.ownerId !== selfId)
+          setNotice(`${server.name} was deleted by its owner.`)
+      } else if (reason !== 'left') {
         setNotice(
           `You were ${reason === 'banned' ? 'banned' : 'removed'} from ${server?.name ?? 'a server'}.`
         )
@@ -1409,6 +1423,11 @@ function Workspace({
   }
 
   const leaveServer = (server: Server): void => {
+    // Owners hand the server on (or delete it if they're alone): needs the password.
+    if (server.role === 'owner') {
+      setServerExit({ serverId: server.id, mode: 'leave' })
+      return
+    }
     if (!window.confirm(`Leave ${server.name}? You'll need a new invite to come back.`)) return
     void backend.api.leaveServer(server.id).catch((err: unknown) => {
       setNotice(err instanceof Error ? err.message : 'Could not leave the server.')
@@ -1426,9 +1445,24 @@ function Workspace({
     actions.push({ label: 'Server Settings', onSelect: () => setServerSettingsFor(server.id) })
     if (server.role !== 'owner') {
       actions.push({ label: 'Leave Server', danger: true, onSelect: () => leaveServer(server) })
+    } else if (serverDeleteSupported) {
+      actions.push({ label: 'Leave Server', danger: true, onSelect: () => leaveServer(server) })
+      actions.push({
+        label: 'Delete Server',
+        danger: true,
+        onSelect: () => setServerExit({ serverId: server.id, mode: 'delete' })
+      })
     }
     return actions
   }
+  const serverForExit = serverExit ? servers.find((s) => s.id === serverExit.serverId) : undefined
+  const closeServerExit = useCallback(() => setServerExit(null), [])
+  const { refreshServers } = backend
+  const serverExitDone = useCallback(() => {
+    setServerExit(null)
+    // The gateway also announces it; this covers a momentarily disconnected gateway.
+    void refreshServers()
+  }, [refreshServers])
 
   useEffect(() => {
     if (!notice) return
@@ -1786,6 +1820,7 @@ function Workspace({
                     mentionsByServer={mentionsByServer}
                     onSelectServer={selectServer}
                     onAddServer={() => setCreateServerOpen(true)}
+                    serverMenu={serverActions}
                   />
 
                   {activeServer ? (
@@ -2191,6 +2226,20 @@ function Workspace({
                         backend.servers.find((s) => s.id === inviteFor)?.name ?? 'this server'
                       }
                       onClose={closeInvite}
+                    />
+                  )}
+
+                  {serverExit && serverForExit && (
+                    <ServerExitModal
+                      key={`${serverExit.serverId}:${serverExit.mode}`}
+                      api={backend.api}
+                      server={serverForExit}
+                      mode={serverExit.mode}
+                      meId={selfId}
+                      members={backend.members[serverExit.serverId]}
+                      resolveUser={resolveUser}
+                      onDone={serverExitDone}
+                      onClose={closeServerExit}
                     />
                   )}
 

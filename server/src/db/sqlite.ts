@@ -1967,6 +1967,67 @@ export class SqliteRepository implements Repository {
     return ok
   }
 
+  async ownerSuccessor(serverId: string, ownerId: string) {
+    const r = this.get(
+      `SELECT m.user_id FROM server_members m JOIN users u ON u.id = m.user_id
+       WHERE m.server_id = ? AND m.user_id <> ? AND u.is_bot = 0 AND u.disabled_at IS NULL
+       ORDER BY CASE m.role WHEN 'admin' THEN 0 WHEN 'moderator' THEN 1 ELSE 2 END, m.joined_at, m.user_id
+       LIMIT 1`,
+      serverId,
+      ownerId
+    )
+    return r ? str(r.user_id) : undefined
+  }
+
+  async leaveAsOwner(serverId: string, ownerId: string, toUserId: string) {
+    let ok = false
+    this.transaction(() => {
+      const from = this.get(
+        "SELECT 1 AS x FROM server_members WHERE server_id = ? AND user_id = ? AND role = 'owner'",
+        serverId,
+        ownerId
+      )
+      const to = this.get(
+        'SELECT 1 AS x FROM server_members WHERE server_id = ? AND user_id = ?',
+        serverId,
+        toUserId
+      )
+      if (!from || !to || ownerId === toUserId) return
+      // The old owner row goes first: at most one owner per server (unique index).
+      this.run('DELETE FROM server_members WHERE server_id = ? AND user_id = ?', serverId, ownerId)
+      this.run(
+        "UPDATE server_members SET role = 'owner', timeout_until = NULL WHERE server_id = ? AND user_id = ?",
+        serverId,
+        toUserId
+      )
+      this.run('UPDATE servers SET owner_id = ? WHERE id = ?', toUserId, serverId)
+      ok = true
+    })
+    return ok
+  }
+
+  async deleteServer(serverId: string) {
+    if (serverId === DIRECT_SERVER_ID) return undefined
+    let result: { memberIds: string[]; attachmentIds: string[]; iconIds: string[] } | undefined
+    this.transaction(() => {
+      if (!this.get('SELECT 1 AS x FROM servers WHERE id = ?', serverId)) return
+      result = {
+        memberIds: this.all('SELECT user_id FROM server_members WHERE server_id = ?', serverId).map((r) =>
+          str(r.user_id)
+        ),
+        attachmentIds: this.all(
+          'SELECT a.id FROM attachments a JOIN channels c ON c.id = a.channel_id WHERE c.server_id = ?',
+          serverId
+        ).map((r) => str(r.id)),
+        iconIds: this.all('SELECT id FROM server_icons WHERE server_id = ?', serverId).map((r) => str(r.id))
+      }
+      // Cascades to channels (and their messages, attachments, pins, read states, overrides,
+      // upload sessions), members, bans, role permissions, invites, icons and soundboard rows.
+      this.run('DELETE FROM servers WHERE id = ?', serverId)
+    })
+    return result
+  }
+
   async setOwner(serverId: string, userId: string, now: number) {
     this.transaction(() => {
       this.run("UPDATE server_members SET role = 'admin' WHERE server_id = ? AND role = 'owner'", serverId)
