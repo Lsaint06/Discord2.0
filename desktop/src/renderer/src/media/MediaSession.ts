@@ -472,11 +472,17 @@ export class MediaSession {
 
   async leave(): Promise<void> {
     this.desiredChannel = null
-    this.joinSeq++
+    const seq = ++this.joinSeq
     this.clearRejoinTimer()
     this.watching = null
-    await this.teardownRoom('left')
+    // You've left as soon as you ask to: the panel, your icon and the disconnect sound update now,
+    // while the connection and devices are released in the background (closing the connection
+    // can take a moment).
+    const teardown = this.teardownRoom('left')
     this.set({ ...INITIAL, screenShare: this.screen.getState() })
+    await teardown
+    // A join started meanwhile owns the state now.
+    if (seq === this.joinSeq) this.set({ screenShare: this.screen.getState() })
   }
 
   /** Retry after an error or a give-up. */
@@ -774,9 +780,11 @@ export class MediaSession {
    * unpublished), then the room, mic device, processors and audio elements.
    */
   private async teardownRoom(reason: 'left' | 'disconnected' = 'left'): Promise<void> {
-    await this.screen.stop(reason)
+    // Detach the room first: events it fires while closing (e.g. the screen share ending) can no
+    // longer touch the snapshot, which may already show that we've left.
     const room = this.room
     this.room = null
+    await this.screen.stop(reason)
     if (room) {
       room.removeAllListeners()
       const localTracks = [...room.localParticipant.trackPublications.values()]

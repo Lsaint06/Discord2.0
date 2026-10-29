@@ -548,6 +548,11 @@ function Workspace({
   const voiceActive =
     voiceStatus === 'connecting' || voiceStatus === 'connected' || voiceStatus === 'reconnecting'
   const voiceChannelId = voiceStatus === 'idle' ? null : voice.state.channelId
+  // Leaving shows at once: you drop out of the channel without waiting for the server's update.
+  const leaveVoice = (): void => {
+    if (voiceChannelId) backend.forgetOwnVoiceState(voiceChannelId)
+    void voice.session.leave()
+  }
   const pushToTalkMode = settings.inputMode === 'push-to-talk'
   const ptt = usePushToTalk({
     enabled: pushToTalkMode && voiceActive,
@@ -1173,7 +1178,7 @@ function Workspace({
     // Like the user panel buttons: mute and deafen work in or out of a voice channel.
     toggleMute,
     toggleDeafen,
-    leaveVoice: () => voiceActive && void voice.session.leave(),
+    leaveVoice: () => voiceActive && leaveVoice(),
     toggleScreenShare: () => {
       if (!voiceActive) return
       if (selfSharing) {
@@ -1258,7 +1263,7 @@ function Workspace({
       const inVoice = server?.categories.some((c) =>
         c.channels.some((ch) => ch.id === voiceChannelId)
       )
-      if (inVoice) void voice.session.leave()
+      if (inVoice) leaveVoice()
       if (serverSettingsFor === serverId) setServerSettingsFor(null)
       if (reason !== 'left') {
         setNotice(
@@ -1270,7 +1275,7 @@ function Workspace({
 
   /** Explicit sign-out: leave voice, revoke this session on the server, then forget it locally. */
   const signOut = (): void => {
-    void voice.session.leave()
+    leaveVoice()
     // Unsent drafts stay private to this account: they don't outlive an explicit sign-out.
     draftsRef.current = {}
     setDrafts({})
@@ -1447,7 +1452,7 @@ function Workspace({
       onToggleMute={toggleMute}
       onToggleDeafen={toggleDeafen}
       onOpenSettings={() => openSettings('account')}
-      onDisconnect={() => void voice.session.leave()}
+      onDisconnect={leaveVoice}
       onRetryVoice={() => voice.session.retry()}
       onOpenMicSettings={
         window.d2 ? () => void window.d2?.media.openMicrophoneSettings() : undefined
@@ -1884,7 +1889,7 @@ function Workspace({
                       me={backend.me}
                       servers={backend.servers}
                       onSignedOutEverywhere={() => {
-                        void voice.session.leave()
+                        leaveVoice()
                         onSignOut('You signed out on all devices.')
                       }}
                       onToggleMute={toggleMute}

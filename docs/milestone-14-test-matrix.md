@@ -8,7 +8,7 @@ a disposable local server), or are marked **not verified**.
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Desktop unit/integration | `npx vitest run` (in `desktop/`) | **457/457** passed, 48 files (baseline at start: 364/364) |
+| Desktop unit/integration | `npx vitest run` (in `desktop/`) | **462/462** passed, 49 files (baseline at start: 364/364) |
 | Desktop typecheck | `npm run typecheck` (node + web) | clean |
 | Desktop lint | `npx eslint --cache .` | clean (0 problems) |
 | Desktop format | `npx prettier --check src scripts` | clean (the generated `assets/sounds/manifest.json` is listed in `.prettierignore`) |
@@ -30,6 +30,7 @@ untouched ones. Those files were not reformatted.
 | `desktop/src/main/lifecycle.test.ts` | 3 | Lifecycle defaults; validation of patches and attention values |
 | `desktop/src/renderer/src/chat/saved.test.ts` | 4 | Saved-message ids: nothing until the server has the feature; save uses the server time; saving again keeps the time; unsave removes only that message |
 | `desktop/src/renderer/src/lib/wallpapers.test.ts` | 14 | Six chat wallpapers; stored values validated (unknown id → none, strength clamped); in all 12 themes, normal text ≥ 4.5:1 and muted text ≥ 3:1 over the strongest wallpaper |
+| `desktop/src/renderer/src/media/MediaSession.test.ts` | 2 | Leaving voice: the session shows "left" before the connection finishes closing, a closing room can't refill the participant list, and a join started during the teardown isn't undone when it finishes. **Both fail on the previous code.** (Also +3 `withoutUser` cases in `voiceLogic.test.ts`.) |
 | `server/test/customization.test.ts` | 16 | API 6 meta; migration 9 columns; existing accounts; profile style save, normalize, visibility (non-sharing user gets 404); 10 invalid styles plus a non-object; clearing; corrupt stored value; app theme sync, validation, legacy prefs; **animated GIF avatar (3 frames, cropped, 320², still 512)**; animated WebP banner (5:2); still picture; removal clears the flag; >300 frames refused; bad, malformed and partial crops |
 | `server/test/soundboard.test.ts` | 10 | WAV validation; list (members only); upload permission and validation (415/400/413); audio served to members only with safe headers; **play requires voice presence in that server; event delivered only to that channel's occupants**; rate limit 3 then 429; another server's voice channel refused; removal permissions and file deletion; atomic per-server cap |
 | `server/test/personal.test.ts` | 10 | Meta flags and migrations 11–12; saving only readable messages (404 otherwise, bad ids 400); private, newest-first list; saving twice keeps the time; leaving a server hides but keeps, rejoining restores, deleting the message removes; removing always works; sync to your own sessions only; atomic per-user cap; notes readable only by their author, never in profiles; notes only about visible people; 256-character limit (emoji count as one), control characters removed, blank clears; note sync to your own sessions only |

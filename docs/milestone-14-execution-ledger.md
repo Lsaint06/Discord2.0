@@ -54,6 +54,7 @@ States: **tested** = verified by automated tests and/or Electron runs with recor
 | X2 | Fix: theme kept and moved to the account after a server upgrade | desktop | tested | `themes.test.ts`, `compat-06…08` |
 | X3 | Fix: preferences re-fetched after reconnect | desktop | tested | `compat-06` |
 | X4 | Fix: cropper `.avatar` class leak (from Milestone 13) | desktop | tested | `evidence/cropper-03-layout-fixed.json` |
+| X5 | Fix: leaving voice updates your icon at once (owner report) | desktop | tested (unit) | `MediaSession.test.ts`, `voiceLogic.test.ts`; no live call possible here |
 | F2 | Isolated portable build (final `1.4.0-m14.3`) | build | tested (m14.2 run); m14.3 scanned, launch blocked by Application Control | `evidence/pkg-m14.2-smoke.json`, `pkg-m14.3-asar-scan.json` |
 | F3 | Reports and manifests (9 documents) | docs | done | `docs/milestone-14-*.md` |
 | N1 | Custom emoji/stickers, voice messages, streamer mode, game activity, voice HUD, onboarding | — | not started | see the final report §8 |
@@ -76,6 +77,7 @@ States: **tested** = verified by automated tests and/or Electron runs with recor
 9. Preview m14.2 rebuilt, scanned and smoke-tested from the package.
 10. Chat wallpaper added; preview rebuilt as m14.3 and scanned. Windows Application Control blocked launching the unsigned m14.3 exe; it was not bypassed.
 11. At the owner's request: committed to a new `milestone-14` branch (from `8f13638`) and pushed. Not deployed.
+12. Owner report: leaving a call took a moment for your own icon to leave. Fixed, then committed and pushed to `milestone-14` at the owner's request: `leave()` publishes the "left" state before the connection finishes closing, the closing room is detached first, and the app drops your own voice entry without waiting for the server.
 
 ## Where to resume
 

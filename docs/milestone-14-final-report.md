@@ -82,6 +82,7 @@ found two bugs, which were fixed.
 | **Fix:** the app kept stale preferences after reconnecting | Fixed: re-fetched on every reconnect, ignoring older copies |
 | **Fix (from Milestone 13):** the image cropper inherited the global `.avatar` styles (narrow footer, white text in light themes) | Fixed and verified in the Glass theme |
 | **Fix:** Petal Fall decoration petals scattered (SVG transform origin) | Fixed |
+| **Fix (reported by the owner after the commit):** leaving a call took a moment for your own icon to leave the channel | Fixed: the app shows you as gone at once and takes you out of its voice list without waiting for the server; cleanup continues in the background. Unit-tested (the tests fail on the old code); not tried in a live call |
 
 ## 4. Numbers
 
@@ -93,7 +94,7 @@ found two bugs, which were fixed.
 | New dependencies | 0 |
 | Database migrations (additive) | 4: 9 `profile_customization`, 10 `soundboard`, 11 `saved_messages`, 12 `user_notes` |
 | API version | 6, with `customization`, `savedMessages` and `userNotes` flags |
-| Desktop tests | **457/457** (48 files); 364 at the start; 93 new |
+| Desktop tests | **462/462** (49 files); 364 at the start; 98 new |
 | Server tests | **261/261**; 241 at the start; 20 new this session |
 | Typecheck (desktop node + web, server) / ESLint / Prettier (desktop) | clean / clean / clean |
 | Sound reproducibility (`render-sounds.mjs --check`) | all files match |

@@ -8,7 +8,8 @@ import {
   isValidPushToTalkKey,
   micShouldTransmit,
   playbackVolume,
-  shouldAutoRejoin
+  shouldAutoRejoin,
+  withoutUser
 } from './voiceLogic'
 
 describe('reconnect policy', () => {
@@ -102,5 +103,30 @@ describe('push-to-talk keys', () => {
     expect(isValidPushToTalkKey('Escape')).toBe(false)
     expect(isValidPushToTalkKey('Enter')).toBe(false)
     expect(isValidPushToTalkKey('F8')).toBe(true)
+  })
+})
+
+describe('leaving voice: taking yourself out of the voice state', () => {
+  it('removes only your entry, and only for the channel you left', () => {
+    const states = { me: 'lounge', ana: 'lounge', ben: 'games' }
+    expect(withoutUser(states, 'me', (c) => c === 'lounge')).toEqual({
+      ana: 'lounge',
+      ben: 'games'
+    })
+    expect(states).toEqual({ me: 'lounge', ana: 'lounge', ben: 'games' })
+  })
+
+  it('changes nothing (same object) when you are elsewhere or already gone', () => {
+    const states = { me: 'games', ana: 'lounge' }
+    expect(withoutUser(states, 'me', (c) => c === 'lounge')).toBe(states)
+    expect(withoutUser(states, 'nobody', () => true)).toBe(states)
+    // Inherited names are never treated as entries.
+    expect(withoutUser(states, 'toString', () => true)).toBe(states)
+  })
+
+  it('also clears your "live" mark', () => {
+    expect(withoutUser({ me: true as const, ana: true as const }, 'me', Boolean)).toEqual({
+      ana: true
+    })
   })
 })

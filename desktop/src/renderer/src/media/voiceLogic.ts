@@ -66,6 +66,21 @@ export function playbackVolume(outputPercent: number, userPercent = 100): number
   return (clamp(outputPercent) / 100) * (clamp(userPercent) / 100)
 }
 
+/**
+ * The map without `userId`'s entry, if that entry `matches`; otherwise the same object (so React
+ * skips the update). Used to take yourself out of the voice state the moment you leave.
+ */
+export function withoutUser<T>(
+  map: Record<string, T>,
+  userId: string,
+  matches: (value: T) => boolean
+): Record<string, T> {
+  if (!Object.prototype.hasOwnProperty.call(map, userId) || !matches(map[userId])) return map
+  const next = { ...map }
+  delete next[userId]
+  return next
+}
+
 const MODIFIER_CODES = new Set([
   'ShiftLeft',
   'ShiftRight',

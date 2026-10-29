@@ -60,6 +60,7 @@ import { applyRelationship, bumpConversation, type Relationships } from '../chat
 import { applySaved, type SavedIds } from '../chat/saved'
 import { checkLivekitUrl } from '../net/endpoints'
 import { extraLivekitUrl } from '../net/config'
+import { withoutUser } from '../media/voiceLogic'
 
 export interface ChannelState {
   messages: Message[]
@@ -232,6 +233,8 @@ export interface Backend {
   updateDisplayName: (displayName: string) => Promise<string | null>
   setPresence: (status: SelectableStatus) => Promise<string | null>
   fetchVoiceToken: (channelId: string) => Promise<ApiVoiceToken>
+  /** You left this voice channel on this device: drop your own entry without waiting. */
+  forgetOwnVoiceState: (channelId: string) => void
   retryInitialLoad: () => void
   // ---- Friends and conversations (Milestone 10) ----
   relationships: Relationships
@@ -1444,6 +1447,15 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     [api, handleAuthError, session.httpUrl]
   )
 
+  // You left voice on this device: take yourself out of the channel now instead of waiting for
+  // the server to hear about it from LiveKit (its update then changes nothing).
+  const forgetOwnVoiceState = useCallback((channelId: string) => {
+    const self = meIdRef.current
+    if (!self) return
+    setVoiceStates((prev) => withoutUser(prev, self, (c) => c === channelId))
+    setVoiceStreaming((prev) => withoutUser(prev, self, Boolean))
+  }, [])
+
   const retryInitialLoad = useCallback(() => {
     setPhase('loading')
     setLoadError(undefined)
@@ -1720,6 +1732,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     updateDisplayName,
     setPresence,
     fetchVoiceToken,
+    forgetOwnVoiceState,
     retryInitialLoad,
     relationships,
     conversations,
