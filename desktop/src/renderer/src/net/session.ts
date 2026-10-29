@@ -2,6 +2,7 @@ import type { UserSettings } from '../types'
 import { defaultSettings } from '../data/defaults'
 import { migrateSoundSettings } from '../sound/soundPolicy'
 import { parseKeybinds } from '../lib/keybinds'
+import { parseWallpaper, parseWallpaperIntensity } from '../lib/wallpapers'
 
 /**
  * Session storage. The bearer token is kept by the Electron main process, encrypted with the OS
@@ -98,7 +99,20 @@ export function loadSettings(): UserSettings {
       ...settings,
       ...migrateSoundSettings(parsed),
       keybinds: parseKeybinds(parsed.keybinds),
-      serverNotifications: parseServerNotifications(parsed.serverNotifications)
+      serverNotifications: parseServerNotifications(parsed.serverNotifications),
+      // Milestone 14 (device settings): anything unexpected falls back to the default.
+      themeEffects: parsed.themeEffects === 'reduced' ? 'reduced' : 'full',
+      profileEffects: parsed.profileEffects === 'reduced' ? 'reduced' : 'full',
+      soundPack:
+        typeof parsed.soundPack === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(parsed.soundPack)
+          ? parsed.soundPack
+          : defaultSettings.soundPack,
+      soundboardVolume:
+        typeof parsed.soundboardVolume === 'number' && Number.isFinite(parsed.soundboardVolume)
+          ? Math.min(100, Math.max(0, Math.round(parsed.soundboardVolume)))
+          : defaultSettings.soundboardVolume,
+      chatWallpaper: parseWallpaper(parsed.chatWallpaper),
+      chatWallpaperIntensity: parseWallpaperIntensity(parsed.chatWallpaperIntensity)
     }
   } catch {
     return { ...defaultSettings }

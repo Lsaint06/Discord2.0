@@ -13,7 +13,8 @@ export function useVoiceSounds(service: SoundService, snapshot: MediaSnapshot): 
       {
         status,
         remoteIds: participants.filter((p) => !p.isLocal).map((p) => p.identity),
-        sharingIds: participants.filter((p) => p.sharingScreen).map((p) => p.identity)
+        sharingIds: participants.filter((p) => p.sharingScreen).map((p) => p.identity),
+        selfId: participants.find((p) => p.isLocal)?.identity
       },
       performance.now()
     )

@@ -24,10 +24,12 @@ export interface SoundPreferences {
   eventVolumes?: Partial<Record<SoundEvent, number>>
   /** Your own sound for an event (id in the custom sound library; missing = built-in). */
   custom?: Partial<Record<SoundEvent, string>>
+  /** Milestone 14: built-in sound pack id (see packs.ts; missing/unknown = Signature). */
+  pack?: string
 }
 
 export type SoundGroup = SoundInfo['group']
-export const SOUND_GROUPS: readonly SoundGroup[] = ['messages', 'voice', 'controls']
+export const SOUND_GROUPS: readonly SoundGroup[] = ['messages', 'voice', 'controls', 'system']
 
 const percent = (value: unknown): number | undefined => {
   const n = Number(value)
@@ -59,7 +61,32 @@ export const DEFAULT_SOUND_EVENTS: Record<SoundEvent, boolean> = {
   mute: true,
   unmute: true,
   deafen: true,
-  undeafen: true
+  undeafen: true,
+  directMessage: true,
+  friendAccepted: true,
+  voiceDrop: true,
+  reconnect: true,
+  streamRemoteStart: true,
+  streamRemoteStop: true,
+  // Push-to-talk cues can be distracting: off unless you turn them on.
+  pttOn: false,
+  pttOff: false,
+  uploadDone: true,
+  uploadFailed: true,
+  sendFailed: true
+}
+
+/**
+ * Milestone 14 split some events. Settings saved before that have no value for them yet: they
+ * follow the choice you made for the event that used to cover them.
+ */
+const INHERITS: Partial<Record<SoundEvent, SoundEvent>> = {
+  directMessage: 'mention',
+  streamRemoteStart: 'streamStart',
+  streamRemoteStop: 'streamStop',
+  voiceDrop: 'disconnect',
+  reconnect: 'connect',
+  friendAccepted: 'friendRequest'
 }
 
 export const DEFAULT_SOUND_VOLUME = 60
@@ -93,9 +120,14 @@ export function migrateSoundSettings(stored: Record<string, unknown>): {
       const value = (raw as Record<string, unknown>)[event]
       if (typeof value === 'boolean') events[event] = value
     }
+    for (const [event, from] of Object.entries(INHERITS) as [SoundEvent, SoundEvent][]) {
+      const own = (raw as Record<string, unknown>)[event]
+      if (typeof own !== 'boolean') events[event] = events[from]
+    }
   } else if (stored.notificationSounds === false) {
     events.message = false
     events.mention = false
+    events.directMessage = false
   }
   const volume = Number(stored.soundVolume)
   const record = (value: unknown): Record<string, unknown> =>
@@ -140,6 +172,8 @@ export interface MessageSoundContext {
   mentionsMe: boolean
   /** This server notifies you only about @mentions (its default or your choice). */
   mentionsOnly?: boolean
+  /** Milestone 14: the message is in a direct or group conversation. */
+  isDirect?: boolean
 }
 
 /** Which sound (if any) an incoming message deserves, before deduplication and rate limiting. */
@@ -147,12 +181,13 @@ export function messageSound(
   message: { authorId: string; channelId: string },
   ctx: MessageSoundContext,
   prefs: SoundPreferences
-): 'message' | 'mention' | null {
+): 'message' | 'mention' | 'directMessage' | null {
   if (!prefs.enabled) return null
   if (message.authorId === ctx.meId) return null
   if (ctx.doNotDisturb) return null
   if (ctx.mutedChannels[message.channelId]) return null
   if (ctx.windowFocused && ctx.activeChannelId === message.channelId) return null
+  if (ctx.isDirect && eventEnabled(prefs, 'directMessage')) return 'directMessage'
   if (ctx.mentionsMe && eventEnabled(prefs, 'mention')) return 'mention'
   if (ctx.mentionsOnly) return null
   // A mention with the mention sound off still counts as a message.
@@ -195,10 +230,21 @@ const SPACING: Record<SoundEvent, number> = {
   mute: 60,
   unmute: 60,
   deafen: 60,
-  undeafen: 60
+  undeafen: 60,
+  directMessage: 350,
+  friendAccepted: 1000,
+  voiceDrop: 1500,
+  reconnect: 1500,
+  streamRemoteStart: 600,
+  streamRemoteStop: 600,
+  pttOn: 40,
+  pttOff: 40,
+  uploadDone: 800,
+  uploadFailed: 800,
+  sendFailed: 800
 }
 /** Events that are delayed (queued) instead of dropped when they come too fast. */
-const QUEUED: ReadonlySet<SoundEvent> = new Set<SoundEvent>(['mention'])
+const QUEUED: ReadonlySet<SoundEvent> = new Set<SoundEvent>(['mention', 'directMessage'])
 const MAX_BACKLOG = 3
 
 /**
@@ -218,7 +264,7 @@ export class SoundGate {
       start = allowedAt
     }
     this.nextAt.set(event, start + SPACING[event])
-    if (event === 'mention') {
+    if (event === 'mention' || event === 'directMessage') {
       // A mention also counts as the message chime for this window.
       const messageAt = this.nextAt.get('message') ?? -Infinity
       this.nextAt.set('message', Math.max(messageAt, start + SPACING.message))

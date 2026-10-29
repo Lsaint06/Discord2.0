@@ -5,6 +5,7 @@ import type {
   D2DesktopApi,
   DownloadProgress,
   EncoderFlagsState,
+  LifecycleState,
   MicrophoneAccess,
   ScreenCaptureCapabilities,
   ScreenSelectResult,
@@ -127,6 +128,23 @@ const d2: D2DesktopApi = {
       ipcRenderer.on('d2:download-progress', listener)
       return () => ipcRenderer.removeListener('d2:download-progress', listener)
     }
+  },
+  lifecycle: {
+    get: () => ipcRenderer.invoke('d2:lifecycle-get') as Promise<LifecycleState | null>,
+    set: (patch) =>
+      ipcRenderer.invoke('d2:lifecycle-set', {
+        ...(typeof patch.closeToTray === 'boolean' ? { closeToTray: patch.closeToTray } : {}),
+        ...(typeof patch.startMinimized === 'boolean'
+          ? { startMinimized: patch.startMinimized }
+          : {}),
+        ...(typeof patch.launchAtLogin === 'boolean' ? { launchAtLogin: patch.launchAtLogin } : {})
+      }) as Promise<LifecycleState | null>,
+    attention: (badge, flash) =>
+      ipcRenderer.invoke('d2:attention', {
+        badge: Math.max(0, Math.floor(Number(badge) || 0)),
+        flash: flash === true
+      }) as Promise<boolean>,
+    showWindow: () => ipcRenderer.invoke('d2:window-show') as Promise<boolean>
   }
 }
 

@@ -24,18 +24,22 @@ import {
   normalizeCustomStatusText,
   normalizeDisplayName,
   normalizeEmoji,
+  normalizeProfileStyle,
   normalizePronouns
 } from '../lib/validation.js'
 import {
   isProfileMediaId,
   processProfileImage,
   ProfileImageError,
+  type CropRect,
   type ProfileImageSize
 } from '../profile/media.js'
 import {
+  APP_THEMES,
   DEFAULT_PREFERENCES,
   LIMITS,
   type ApiPreferences,
+  type AppThemeId,
   type ApiProfile,
   type MessageDensity,
   type ProfileImageKind,
@@ -87,6 +91,7 @@ export function parsePreferences(stored: { data: string; updatedAt: number } | u
       idle <= LIMITS.idleTimeoutMaxMinutes
         ? idle
         : DEFAULT_PREFERENCES.idleTimeoutMinutes,
+    appTheme: APP_THEMES.includes(raw.appTheme as AppThemeId) ? (raw.appTheme as AppThemeId) : null,
     updatedAt: stored.updatedAt
   }
 }
@@ -113,16 +118,28 @@ export function imageError(err: ProfileImageError): ApiError {
 export async function receiveImageUpload(
   ctx: AppContext,
   request: FastifyRequest
-): Promise<{ tmpPath: string; head: Buffer }> {
+): Promise<{ tmpPath: string; head: Buffer; fields: Record<string, string> }> {
   if (!request.isMultipart()) throw badRequest('Expected multipart/form-data', 'not_multipart')
   if (ctx.attachments.freeBytes() < ctx.config.attachments.minFreeDiskBytes) {
     throw insufficientStorage('The server is low on disk space. Uploads are paused.')
   }
   let received: { tmpPath: string; head: Buffer } | null = null
   let failure: unknown = null
+  // Small text fields sent with the image (Milestone 14: the crop of an animated image).
+  const fields: Record<string, string> = {}
   try {
     for await (const part of request.parts()) {
-      if (part.type !== 'file') continue
+      if (part.type !== 'file') {
+        if (
+          /^[a-z]{1,16}$/i.test(part.fieldname) &&
+          typeof part.value === 'string' &&
+          part.value.length <= 32 &&
+          Object.keys(fields).length < 8
+        ) {
+          fields[part.fieldname] = part.value
+        }
+        continue
+      }
       const file = part as MultipartFile
       if (received || failure) {
         file.file.resume() // only the first file counts; drain the rest
@@ -156,7 +173,17 @@ export async function receiveImageUpload(
     throw failure
   }
   if (!received) throw badRequest('No image was uploaded', 'no_file')
-  return received
+  return { ...received, fields }
+}
+
+/** Milestone 14: crop fields of an upload (all four, whole pixels) or null when absent. */
+export function cropFromFields(fields: Record<string, string>): CropRect | null {
+  const keys = ['cropLeft', 'cropTop', 'cropWidth', 'cropHeight'] as const
+  if (keys.every((k) => fields[k] === undefined)) return null
+  const values = keys.map((k) => (/^\d{1,6}$/.test(fields[k] ?? '') ? Number(fields[k]) : NaN))
+  if (values.some((v) => !Number.isInteger(v))) throw badRequest('Invalid crop', 'invalid_crop')
+  const [left, top, width, height] = values as [number, number, number, number]
+  return { left, top, width, height }
 }
 
 export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): void {
@@ -168,6 +195,7 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
       bio?: string | null
       pronouns?: string | null
       accentColor?: string | null
+      profileStyle?: unknown
     }
   }>(
     '/api/users/me',
@@ -182,7 +210,9 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
             // Generous raw limits; the normalizers enforce the real ones after cleanup.
             bio: nullableString(LIMITS.bioMaxLength * 2),
             pronouns: nullableString(LIMITS.pronounsMaxLength * 2),
-            accentColor: nullableString(7)
+            accentColor: nullableString(7),
+            // Milestone 14: checked field by field by normalizeProfileStyle.
+            profileStyle: { anyOf: [{ type: 'object', maxProperties: 8 }, { type: 'null' }] }
           }
         }
       }
@@ -204,7 +234,8 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
             ? undefined
             : body.accentColor === null
               ? null
-              : normalizeColor(body.accentColor)
+              : normalizeColor(body.accentColor),
+        profileStyle: body.profileStyle === undefined ? undefined : normalizeProfileStyle(body.profileStyle)
       })
       if (!updated) throw badRequest('User no longer exists')
       await publishProfileChange(ctx, updated)
@@ -316,7 +347,8 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
               type: 'integer',
               minimum: LIMITS.idleTimeoutMinMinutes,
               maximum: LIMITS.idleTimeoutMaxMinutes
-            }
+            },
+            appTheme: { anyOf: [{ type: 'string', enum: [...APP_THEMES] }, { type: 'null' }] }
           }
         }
       }
@@ -336,7 +368,8 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
         density: next.density,
         reducedMotion: next.reducedMotion,
         showTimestamps: next.showTimestamps,
-        idleTimeoutMinutes: next.idleTimeoutMinutes
+        idleTimeoutMinutes: next.idleTimeoutMinutes,
+        appTheme: next.appTheme ?? null
       })
       await ctx.repo.savePreferences(user.id, data, now)
       const saved: ApiPreferences = { ...next, updatedAt: now }
@@ -355,7 +388,10 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
 
       let image
       try {
-        image = await processProfileImage(kind, received.tmpPath, received.head)
+        image = await processProfileImage(kind, received.tmpPath, received.head, {
+          keepAnimation: true,
+          crop: cropFromFields(received.fields)
+        })
       } catch (err) {
         throw err instanceof ProfileImageError ? imageError(err) : err
       } finally {
@@ -371,7 +407,8 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
         height: image.height,
         size: image.full.length,
         sha256: image.sha256,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        animated: image.animated
       }
       await ctx.profileMedia.save(media.id, image)
       let result
@@ -443,7 +480,7 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
         querystring: {
           type: 'object',
           additionalProperties: false,
-          properties: { size: { type: 'string', enum: ['full', 'small'] } }
+          properties: { size: { type: 'string', enum: ['full', 'small', 'still'] } }
         }
       }
     },
@@ -461,7 +498,10 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: AppContext): vo
       const size = request.query.size ?? 'full'
       let file
       try {
-        file = await ctx.profileMedia.open(id, size)
+        // 'still' exists only for animated images; a still image is its own still frame.
+        file = await ctx.profileMedia
+          .open(id, size)
+          .catch((err: unknown) => (size === 'still' ? ctx.profileMedia.open(id, 'full') : Promise.reject(err)))
       } catch {
         request.log.error({ media: id }, 'profile image missing on disk')
         throw notFound('Image file is missing')

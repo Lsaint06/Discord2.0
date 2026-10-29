@@ -38,6 +38,11 @@ export interface ApiUser {
   /** Account creation (epoch ms). */
   createdAt: number
   customStatus: ApiCustomStatus | null
+  /** Milestone 14 (API 6): gradient, decoration, effect, animated banner. Absent on older servers. */
+  profileStyle?: ApiProfileStyle | null
+  /** The profile picture / banner is animated (fetch size 'still' for a still frame). */
+  avatarAnimated?: boolean
+  bannerAnimated?: boolean
 }
 
 /** The signed-in user, with account details only they can see. */
@@ -127,6 +132,8 @@ export interface ApiPreferences {
   showTimestamps: boolean
   /** Minutes without keyboard/mouse input before you appear idle (per device). */
   idleTimeoutMinutes: number
+  /** Milestone 14 (API 6): full-app theme; null = classic. Absent on older servers. */
+  appTheme?: AppThemeId | null
   /** Last change (epoch ms); null = never saved (defaults). */
   updatedAt: number | null
 }
@@ -138,6 +145,7 @@ export const DEFAULT_PREFERENCES: ApiPreferences = {
   reducedMotion: 'system',
   showTimestamps: true,
   idleTimeoutMinutes: 10,
+  appTheme: null,
   updatedAt: null
 }
 
@@ -148,6 +156,154 @@ export const PROFILE_IMAGE_SIZES = {
   banner: { full: { width: 1500, height: 600 }, small: { width: 600, height: 240 } }
 } as const
 
+// ---- Customization (Milestone 14, API 6). Everything is free; nothing is gated. ----
+
+/** Original avatar decorations (drawn by the desktop app). The server accepts only these ids. */
+export const AVATAR_DECORATIONS = [
+  'violet-halo',
+  'celestial-ring',
+  'frost-shards',
+  'neon-pulse',
+  'pixel-hearts',
+  'petal-fall',
+  'star-orbit',
+  'ember-sparks',
+  'circuit-trace',
+  'moon-orbit',
+  'prism-ribbon',
+  'cosmic-comet'
+] as const
+export type AvatarDecorationId = (typeof AVATAR_DECORATIONS)[number]
+
+/** Original profile effects (short animated scenes behind the profile card's text). */
+export const PROFILE_EFFECTS = [
+  'aurora-shimmer',
+  'meteor-shower',
+  'sakura-drift',
+  'neon-wave',
+  'galaxy-dust',
+  'golden-sparks',
+  'holo-scan',
+  'winter-snow'
+] as const
+export type ProfileEffectId = (typeof PROFILE_EFFECTS)[number]
+
+/** Animated banners drawn by the app (used when there is no banner picture). */
+export const BANNER_PRESETS = [
+  'aurora',
+  'starfield',
+  'waves',
+  'sunset',
+  'nebula',
+  'grid',
+  'bokeh',
+  'prism'
+] as const
+export type BannerPresetId = (typeof BANNER_PRESETS)[number]
+
+/** Full-app themes (palettes live in the desktop app); null = the classic dark/light theme. */
+export const APP_THEMES = [
+  'obsidian',
+  'cyber',
+  'sakura',
+  'aurora',
+  'void',
+  'solar',
+  'abyss',
+  'amethyst',
+  'glass',
+  'synthwave',
+  'forest',
+  'mint'
+] as const
+export type AppThemeId = (typeof APP_THEMES)[number]
+
+/** Username treatments (gradient text; the name stays real, selectable text). */
+export const NAME_STYLES = [
+  'gradient',
+  'gold',
+  'silver',
+  'neon',
+  'aurora',
+  'holo'
+] as const
+export type NameStyleId = (typeof NAME_STYLES)[number]
+
+/** How someone's profile looks to everyone. */
+export interface ApiProfileStyle {
+  /** Profile gradient: 2 or 3 colors (#rrggbb, lowercase); empty = no gradient. */
+  colors: string[]
+  /** Gradient direction in whole degrees, 0–359. */
+  angle: number
+  decoration: AvatarDecorationId | null
+  effect: ProfileEffectId | null
+  banner: BannerPresetId | null
+  /** Optional on older Milestone 14 builds; null = plain name. */
+  nameStyle?: NameStyleId | null
+}
+
+export const CUSTOMIZATION_LIMITS = {
+  gradientMaxColors: 3,
+  /** Animated pictures/banners: all frames together (memory on the server is bounded by this). */
+  animatedMaxPixels: 60_000_000,
+  animatedMaxFrames: 300,
+  /** Largest processed animation (full size) the server keeps. */
+  animatedMaxOutputBytes: 8 * 1024 * 1024
+} as const
+
+/** Output geometry of animated profile images (smaller than still ones: every frame counts). */
+export const ANIMATED_PROFILE_IMAGE_SIZES = {
+  avatar: { full: { width: 320, height: 320 }, small: { width: 128, height: 128 } },
+  banner: { full: { width: 960, height: 384 }, small: { width: 600, height: 240 } }
+} as const
+
+// ---- Soundboard (Milestone 14, API 6) ----
+
+/** A short clip a server's members can play into the voice channel they're in. */
+export interface ApiSoundboardSound {
+  id: string
+  serverId: string
+  name: string
+  /** Optional emoji shown on the button. */
+  emoji: string | null
+  /** Who added it (null if that account is gone). */
+  uploaderId: string | null
+  durationMs: number
+  createdAt: number
+}
+
+export const SOUNDBOARD_LIMITS = {
+  maxSoundsPerServer: 48,
+  /** Uploads are 16-bit PCM WAV (the app converts any clip it can decode). */
+  maxBytes: 600 * 1024,
+  maxDurationMs: 5000,
+  nameMaxLength: 32,
+  /** Plays per user: a burst of 3, then one every 2 s. */
+  playBurst: 3,
+  playRefillPerSecond: 0.5
+} as const
+
+// ---- Saved messages and personal notes (Milestone 14) ----
+
+/** A message you saved for later. Private: only you can list your saved messages. */
+export interface ApiSavedMessage {
+  savedAt: number
+  /** The message's server; null for direct and group conversations. */
+  serverId: string | null
+  message: ApiMessage
+}
+
+export const SAVED_MESSAGES_LIMIT = 500
+
+/** Your private note about someone. Nobody else, including them, can read it. */
+export interface ApiUserNote {
+  userId: string
+  /** '' = no note. */
+  note: string
+  updatedAt: number | null
+}
+
+export const USER_NOTE_MAX_LENGTH = 256
 // ---- Roles and permissions (Milestone 7) ----
 
 export type ServerRole = 'owner' | 'admin' | 'moderator' | 'member'
@@ -580,6 +736,15 @@ export type GatewayServerFrame =
   | { op: 'me_update'; d: ApiMe }
   /** Sent only to your own sessions: synced preferences changed on another device. */
   | { op: 'preferences_update'; d: ApiPreferences }
+  /** Milestone 14: someone played a soundboard clip in your voice channel (play it locally). */
+  | {
+      op: 'soundboard_play'
+      d: { serverId: string; channelId: string; soundId: string; userId: string }
+    }
+  /** Milestone 14, sent only to your own sessions: you saved or unsaved a message. */
+  | { op: 'saved_message_update'; d: { messageId: string; saved: boolean; savedAt: number | null } }
+  /** Milestone 14, sent only to your own sessions: your private note about someone changed. */
+  | { op: 'user_note_update'; d: ApiUserNote }
   | { op: 'server_create'; d: ApiServer }
   /** Your access to a server changed (channels, roles, members, permissions): refetch it. */
   | { op: 'server_update'; d: { serverId: string } }

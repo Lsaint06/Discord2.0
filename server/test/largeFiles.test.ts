@@ -512,7 +512,10 @@ describe('migration v8 (large files)', () => {
     assert.deepEqual(await repo.largeFileUsage('u1'), { user: 0, pool: 0, sessions: 0 })
     assert.equal((await repo.attachmentUsage('u1')).user, 5)
     const raw = (repo as unknown as { db: DatabaseSync }).db
-    assert.equal(Number(raw.prepare('SELECT MAX(version) AS v FROM schema_migrations').get()?.v), 8)
+    assert.equal(
+    Number(raw.prepare('SELECT MAX(version) AS v FROM schema_migrations').get()?.v),
+    sqliteMigrations[sqliteMigrations.length - 1]!.version
+  )
     assert.throws(() => raw.prepare("INSERT INTO upload_sessions (id, user_id, channel_id, filename, content_type, kind, size, received, created_at, updated_at) VALUES ('x', 'u1', 'c1', 'f', 't', 'file', 10, 11, 1, 1)").run(), /CHECK/)
     assert.equal(raw.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok')
     await repo.close()

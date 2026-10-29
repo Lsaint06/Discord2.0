@@ -45,7 +45,7 @@ describe('voice sounds', () => {
     expect(events).toEqual([[], ['connect'], ['voiceJoin'], ['voiceJoin'], ['voiceLeave'], []])
   })
 
-  it('a network reconnect is silent and does not replay join sounds', () => {
+  it('a network reconnect plays one quiet reconnect cue and does not replay join sounds', () => {
     const events = run([
       [0, 'connecting', []],
       [100, 'connected', ['bob']],
@@ -54,10 +54,10 @@ describe('voice sounds', () => {
       [AFTER + 2050, 'connected', ['bob', 'carol']],
       [AFTER + 5000, 'connected', ['bob', 'carol']]
     ])
-    expect(events.flat()).toEqual(['connect'])
+    expect(events.flat()).toEqual(['connect', 'reconnect'])
   })
 
-  it('a rejoin after the room dropped (reconnecting → reconnecting → connected) is silent too', () => {
+  it('a rejoin after the room dropped (reconnecting → reconnecting → connected) plays one reconnect', () => {
     const events = run([
       [0, 'connecting', []],
       [100, 'connected', []],
@@ -65,7 +65,7 @@ describe('voice sounds', () => {
       [6000, 'reconnecting', []],
       [7000, 'connected', ['bob']]
     ])
-    expect(events.flat()).toEqual(['connect'])
+    expect(events.flat()).toEqual(['connect', 'reconnect'])
   })
 
   it('switching channels plays connect for the new channel without a disconnect', () => {
@@ -78,7 +78,7 @@ describe('voice sounds', () => {
     expect(events.flat()).toEqual(['connect', 'connect'])
   })
 
-  it('leaving, being kicked, or giving up plays disconnect once', () => {
+  it('leaving plays disconnect once; being dropped or giving up plays the connection-lost cue', () => {
     expect(
       run([
         [0, 'connecting', []],
@@ -93,7 +93,7 @@ describe('voice sounds', () => {
         [100, 'connected', []],
         [500, 'disconnected', []]
       ]).flat()
-    ).toEqual(['connect', 'disconnect'])
+    ).toEqual(['connect', 'voiceDrop'])
     expect(
       run([
         [0, 'connecting', []],
@@ -101,7 +101,7 @@ describe('voice sounds', () => {
         [500, 'reconnecting', []],
         [9000, 'error', []]
       ]).flat()
-    ).toEqual(['connect', 'disconnect'])
+    ).toEqual(['connect', 'voiceDrop'])
   })
 
   it('a join that fails before connecting plays nothing', () => {
@@ -128,14 +128,14 @@ describe('voice sounds', () => {
 function runShares(steps: [number, VoiceStatus, string[], string[]][]): SoundEvent[][] {
   let state: VoiceSoundState = INITIAL_VOICE_SOUND_STATE
   return steps.map(([t, status, remoteIds, sharingIds]) => {
-    const result = trackVoiceSounds(state, { status, remoteIds, sharingIds }, t)
+    const result = trackVoiceSounds(state, { status, remoteIds, sharingIds, selfId: 'me' }, t)
     state = result.state
     return result.events
   })
 }
 
 describe('screen share sounds', () => {
-  it('plays start and stop for someone in the channel, and for yourself', () => {
+  it('plays the remote start/stop for someone in the channel and your own for yourself', () => {
     const events = runShares([
       [0, 'connecting', [], []],
       [100, 'connected', ['bob'], []],
@@ -147,14 +147,14 @@ describe('screen share sounds', () => {
     expect(events).toEqual([
       [],
       ['connect'],
-      ['streamStart'],
-      ['streamStop'],
+      ['streamRemoteStart'],
+      ['streamRemoteStop'],
       ['streamStart'],
       ['streamStop']
     ])
   })
 
-  it('a share that is already running when you join or reconnect is silent', () => {
+  it('a share that is already running when you join or reconnect plays no share sound', () => {
     const events = runShares([
       [0, 'connecting', [], []],
       [100, 'connected', ['bob'], []],
@@ -164,7 +164,7 @@ describe('screen share sounds', () => {
       [AFTER + 900, 'connected', ['bob'], ['bob']],
       [AFTER + 1000, 'connected', ['bob'], ['bob']]
     ])
-    expect(events.flat()).toEqual(['connect'])
+    expect(events.flat()).toEqual(['connect', 'reconnect'])
   })
 
   it('a sharer who leaves plays only the leave sound; a joiner already sharing only the join sound', () => {
@@ -177,14 +177,14 @@ describe('screen share sounds', () => {
     expect(events).toEqual([[], ['connect'], ['voiceLeave'], ['voiceJoin']])
   })
 
-  it('several shares changing at once play one sound each way', () => {
+  it('several shares changing at once play one sound per kind and direction', () => {
     const events = runShares([
       [0, 'connecting', [], []],
       [100, 'connected', ['bob', 'carol'], []],
       [AFTER + 100, 'connected', ['bob', 'carol'], ['bob', 'carol', 'me']],
       [AFTER + 3000, 'connected', ['bob', 'carol'], ['me']]
     ])
-    expect(events.slice(2)).toEqual([['streamStart'], ['streamStop']])
+    expect(events.slice(2)).toEqual([['streamStart', 'streamRemoteStart'], ['streamRemoteStop']])
   })
 
   it('leaving voice while sharing plays only the disconnect sound', () => {

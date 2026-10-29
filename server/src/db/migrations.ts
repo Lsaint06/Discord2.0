@@ -567,6 +567,70 @@ export const sqliteMigrations: Migration[] = [
       CREATE INDEX upload_sessions_user_idx ON upload_sessions(user_id);
       CREATE INDEX upload_sessions_updated_idx ON upload_sessions(updated_at);
     `
+  },
+  {
+    // Milestone 14 (customization). Additive only: the profile style (validated JSON:
+    // gradient, decoration, effect, banner preset) and whether the current picture/banner is
+    // animated. Rollback to older code: it ignores all three; animated images stay animated
+    // (older code serves the stored file as is) and the style simply isn't shown.
+    version: 9,
+    name: 'profile_customization',
+    sql: `
+      ALTER TABLE users ADD COLUMN profile_style TEXT;
+      ALTER TABLE users ADD COLUMN avatar_animated INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN banner_animated INTEGER NOT NULL DEFAULT 0;
+    `
+  },
+  {
+    // Milestone 14 (soundboard). Additive only: a server's short clips (16-bit PCM WAV files in
+    // <attachments>/soundboard/<id>.wav). Deleting a server deletes its rows; the files are
+    // swept. Rollback to older code: it ignores the table (the clips just aren't offered).
+    version: 10,
+    name: 'soundboard',
+    sql: `
+      CREATE TABLE soundboard_sounds (
+        id          TEXT PRIMARY KEY,
+        server_id   TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        name        TEXT NOT NULL,
+        emoji       TEXT,
+        uploader_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        duration_ms INTEGER NOT NULL CHECK (duration_ms > 0),
+        size        INTEGER NOT NULL CHECK (size > 0),
+        sha256      TEXT NOT NULL,
+        created_at  INTEGER NOT NULL
+      );
+      CREATE INDEX soundboard_sounds_server_idx ON soundboard_sounds(server_id, created_at);
+    `
+  },
+  {
+    // Milestone 14 (saved messages). Additive only: private bookmarks. A deleted message or
+    // account takes its rows with it. Rollback to older code: it ignores the table.
+    version: 11,
+    name: 'saved_messages',
+    sql: `
+      CREATE TABLE saved_messages (
+        user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        saved_at   INTEGER NOT NULL,
+        PRIMARY KEY (user_id, message_id)
+      );
+      CREATE INDEX saved_messages_user_idx ON saved_messages(user_id, saved_at);
+    `
+  },
+  {
+    // Milestone 14 (personal notes). Additive only: a private note one user keeps about another.
+    // Rollback to older code: it ignores the table.
+    version: 12,
+    name: 'user_notes',
+    sql: `
+      CREATE TABLE user_notes (
+        owner_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        target_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        note       TEXT NOT NULL CHECK (length(note) BETWEEN 1 AND 256),
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (owner_id, target_id)
+      );
+    `
   }
 ]
 

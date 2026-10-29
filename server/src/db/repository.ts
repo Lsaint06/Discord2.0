@@ -1,4 +1,5 @@
 import type {
+  ApiProfileStyle,
   ChannelType,
   ConfigurableRole,
   NotificationLevel,
@@ -38,6 +39,10 @@ export interface UserRecord {
   emailVerifiedAt?: number | null
   /** Self-registered and not confirmed yet: cannot sign in, invisible to others. */
   signupPending?: boolean
+  // ---- Customization (Milestone 14) ----
+  profileStyle?: ApiProfileStyle | null
+  avatarAnimated?: boolean
+  bannerAnimated?: boolean
 }
 
 export type EmailCodePurpose = 'verify' | 'reset'
@@ -67,6 +72,8 @@ export interface ProfilePatch {
   bio?: string | null
   pronouns?: string | null
   accentColor?: string | null
+  /** Milestone 14: already validated (see normalizeProfileStyle). */
+  profileStyle?: ApiProfileStyle | null
 }
 
 export interface CustomStatusRecord {
@@ -82,6 +89,20 @@ export interface ProfileMediaRecord {
   width: number
   height: number
   /** Bytes of the full-size file. */
+  size: number
+  sha256: string
+  createdAt: number
+  /** Milestone 14: an animation was kept (a still frame is stored next to it). */
+  animated?: boolean
+}
+
+export interface SoundboardSoundRecord {
+  id: string
+  serverId: string
+  name: string
+  emoji: string | null
+  uploaderId: string | null
+  durationMs: number
   size: number
   sha256: string
   createdAt: number
@@ -472,6 +493,33 @@ export interface Repository {
   getProfileMedia(id: string): Promise<ProfileMediaRecord | undefined>
   /** Every profile media id that has a row (for the orphan file sweep). */
   listProfileMediaIds(): Promise<Set<string>>
+
+  // ---- Soundboard (Milestone 14) ----
+  listSoundboardSounds(serverId: string): Promise<SoundboardSoundRecord[]>
+  getSoundboardSound(id: string): Promise<SoundboardSoundRecord | undefined>
+  /** Adds a sound unless the server already has max; false = full. */
+  addSoundboardSound(sound: SoundboardSoundRecord, max: number): Promise<boolean>
+  deleteSoundboardSound(id: string): Promise<boolean>
+  /** Every soundboard sound id (for the orphan file sweep). */
+  listSoundboardSoundIds(): Promise<Set<string>>
+
+  // ---- Saved messages and personal notes (Milestone 14) ----
+  /** One user's saved messages, newest first. */
+  listSavedMessages(userId: string): Promise<{ messageId: string; savedAt: number }[]>
+  /**
+   * Saves a message unless the user already has `max`. Saving it again keeps the original time.
+   * Checked atomically.
+   */
+  saveMessage(
+    userId: string,
+    messageId: string,
+    savedAt: number,
+    max: number
+  ): Promise<{ result: 'ok' | 'limit'; savedAt: number }>
+  unsaveMessage(userId: string, messageId: string): Promise<boolean>
+  getUserNote(ownerId: string, targetId: string): Promise<{ note: string; updatedAt: number } | undefined>
+  /** An empty note removes it. */
+  setUserNote(ownerId: string, targetId: string, note: string, updatedAt: number): Promise<void>
   /** Same rule as listVisibleUsers, for one user. */
   isUserVisibleTo(viewerId: string, userId: string): Promise<boolean>
   /** Servers both users are members of. */

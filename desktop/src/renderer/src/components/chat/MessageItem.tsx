@@ -6,6 +6,8 @@ import { QUICK_REACTIONS } from '../../chat/emoji'
 import { formatTime, formatTimestamp } from '../../lib/format'
 import { LIMITS } from '../../net/protocol'
 import Avatar from '../Avatar'
+import { StyledName } from '../profile/ProfileCard'
+import { decorationOf } from '../../lib/profileStyle'
 import Markdown from './Markdown'
 import AttachmentList from './AttachmentList'
 import GifEmbed from './GifEmbed'
@@ -43,6 +45,8 @@ export interface MessageActions {
   discard: (nonce: string) => void
   /** Opens the profile popout of a user next to the clicked element. */
   openProfile: (userId: string, anchor: DOMRect) => void
+  /** Milestone 14: save the message for later, or remove it from your saved messages. */
+  toggleSaved: (m: Message) => void
 }
 
 interface MessageItemProps {
@@ -64,6 +68,8 @@ interface MessageItemProps {
   canEdit?: boolean
   /** A delete request for this message is in flight. */
   deleting?: boolean
+  /** In your saved messages; undefined = the server can't save messages (no button). */
+  saved?: boolean
   mentioned: boolean
   flash: boolean
   editing: boolean
@@ -186,7 +192,7 @@ function AuthorName({
       style={{ color }}
       onClick={(e) => actions.openProfile(author.id, e.currentTarget.getBoundingClientRect())}
     >
-      {author.name}
+      <StyledName user={author}>{author.name}</StyledName>
     </button>
   )
 }
@@ -374,6 +380,26 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
           ↩
         </button>
       )}
+      {props.saved !== undefined && (
+        <button
+          type="button"
+          className={`message-toolbar-save${props.saved ? ' saved' : ''}`}
+          onClick={() => actions.toggleSaved(message)}
+          aria-pressed={props.saved}
+          aria-label={props.saved ? 'Remove from saved messages' : 'Save message for later'}
+          title={props.saved ? 'Remove from saved' : 'Save for later (only you see it)'}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M7 3.5h10a1 1 0 0 1 1 1v16l-6-4-6 4v-16a1 1 0 0 1 1-1z"
+              fill={props.saved ? 'currentColor' : 'none'}
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      )}
       {(props.canEdit ?? props.isSelf) && (
         <button
           type="button"
@@ -494,6 +520,8 @@ function MessageItem(props: MessageItemProps): React.JSX.Element {
             color={author.avatarColor}
             imageId={author.avatarId}
             size={40}
+            decoration={decorationOf(author.profileStyle)}
+            animatedImage={author.avatarAnimated}
           />
         </button>
         <div className="message-body">

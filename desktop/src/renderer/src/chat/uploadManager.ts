@@ -55,6 +55,8 @@ export interface UploadManagerDeps {
   revokePreview?: (url: string) => void
   store?: LargeUploadStore
   now?: () => number
+  /** Milestone 14: an upload finished or failed (for sounds); ms = how long it ran. */
+  onSettled?: (outcome: 'done' | 'failed', ms: number) => void
 }
 
 /** An upload still running or failed, anywhere (for the "uploads elsewhere" indicator). */
@@ -188,6 +190,7 @@ export class UploadManager {
     const controller = new AbortController()
     entry.controller = controller
     const now = deps.now?.() ?? Date.now()
+    const startedAt = now
     const remembered = entry.largeId
       ? null
       : deps.store
@@ -236,6 +239,7 @@ export class UploadManager {
             u.key === key ? { ...u, status: 'done', progress: 1, attachmentId: attachment.id } : u
           )
         )
+        deps.onSettled?.('done', (deps.now ?? Date.now)() - startedAt)
       })
       .catch((err: unknown) => {
         if (this.entries.get(key) !== entry) return
@@ -261,6 +265,7 @@ export class UploadManager {
         this.update(entry.channelId, (items) =>
           items.map((u) => (u.key === key ? { ...u, status: 'error', error } : u))
         )
+        deps.onSettled?.('failed', (deps.now ?? Date.now)() - startedAt)
       })
   }
 

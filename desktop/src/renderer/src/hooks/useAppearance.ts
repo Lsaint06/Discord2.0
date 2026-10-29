@@ -6,6 +6,13 @@ import {
   resolveTheme,
   type ResolvedTheme
 } from '../lib/appearance'
+import {
+  bestTextOn,
+  THEME_VARIABLE_NAMES,
+  themeVariables,
+  type AppThemeDef,
+  type ThemeEffects
+} from '../lib/themes'
 import type { ApiPreferences } from '../net/protocol'
 
 function useMediaQuery(query: string): boolean {
@@ -23,20 +30,26 @@ function useMediaQuery(query: string): boolean {
 /**
  * Applies appearance preferences to the document root so every surface (app, modals, popouts,
  * settings) follows them: data-theme, data-density, data-reduced-motion and CSS variables.
+ * Milestone 14: a full-app theme (lib/themes.ts) replaces the surface/text tokens and adds an
+ * ambient layer; `themeEffects: 'reduced'` keeps its colors but drops motion and blur.
  */
 export function useAppearance(
   preferences: Pick<ApiPreferences, 'theme' | 'accentColor' | 'density' | 'reducedMotion'>,
   chatFontSize: number,
   /** This device's contrast choice; 'system' follows the OS high-contrast setting. */
-  contrast: ContrastPreference = 'system'
+  contrast: ContrastPreference = 'system',
+  appTheme: AppThemeDef | null = null,
+  themeEffects: ThemeEffects = 'full'
 ): ResolvedTheme {
   const systemLight = useMediaQuery('(prefers-color-scheme: light)')
   const systemReduced = useMediaQuery('(prefers-reduced-motion: reduce)')
   const systemMoreContrast = useMediaQuery('(prefers-contrast: more)')
-  const theme = resolveTheme(preferences.theme, systemLight)
+  const theme = appTheme ? appTheme.base : resolveTheme(preferences.theme, systemLight)
   const reduced = resolveReducedMotion(preferences.reducedMotion, systemReduced)
   const moreContrast = contrast === 'on' || (contrast === 'system' && systemMoreContrast)
-  const accent = preferences.accentColor ?? DEFAULT_ACCENT
+  // Your own accent wins; otherwise the theme's; otherwise the default.
+  const accent = preferences.accentColor ?? appTheme?.palette.accent ?? DEFAULT_ACCENT
+  const accentText = appTheme ? bestTextOn(accent) : readableOn(accent)
 
   useEffect(() => {
     const root = document.documentElement
@@ -45,9 +58,27 @@ export function useAppearance(
     root.dataset.reducedMotion = reduced ? 'on' : 'off'
     root.dataset.contrast = moreContrast ? 'more' : 'normal'
     root.style.setProperty('--accent', accent)
-    root.style.setProperty('--accent-contrast', readableOn(accent))
+    root.style.setProperty('--accent-contrast', accentText)
     root.style.setProperty('--chat-font-size', `${chatFontSize}px`)
-  }, [theme, reduced, moreContrast, accent, preferences.density, chatFontSize])
+  }, [theme, reduced, moreContrast, accent, accentText, preferences.density, chatFontSize])
+
+  useEffect(() => {
+    const root = document.documentElement
+    for (const name of THEME_VARIABLE_NAMES) root.style.removeProperty(name)
+    if (!appTheme) {
+      delete root.dataset.appTheme
+      delete root.dataset.themeEffects
+      delete root.dataset.glass
+      return
+    }
+    for (const [name, value] of Object.entries(themeVariables(appTheme))) {
+      root.style.setProperty(name, value)
+    }
+    root.dataset.appTheme = appTheme.id
+    root.dataset.themeEffects = themeEffects
+    if (appTheme.glass) root.dataset.glass = 'on'
+    else delete root.dataset.glass
+  }, [appTheme, themeEffects])
 
   // Back to the defaults when signed out (the sign-in screen uses the default look).
   useEffect(
@@ -57,7 +88,15 @@ export function useAppearance(
       delete root.dataset.density
       delete root.dataset.reducedMotion
       delete root.dataset.contrast
-      for (const name of ['--accent', '--accent-contrast', '--chat-font-size']) {
+      delete root.dataset.appTheme
+      delete root.dataset.themeEffects
+      delete root.dataset.glass
+      for (const name of [
+        '--accent',
+        '--accent-contrast',
+        '--chat-font-size',
+        ...THEME_VARIABLE_NAMES
+      ]) {
         root.style.removeProperty(name)
       }
     },

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { AttachmentCache } from '../chat/attachmentCache'
 
-export type ProfileImageSize = 'full' | 'small'
+export type ProfileImageSize = 'full' | 'small' | 'still'
 
 /**
  * Authenticated cache for profile pictures and banners, keyed `${mediaId}:${size}`. Ids are
@@ -18,7 +18,7 @@ export const serverIconKey = (id: string, size: ProfileImageSize): string =>
 
 export function parseProfileMediaKey(key: string): { id: string; size: ProfileImageSize } {
   const [id = '', size] = key.split(':')
-  return { id, size: size === 'full' ? 'full' : 'small' }
+  return { id, size: size === 'full' || size === 'still' ? size : 'small' }
 }
 
 /** blob: URL of a profile image, or undefined while loading / when missing or failed. */

@@ -1,11 +1,13 @@
 /**
  * Turns voice snapshots into sound events (pure, unit-tested):
- * - "connect" when a join or channel switch completes; nothing after an automatic reconnect;
- * - "disconnect" when a session that was connected ends (left, kicked, gave up reconnecting);
+ * - "connect" when a join or channel switch completes; "reconnect" (quiet) after an automatic
+ *   reconnect of a live session;
+ * - "disconnect" when you leave (status idle); "voiceDrop" when a connected session is lost
+ *   (disconnected/error: dropped, kicked, gave up reconnecting);
  * - "voiceJoin" / "voiceLeave" for *other* people, only after the initial participant list has
  *   settled, so entering a channel or reconnecting never plays a burst of join sounds;
- * - "streamStart" / "streamStop" when anyone in the channel (you included) starts or stops a
- *   screen share, with the same settling rule. A share that ends because its owner left plays
+ * - "streamStart" / "streamStop" when YOUR share goes live / ends, "streamRemoteStart" /
+ *   "streamRemoteStop" for someone else's, with the same settling rule. A share that ends because its owner left plays
  *   only the leave sound, and someone who joins already sharing plays only the join sound.
  */
 import type { VoiceStatus } from '../media/voiceLogic'
@@ -38,6 +40,8 @@ export interface VoiceSnapshotLike {
   remoteIds: readonly string[]
   /** Identities (yours included) publishing a screen share. */
   sharingIds?: readonly string[]
+  /** Your own identity (to tell your share from other people's). */
+  selfId?: string
 }
 
 export function trackVoiceSounds(
@@ -54,7 +58,7 @@ export function trackVoiceSounds(
       if (prev.status !== 'connected') {
         // Fresh join or channel switch: chime. Automatic reconnect of a live session: silent.
         const reconnected = prev.status === 'reconnecting' && prev.sessionConnected
-        if (!reconnected) events.push('connect')
+        events.push(reconnected ? 'reconnect' : 'connect')
         return {
           state: {
             status: 'connected',
@@ -72,10 +76,15 @@ export function trackVoiceSounds(
         // One sound per change, however many people moved at once.
         if (joinedIds.length > 0) events.push('voiceJoin')
         if (leftIds.size > 0) events.push('voiceLeave')
-        const started = [...sharing].some((id) => !prev.sharing.has(id) && !joinedIds.includes(id))
-        const stopped = [...prev.sharing].some((id) => !sharing.has(id) && !leftIds.has(id))
-        if (started) events.push('streamStart')
-        if (stopped) events.push('streamStop')
+        const startedIds = [...sharing].filter(
+          (id) => !prev.sharing.has(id) && !joinedIds.includes(id)
+        )
+        const stoppedIds = [...prev.sharing].filter((id) => !sharing.has(id) && !leftIds.has(id))
+        const mine = (id: string): boolean => snap.selfId !== undefined && id === snap.selfId
+        if (startedIds.some(mine)) events.push('streamStart')
+        if (startedIds.some((id) => !mine(id))) events.push('streamRemoteStart')
+        if (stoppedIds.some(mine)) events.push('streamStop')
+        if (stoppedIds.some((id) => !mine(id))) events.push('streamRemoteStop')
       }
       return { state: { ...prev, remotes: ids, sharing }, events }
     }
@@ -90,7 +99,8 @@ export function trackVoiceSounds(
     case 'idle':
     case 'disconnected':
     case 'error':
-      if (prev.sessionConnected) events.push('disconnect')
+      // You left (idle) vs. the connection was lost (disconnected / error).
+      if (prev.sessionConnected) events.push(snap.status === 'idle' ? 'disconnect' : 'voiceDrop')
       return {
         state: {
           status: snap.status,

@@ -136,6 +136,27 @@ export interface D2DesktopApi {
     start: (url: string, authorization: string) => Promise<boolean>
     onProgress: (callback: (progress: DownloadProgress) => void) => () => void
   }
+  /** Milestone 14: tray, close-to-tray, start minimized, launch at login, taskbar attention. */
+  lifecycle: {
+    get: () => Promise<LifecycleState | null>
+    set: (patch: Partial<LifecyclePrefsShape>) => Promise<LifecycleState | null>
+    /** Taskbar overlay dot for unread mentions/DMs (0 clears it); flash = blink the taskbar button. */
+    attention: (badge: number, flash: boolean) => Promise<boolean>
+    /** Restores and focuses the window (also from the tray / hidden state). */
+    showWindow: () => Promise<boolean>
+  }
+}
+
+export interface LifecyclePrefsShape {
+  closeToTray: boolean
+  startMinimized: boolean
+  launchAtLogin: boolean
+}
+
+export interface LifecycleState extends LifecyclePrefsShape {
+  /** Launch at login works only in an installed/portable build. */
+  loginSupported: boolean
+  trayAvailable: boolean
 }
 
 export interface DownloadProgress {

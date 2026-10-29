@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { User } from '../../types'
 import type { ApiCustomStatus } from '../../net/protocol'
 import ProfileCard from './ProfileCard'
+import UserNoteField, { type UserNoteSupport } from './UserNoteField'
 
 const WIDTH = 320
 const GAP = 10
@@ -20,6 +21,8 @@ interface ProfilePopoutProps {
   onClose: () => void
   /** Friend / message / block actions for other people (omitted for bots and yourself). */
   relationship?: { type: RelationshipType | null; handlers: RelationshipHandlers }
+  /** Milestone 14: your private note about this person (servers that keep notes). */
+  note?: UserNoteSupport
 }
 
 /** Small profile card next to the clicked avatar or name. */
@@ -32,7 +35,8 @@ function ProfilePopout({
   onViewProfile,
   onEditProfile,
   onClose,
-  relationship
+  relationship,
+  note
 }: ProfilePopoutProps): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
@@ -95,6 +99,9 @@ function ProfilePopout({
             relationship={relationship.type}
             handlers={relationship.handlers}
           />
+        )}
+        {note && !isSelf && (
+          <UserNoteField key={user.id} userId={user.id} name={user.name} {...note} />
         )}
         <div className="profile-card-actions">
           {isSelf && (

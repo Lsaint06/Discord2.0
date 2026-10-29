@@ -19,15 +19,19 @@ import type {
   ApiMessage,
   ApiPreferences,
   ApiProfile,
+  ApiProfileStyle,
   ApiReadState,
   ApiRegistrationInvite,
   ApiRelationship,
   ApiRolePermissions,
+  ApiSavedMessage,
   ApiSearchResult,
   ApiServer,
   ApiServerInvite,
   ApiSession,
+  ApiSoundboardSound,
   ApiUser,
+  ApiUserNote,
   ApiUploadSession,
   ApiVoiceToken,
   ConfigurableRole,
@@ -42,6 +46,8 @@ export interface ProfilePatch {
   bio?: string | null
   pronouns?: string | null
   accentColor?: string | null
+  /** Milestone 14 (API 6 servers only). */
+  profileStyle?: ApiProfileStyle | null
 }
 
 export interface CustomStatusInput {
@@ -106,6 +112,12 @@ export interface ServerMeta {
   connections?: boolean
   /** Milestone 13+ (API 5): server icons/descriptions, layout, user limits, timeouts. */
   serverAdmin?: boolean
+  /** Milestone 14+ (API 6): profile styles, animated pictures/banners, synced app theme. */
+  customization?: boolean
+  /** Milestone 14+: private saved messages (bookmarks). */
+  savedMessages?: boolean
+  /** Milestone 14+: private notes about people. */
+  userNotes?: boolean
   /** Milestone 13+: GIF picker through the server (null/absent = not set up). */
   gifs?: { provider: string; attribution: { text: string; url: string } } | null
   /** Milestone 13+: chunked uploads of large files (null/absent = off). */
@@ -434,7 +446,11 @@ export class ApiClient {
   uploadProfileImage(
     kind: ProfileImageKind,
     image: Blob,
-    options: { onProgress?: (fraction: number) => void } = {}
+    options: {
+      onProgress?: (fraction: number) => void
+      /** Milestone 14: crop of an animated original (whole source pixels). */
+      crop?: { left: number; top: number; width: number; height: number }
+    } = {}
   ): Promise<ApiMe> {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
@@ -453,7 +469,15 @@ export class ApiClient {
       xhr.ontimeout = () =>
         reject(new ApiError(0, 'network_error', 'The upload took too long. Try again.'))
       const form = new FormData()
-      form.append('file', image, `${kind}.webp`)
+      if (options.crop) {
+        // Text fields first; the server reads them with the file.
+        form.append('cropLeft', String(Math.round(options.crop.left)))
+        form.append('cropTop', String(Math.round(options.crop.top)))
+        form.append('cropWidth', String(Math.round(options.crop.width)))
+        form.append('cropHeight', String(Math.round(options.crop.height)))
+      }
+      const extension = image.type === 'image/gif' ? 'gif' : 'webp'
+      form.append('file', image, `${kind}.${extension}`)
       xhr.send(form)
     })
   }
@@ -471,7 +495,7 @@ export class ApiClient {
   }
 
   /** Profile pictures/banners are fetched with the session token (never public URLs). */
-  async fetchProfileMedia(mediaId: string, size: 'full' | 'small'): Promise<Blob> {
+  async fetchProfileMedia(mediaId: string, size: 'full' | 'small' | 'still'): Promise<Blob> {
     let res: Response
     try {
       res = await fetch(
@@ -483,6 +507,59 @@ export class ApiClient {
     }
     if (!res.ok) throw await errorFrom(res)
     return res.blob()
+  }
+
+  // ---- Soundboard (Milestone 14, API 6 servers) ----
+
+  listSoundboard(serverId: string): Promise<ApiSoundboardSound[]> {
+    return this.request('GET', `/api/servers/${encodeURIComponent(serverId)}/soundboard`)
+  }
+
+  /** Adds a clip (16-bit PCM WAV; see chat/wav.ts). */
+  async uploadSoundboard(
+    serverId: string,
+    clip: { name: string; emoji: string | null; wav: Blob }
+  ): Promise<ApiSoundboardSound> {
+    const form = new FormData()
+    form.append('name', clip.name)
+    if (clip.emoji) form.append('emoji', clip.emoji)
+    form.append('file', clip.wav, 'sound.wav')
+    let res: Response
+    try {
+      res = await fetch(`${this.baseUrl}/api/servers/${encodeURIComponent(serverId)}/soundboard`, {
+        method: 'POST',
+        headers: this.authHeaders(),
+        body: form,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS * 3)
+      })
+    } catch {
+      throw new ApiError(0, 'network_error', 'Cannot reach the server.')
+    }
+    if (!res.ok) throw await errorFrom(res)
+    return (await res.json()) as ApiSoundboardSound
+  }
+
+  deleteSoundboard(soundId: string): Promise<void> {
+    return this.request('DELETE', `/api/soundboard/${encodeURIComponent(soundId)}`)
+  }
+
+  /** Plays a clip in your current voice channel (the server checks you're there). */
+  playSoundboard(soundId: string): Promise<void> {
+    return this.request('POST', `/api/soundboard/${encodeURIComponent(soundId)}/play`)
+  }
+
+  async fetchSoundboardAudio(soundId: string): Promise<ArrayBuffer> {
+    let res: Response
+    try {
+      res = await fetch(`${this.baseUrl}/api/soundboard/${encodeURIComponent(soundId)}/audio`, {
+        headers: this.authHeaders(),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS * 2)
+      })
+    } catch {
+      throw new ApiError(0, 'network_error', 'Cannot reach the server.')
+    }
+    if (!res.ok) throw await errorFrom(res)
+    return res.arrayBuffer()
   }
 
   servers(): Promise<ApiServer[]> {
@@ -780,6 +857,27 @@ export class ApiClient {
       pinned ? 'PUT' : 'DELETE',
       `/api/channels/${encodeURIComponent(channelId)}/pins/${encodeURIComponent(messageId)}`
     )
+  }
+
+  // ---- Milestone 14: saved messages and personal notes (only you can see them) ----
+
+  savedMessages(): Promise<ApiSavedMessage[]> {
+    return this.request('GET', '/api/saved-messages')
+  }
+
+  setSaved(messageId: string, saved: boolean): Promise<unknown> {
+    return this.request(
+      saved ? 'PUT' : 'DELETE',
+      `/api/saved-messages/${encodeURIComponent(messageId)}`
+    )
+  }
+
+  userNote(userId: string): Promise<ApiUserNote> {
+    return this.request('GET', `/api/users/${encodeURIComponent(userId)}/note`)
+  }
+
+  setUserNote(userId: string, note: string): Promise<ApiUserNote> {
+    return this.request('PUT', `/api/users/${encodeURIComponent(userId)}/note`, { note })
   }
 
   readStates(): Promise<ApiReadState[]> {

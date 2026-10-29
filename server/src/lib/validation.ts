@@ -1,4 +1,12 @@
-import { LIMITS } from '../protocol.js'
+import {
+  AVATAR_DECORATIONS,
+  BANNER_PRESETS,
+  CUSTOMIZATION_LIMITS,
+  LIMITS,
+  NAME_STYLES,
+  PROFILE_EFFECTS,
+  type ApiProfileStyle
+} from '../protocol.js'
 import { badRequest } from './errors.js'
 
 // C0/C1 control characters except tab (\t) and newline (\n).
@@ -278,4 +286,56 @@ export function colorForName(name: string): string {
   let hash = 0
   for (const ch of name) hash = (hash * 31 + ch.codePointAt(0)!) >>> 0
   return AVATAR_PALETTE[hash % AVATAR_PALETTE.length]!
+}
+
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/
+const STYLE_KEYS = new Set(['colors', 'angle', 'decoration', 'effect', 'banner', 'nameStyle'])
+
+function pickId<T extends string>(value: unknown, allowed: readonly T[], what: string): T | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string' || !allowed.includes(value as T)) {
+    throw badRequest(`Unknown ${what}`, 'invalid_profile_style')
+  }
+  return value as T
+}
+
+/**
+ * Milestone 14: a profile style from a client (or the database) → a clean style, or null when
+ * it sets nothing. Only known keys, allow-listed ids, #rrggbb colors and whole-degree angles.
+ */
+export function normalizeProfileStyle(input: unknown): ApiProfileStyle | null {
+  if (input === null) return null
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw badRequest('Profile style must be an object', 'invalid_profile_style')
+  }
+  const raw = input as Record<string, unknown>
+  for (const key of Object.keys(raw)) {
+    if (!STYLE_KEYS.has(key)) throw badRequest(`Unknown profile style field: ${key}`, 'invalid_profile_style')
+  }
+  const colors = raw.colors ?? []
+  if (
+    !Array.isArray(colors) ||
+    colors.length > CUSTOMIZATION_LIMITS.gradientMaxColors ||
+    !colors.every((c) => typeof c === 'string' && HEX_COLOR.test(c))
+  ) {
+    throw badRequest(
+      `Profile colors must be up to ${CUSTOMIZATION_LIMITS.gradientMaxColors} #rrggbb colors`,
+      'invalid_profile_style'
+    )
+  }
+  const angle = raw.angle ?? 180
+  if (typeof angle !== 'number' || !Number.isInteger(angle) || angle < 0 || angle > 359) {
+    throw badRequest('Gradient angle must be a whole number from 0 to 359', 'invalid_profile_style')
+  }
+  const style: ApiProfileStyle = {
+    colors: (colors as string[]).map((c) => c.toLowerCase()),
+    angle,
+    decoration: pickId(raw.decoration, AVATAR_DECORATIONS, 'avatar decoration'),
+    effect: pickId(raw.effect, PROFILE_EFFECTS, 'profile effect'),
+    banner: pickId(raw.banner, BANNER_PRESETS, 'banner'),
+    nameStyle: pickId(raw.nameStyle, NAME_STYLES, 'name style')
+  }
+  const empty =
+    style.colors.length === 0 && !style.decoration && !style.effect && !style.banner && !style.nameStyle
+  return empty ? null : style
 }

@@ -7,7 +7,7 @@
  * - libvips refuses images above the pixel limit (decompression bombs) and fails on corrupt data;
  * - EXIF orientation is applied, then all metadata (EXIF, GPS, XMP, ICC, comments) is dropped
  *   because the output is a freshly encoded WebP without metadata;
- * - animated GIF/WebP are flattened to their first frame.
+ * - animated GIF/WebP are flattened to their first frame, unless the caller keeps the animation\n *   (Milestone 14): then every frame is re-encoded and a still first frame is stored too.
  * The original upload is never stored or served, so polyglot/malformed files can't reach other
  * clients. Files are named by random server ids and live inside the persistent data volume.
  */
@@ -17,7 +17,13 @@ import { readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import sharp from 'sharp'
 import type { Metadata, Sharp } from 'sharp'
-import { LIMITS, PROFILE_IMAGE_SIZES, type ProfileImageKind } from '../protocol.js'
+import {
+  ANIMATED_PROFILE_IMAGE_SIZES,
+  CUSTOMIZATION_LIMITS,
+  LIMITS,
+  PROFILE_IMAGE_SIZES,
+  type ProfileImageKind
+} from '../protocol.js'
 
 const ID_SHAPE = /^[a-f0-9]{32}$/
 
@@ -25,7 +31,7 @@ export function isProfileMediaId(id: unknown): id is string {
   return typeof id === 'string' && ID_SHAPE.test(id)
 }
 
-export type ProfileImageSize = 'full' | 'small'
+export type ProfileImageSize = 'full' | 'small' | 'still'
 
 /** Raised for images we refuse; `code` maps to an HTTP error in the route. */
 export class ProfileImageError extends Error {
@@ -53,6 +59,9 @@ export function sniffImageFormat(head: Uint8Array): 'png' | 'jpeg' | 'webp' | 'g
 export interface ProcessedImage {
   full: Buffer
   small: Buffer
+  /** Animated images only: the first frame, still (served as size 'still'). */
+  still?: Buffer
+  animated: boolean
   width: number
   height: number
   sha256: string
@@ -90,25 +99,74 @@ sharp.concurrency(2)
 
 const gate = new ImageGate(2, 8)
 
+/** A crop rectangle in source pixels (after EXIF orientation), chosen in the app's cropper. */
+export interface CropRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+export interface ProcessOptions {
+  /** Keep GIF/WebP animation (Milestone 14). Otherwise animations are flattened to frame 1. */
+  keepAnimation?: boolean
+  /** Crop to this rectangle before resizing (otherwise: centred cover crop). */
+  crop?: CropRect | null
+}
+
+const tooLarge = (): ProfileImageError =>
+  new ProfileImageError(
+    'too_large',
+    `Images can be at most ${LIMITS.profileImageMaxPixels / 1_000_000} megapixels.`
+  )
+
+/** The crop must lie inside the image, keep the target's shape (±3%) and meet the minimum size. */
+function checkCrop(kind: ProfileImageKind, crop: CropRect, w: number, h: number): CropRect {
+  const ints = [crop.left, crop.top, crop.width, crop.height]
+  const min =
+    kind === 'avatar'
+      ? { width: LIMITS.avatarMinSize, height: LIMITS.avatarMinSize }
+      : { width: LIMITS.bannerMinWidth, height: LIMITS.bannerMinHeight }
+  const target = PROFILE_IMAGE_SIZES[kind].full
+  const ratio = crop.width / crop.height
+  const wanted = target.width / target.height
+  if (
+    !ints.every((n) => Number.isInteger(n) && n >= 0) ||
+    crop.left + crop.width > w ||
+    crop.top + crop.height > h ||
+    crop.width < min.width ||
+    crop.height < min.height ||
+    Math.abs(ratio - wanted) / wanted > 0.03
+  ) {
+    throw new ProfileImageError('unreadable', 'The selected area doesn’t fit this image.')
+  }
+  return crop
+}
+
 /**
  * Validates and re-encodes one profile image. `input` is the path of the uploaded temp file and
  * `head` its first bytes. Throws ProfileImageError for anything unacceptable.
+ *
+ * With `keepAnimation`, an animated GIF/WebP stays animated: every frame is cropped/resized and
+ * re-encoded as an animated WebP (frame count and total pixels are bounded before decoding),
+ * and a still first frame is stored next to it for reduced motion and lists.
  */
 export async function processProfileImage(
   kind: ProfileImageKind,
   input: string,
-  head: Uint8Array
+  head: Uint8Array,
+  options: ProcessOptions = {}
 ): Promise<ProcessedImage> {
   const format = sniffImageFormat(head)
   if (!format) {
     throw new ProfileImageError('unsupported_type', 'Use a PNG, JPEG, WebP or GIF image.')
   }
   return gate.run(async () => {
-    const open = (): Sharp =>
+    const open = (animated = false): Sharp =>
       sharp(input, {
-        limitInputPixels: LIMITS.profileImageMaxPixels,
+        limitInputPixels: animated ? CUSTOMIZATION_LIMITS.animatedMaxPixels : LIMITS.profileImageMaxPixels,
         failOn: 'error',
-        animated: false,
+        animated,
         sequentialRead: true
       })
 
@@ -116,12 +174,7 @@ export async function processProfileImage(
     try {
       meta = await open().metadata()
     } catch (err) {
-      if (/pixel limit/i.test(String((err as Error)?.message))) {
-        throw new ProfileImageError(
-          'too_large',
-          `Images can be at most ${LIMITS.profileImageMaxPixels / 1_000_000} megapixels.`
-        )
-      }
+      if (/pixel limit/i.test(String((err as Error)?.message))) throw tooLarge()
       throw new ProfileImageError('unreadable', 'This image could not be read.')
     }
     // The decoder must agree with the magic bytes (no format confusion).
@@ -130,12 +183,7 @@ export async function processProfileImage(
     }
     const width = meta.width ?? 0
     const height = meta.height ?? 0
-    if (width * height > LIMITS.profileImageMaxPixels) {
-      throw new ProfileImageError(
-        'too_large',
-        `Images can be at most ${LIMITS.profileImageMaxPixels / 1_000_000} megapixels.`
-      )
-    }
+    if (width * height > LIMITS.profileImageMaxPixels) throw tooLarge()
     // Orientation 5–8 swaps width and height.
     const swap = (meta.orientation ?? 1) >= 5
     const w = swap ? height : width
@@ -152,31 +200,83 @@ export async function processProfileImage(
           : `Banners must be at least ${LIMITS.bannerMinWidth}×${LIMITS.bannerMinHeight} pixels.`
       )
     }
+    const crop = options.crop ? checkCrop(kind, options.crop, w, h) : null
 
-    const sizes = PROFILE_IMAGE_SIZES[kind]
-    const encode = (target: { width: number; height: number }): Promise<Buffer> =>
-      open()
-        .rotate() // apply EXIF orientation
-        .resize(target.width, target.height, { fit: 'cover', position: 'centre' })
+    const pages = meta.pages ?? 1
+    const animated =
+      Boolean(options.keepAnimation) && pages > 1 && (format === 'gif' || format === 'webp')
+    if (animated) {
+      if (pages > CUSTOMIZATION_LIMITS.animatedMaxFrames) {
+        throw new ProfileImageError(
+          'too_large',
+          `Animations can have at most ${CUSTOMIZATION_LIMITS.animatedMaxFrames} frames.`
+        )
+      }
+      if (width * height * pages > CUSTOMIZATION_LIMITS.animatedMaxPixels) {
+        throw new ProfileImageError(
+          'too_large',
+          'This animation is too large. Use a shorter or smaller one.'
+        )
+      }
+    }
+
+    const shape = (img: Sharp, target: { width: number; height: number }): Sharp => {
+      const oriented = img.rotate() // apply EXIF orientation
+      return (crop ? oriented.extract(crop) : oriented).resize(target.width, target.height, {
+        fit: 'cover',
+        position: 'centre'
+      })
+    }
+    const still = (target: { width: number; height: number }): Promise<Buffer> =>
+      shape(open(), target)
         .webp({ quality: 86, effort: 4, smartSubsample: true })
         .timeout({ seconds: 20 })
         .toBuffer()
+    const moving = (target: { width: number; height: number }): Promise<Buffer> =>
+      shape(open(true), target)
+        .webp({ quality: 80, effort: 4, smartSubsample: true, loop: 0 })
+        .timeout({ seconds: 60 })
+        .toBuffer()
+
+    let result: ProcessedImage
     try {
-      const full = await encode(sizes.full)
-      const small = await encode(sizes.small)
-      return {
-        full,
-        small,
-        width: sizes.full.width,
-        height: sizes.full.height,
-        sha256: createHash('sha256').update(full).digest('hex')
+      if (animated) {
+        const sizes = ANIMATED_PROFILE_IMAGE_SIZES[kind]
+        const full = await moving(sizes.full)
+        if (full.length > CUSTOMIZATION_LIMITS.animatedMaxOutputBytes) {
+          throw new ProfileImageError(
+            'too_large',
+            'This animation is too large. Use a shorter or smaller one.'
+          )
+        }
+        result = {
+          full,
+          small: await moving(sizes.small),
+          still: await still(PROFILE_IMAGE_SIZES[kind].full),
+          animated: true,
+          width: sizes.full.width,
+          height: sizes.full.height,
+          sha256: createHash('sha256').update(full).digest('hex')
+        }
+      } else {
+        const sizes = PROFILE_IMAGE_SIZES[kind]
+        const full = await still(sizes.full)
+        result = {
+          full,
+          small: await still(sizes.small),
+          animated: false,
+          width: sizes.full.width,
+          height: sizes.full.height,
+          sha256: createHash('sha256').update(full).digest('hex')
+        }
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof ProfileImageError) throw err
       throw new ProfileImageError('unreadable', 'This image could not be processed.')
     }
+    return result
   })
 }
-
 /**
  * Processed files on disk:
  *   <root>/<id[0..2]>/<id>.webp        full size
@@ -190,20 +290,23 @@ export class ProfileMediaStore {
 
   pathFor(id: string, size: ProfileImageSize): string {
     if (!isProfileMediaId(id)) throw new Error('invalid profile media id')
-    return join(this.root, id.slice(0, 2), size === 'full' ? `${id}.webp` : `${id}.small.webp`)
+    const name = size === 'full' ? `${id}.webp` : `${id}.${size}.webp`
+    return join(this.root, id.slice(0, 2), name)
   }
 
   newId(): string {
     return randomBytes(16).toString('hex')
   }
 
-  /** Writes both sizes (temp file + atomic rename, so readers never see partial files). */
+  /** Writes every size (temp file + atomic rename, so readers never see partial files). */
   async save(id: string, image: ProcessedImage): Promise<void> {
     mkdirSync(join(this.root, id.slice(0, 2)), { recursive: true })
-    for (const [size, data] of [
+    const files: [ProfileImageSize, Buffer][] = [
       ['full', image.full],
       ['small', image.small]
-    ] as const) {
+    ]
+    if (image.still) files.push(['still', image.still])
+    for (const [size, data] of files) {
       const target = this.pathFor(id, size)
       const tmp = `${target}.${randomBytes(6).toString('hex')}.part`
       await writeFile(tmp, data, { flag: 'wx' })
@@ -214,7 +317,7 @@ export class ProfileMediaStore {
   async remove(id: string | null | undefined): Promise<void> {
     if (!isProfileMediaId(id)) return
     await Promise.all(
-      (['full', 'small'] as const).map((size) =>
+      (['full', 'small', 'still'] as const).map((size) =>
         unlink(this.pathFor(id, size)).catch(() => undefined)
       )
     )

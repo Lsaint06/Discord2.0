@@ -8,6 +8,8 @@ import type { Repository } from './db/repository.js'
 
 export type AuditAction =
   | 'auth.login'
+  | 'soundboard.sound_added'
+  | 'soundboard.sound_removed'
   | 'auth.login_failed'
   | 'auth.logout'
   | 'auth.logout_all'

@@ -1,5 +1,6 @@
 import type { UserSettings } from '../types'
 import { DEFAULT_SOUND_EVENTS, DEFAULT_SOUND_VOLUME } from '../sound/soundPolicy'
+import { DEFAULT_WALLPAPER_INTENSITY } from '../lib/wallpapers'
 
 export const defaultSettings: UserSettings = {
   fontSize: 15,
@@ -37,7 +38,13 @@ export const defaultSettings: UserSettings = {
   soundEvents: { ...DEFAULT_SOUND_EVENTS },
   soundCategoryVolumes: {},
   soundEventVolumes: {},
-  soundCustom: {}
+  soundCustom: {},
+  themeEffects: 'full',
+  profileEffects: 'full',
+  soundPack: 'signature',
+  soundboardVolume: 70,
+  chatWallpaper: null,
+  chatWallpaperIntensity: DEFAULT_WALLPAPER_INTENSITY
 }
 
 export const DEFAULT_ACCENT = '#6d72f6'

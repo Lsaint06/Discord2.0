@@ -18,8 +18,10 @@ import {
   type ApiMember,
   type ApiPreferences,
   type ApiProfile,
+  type ApiSavedMessage,
   type ApiServer,
   type ApiUser,
+  type ApiUserNote,
   type ApiVoiceToken,
   type ProfileImageKind,
   type RelationshipType,
@@ -55,6 +57,7 @@ import {
   SERVER_ICON_PREFIX
 } from '../lib/profileMedia'
 import { applyRelationship, bumpConversation, type Relationships } from '../chat/conversations'
+import { applySaved, type SavedIds } from '../chat/saved'
 import { checkLivekitUrl } from '../net/endpoints'
 import { extraLivekitUrl } from '../net/config'
 
@@ -90,12 +93,29 @@ interface Options {
   ) => void
   /** You left, were removed from, or closed a conversation (possibly on another device). */
   onConversationRemoved?: (channelId: string, reason: 'left' | 'removed' | 'closed') => void
+  /** Milestone 14: a message you sent couldn't be delivered (for the error sound). */
+  onMessageFailed?: () => void
+  /** Milestone 14: someone played a soundboard clip in your voice channel. */
+  onSoundboardPlay?: (event: {
+    serverId: string
+    channelId: string
+    soundId: string
+    userId: string
+  }) => void
 }
 
 export interface SendInput {
   content: string
   replyTo?: Message | null
   attachments?: ApiAttachment[]
+}
+
+/** Milestone 14: one of your saved messages, as shown in the Saved Messages panel. */
+export interface SavedItem {
+  savedAt: number
+  /** null for direct and group conversations. */
+  serverId: string | null
+  message: Message
 }
 
 const PAGE = LIMITS.messagesPageDefault
@@ -190,6 +210,15 @@ export interface Backend {
   toggleReaction: (message: Message, emoji: string) => void
   setPinned: (message: Message, pinned: boolean) => Promise<string | null>
   fetchPins: (channelId: string) => Promise<Message[]>
+  /** Milestone 14: your saved messages (id → when saved); null until loaded. Private. */
+  saved: Record<string, number> | null
+  /** Your saved messages you can still read, newest first (also refreshes `saved`). */
+  fetchSaved: () => Promise<SavedItem[]>
+  setSaved: (messageId: string, saved: boolean) => Promise<string | null>
+  /** Milestone 14: your private notes about people (userId → note), as loaded so far. */
+  notes: Record<string, string>
+  fetchNote: (userId: string) => Promise<string>
+  saveNote: (userId: string, note: string) => Promise<string | null>
   search: (params: SearchParams) => Promise<{ messages: Message[]; nextBefore: string | null }>
   uploadAttachment: (
     channelId: string,
@@ -239,6 +268,12 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     onConversationRemoved
   } = options
 
+  // Milestone 14: soundboard plays go to the workspace (it owns the sound service).
+  const soundboardPlayRef = useRef(options.onSoundboardPlay)
+  useEffect(() => {
+    soundboardPlayRef.current = options.onSoundboardPlay
+  })
+
   const [api] = useState(() => new ApiClient(session.httpUrl, session.token))
   const [attachments] = useState(() => new AttachmentCache((id) => api.fetchAttachment(id)))
   const [profileMedia] = useState(
@@ -247,7 +282,7 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         (key) => {
           if (key.startsWith(SERVER_ICON_PREFIX)) {
             const { id, size } = parseProfileMediaKey(key.slice(SERVER_ICON_PREFIX.length))
-            return api.fetchServerIcon(id, size)
+            return api.fetchServerIcon(id, size === 'still' ? 'full' : size)
           }
           if (key.startsWith(GIF_PREFIX)) {
             const { id, size } = parseGifKey(key)
@@ -260,6 +295,8 @@ export function useBackend(session: BackendSession, options: Options): Backend {
       )
   )
   const [preferences, setPreferences] = useState<ApiPreferences>(DEFAULT_PREFERENCES)
+  const [saved, setSavedIds] = useState<SavedIds>(null)
+  const [notes, setNotes] = useState<Record<string, string>>({})
   const [preferencesLoaded, setPreferencesLoaded] = useState(false)
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
   const [loadError, setLoadError] = useState<string>()
@@ -496,6 +533,20 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     // After a reconnect, re-fetch what may have changed while we were offline: new messages,
     // and edits / deletions / reactions within the latest page of each open channel.
     const resync = async (): Promise<void> => {
+      // Preferences changed on another device meanwhile, or the server was updated and now keeps
+      // more of them (Milestone 14: the app theme). An older copy than ours is ignored.
+      api
+        .preferences()
+        .then((prefs) => {
+          if (cancelled) return
+          setPreferences((prev) =>
+            prev.updatedAt !== null && prefs.updatedAt !== null && prefs.updatedAt < prev.updatedAt
+              ? prev
+              : prefs
+          )
+          setPreferencesLoaded(true)
+        })
+        .catch(() => undefined)
       try {
         const serverList = await api.servers()
         if (cancelled) return
@@ -640,6 +691,10 @@ export function useBackend(session: BackendSession, options: Options): Backend {
         setPreferences(prefs)
         setPreferencesLoaded(true)
       },
+      onSoundboardPlay: (event) => soundboardPlayRef.current?.(event),
+      onSavedMessageUpdate: ({ messageId, saved: isSaved, savedAt }) =>
+        setSavedIds((prev) => applySaved(prev, messageId, isSaved, savedAt)),
+      onUserNoteUpdate: ({ userId, note }) => setNotes((prev) => ({ ...prev, [userId]: note })),
       onServerCreate: (s) => {
         setServers((prev) => (prev.some((x) => x.id === s.id) ? prev : [...prev, s]))
       },
@@ -957,7 +1012,12 @@ export function useBackend(session: BackendSession, options: Options): Backend {
 
   // ---- Sending ----
 
+  const messageFailedRef = useRef(options.onMessageFailed)
+  useEffect(() => {
+    messageFailedRef.current = options.onMessageFailed
+  })
   const markFailed = useCallback((channelId: string, nonce: string, failed: string) => {
+    messageFailedRef.current?.()
     setChannels((prev) => {
       const ch = prev[channelId]
       if (!ch) return prev
@@ -1156,6 +1216,60 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     [api]
   )
 
+  // ---- Milestone 14: saved messages and personal notes (private to you) ----
+
+  const fetchSaved = useCallback(async (): Promise<SavedItem[]> => {
+    const list: ApiSavedMessage[] = await api.savedMessages()
+    setSavedIds(Object.fromEntries(list.map((s) => [s.message.id, s.savedAt])))
+    return list.map((s) => ({
+      savedAt: s.savedAt,
+      serverId: s.serverId,
+      message: toMessage(s.message)
+    }))
+  }, [api])
+
+  const setSaved = useCallback(
+    async (messageId: string, value: boolean): Promise<string | null> => {
+      let previous: SavedIds = null
+      setSavedIds((prev) => {
+        previous = prev
+        return applySaved(prev, messageId, value, null)
+      })
+      try {
+        await api.setSaved(messageId, value)
+        return null
+      } catch (err) {
+        setSavedIds(previous)
+        if (handleAuthError(err)) return 'Signed out'
+        return describeError(err)
+      }
+    },
+    [api, handleAuthError]
+  )
+
+  const fetchNote = useCallback(
+    async (userId: string): Promise<string> => {
+      const result: ApiUserNote = await api.userNote(userId)
+      setNotes((prev) => ({ ...prev, [userId]: result.note }))
+      return result.note
+    },
+    [api]
+  )
+
+  const saveNote = useCallback(
+    async (userId: string, note: string): Promise<string | null> => {
+      try {
+        const result = await api.setUserNote(userId, note)
+        setNotes((prev) => ({ ...prev, [userId]: result.note }))
+        return null
+      } catch (err) {
+        if (handleAuthError(err)) return 'Signed out'
+        return describeError(err)
+      }
+    },
+    [api, handleAuthError]
+  )
+
   const search = useCallback(
     async (params: SearchParams) => {
       const result = await api.search(params)
@@ -1259,8 +1373,12 @@ export function useBackend(session: BackendSession, options: Options): Backend {
   )
 
   const uploadProfileImage = useCallback(
-    (kind: ProfileImageKind, image: Blob, onProgress?: (fraction: number) => void) =>
-      accountAction(() => api.uploadProfileImage(kind, image, { onProgress })),
+    (
+      kind: ProfileImageKind,
+      image: Blob,
+      onProgress?: (fraction: number) => void,
+      crop?: { left: number; top: number; width: number; height: number }
+    ) => accountAction(() => api.uploadProfileImage(kind, image, { onProgress, crop })),
     [accountAction, api]
   )
 
@@ -1589,6 +1707,12 @@ export function useBackend(session: BackendSession, options: Options): Backend {
     toggleReaction,
     setPinned,
     fetchPins,
+    saved,
+    fetchSaved,
+    setSaved,
+    notes,
+    fetchNote,
+    saveNote,
     search,
     uploadAttachment,
     deleteAttachment,

@@ -18,8 +18,21 @@ import {
 } from './net/session'
 import { legacyAppearanceFrom } from './lib/appearance'
 import { ProfileMediaContext } from './lib/profileMedia'
+import { ProfileMotionContext } from './lib/profileMotion'
+import { decorationOf } from './lib/profileStyle'
 import { DEFAULT_ACCENT } from './data/defaults'
 import { useAppearance, useReducedMotion } from './hooks/useAppearance'
+import {
+  appThemeById,
+  localThemeKey,
+  readLocalTheme,
+  readThemeUnsynced,
+  resolveAppTheme,
+  unsyncedThemeAction,
+  writeLocalTheme,
+  writeThemeUnsynced
+} from './lib/themes'
+import type { AppThemeId } from './net/protocol'
 import { GifContext, ReducedMotionContext, type GifSupport } from './chat/gifContext'
 import { DiskDownloadContext, type DiskDownloads } from './chat/diskDownloads'
 import { UploadAbortedError, type LargeFileSupport } from './net/api'
@@ -91,6 +104,7 @@ import ChannelSidebar, { type VoiceUserDetails } from './components/ChannelSideb
 import ChatPanel, { type ConversationInfo, type JumpTarget } from './components/ChatPanel'
 import MemberList from './components/MemberList'
 import UserPanel, { type VoiceConnection } from './components/UserPanel'
+import SoundboardPanel from './components/SoundboardPanel'
 import SettingsPanel, { type SectionId } from './components/SettingsPanel'
 import ProfilePopout from './components/profile/ProfilePopout'
 import ProfileModal from './components/profile/ProfileModal'
@@ -289,12 +303,25 @@ function Workspace({
       conversationRemovedRef.current(channelId, reason),
     []
   )
+  const attentionFlashRef = useRef(false)
+  const messageFailedRef = useRef<() => void>(() => undefined)
+  const onMessageFailed = useCallback(() => messageFailedRef.current(), [])
+  const soundboardRef = useRef<
+    (event: { serverId: string; channelId: string; soundId: string; userId: string }) => void
+  >(() => undefined)
+  const onSoundboardPlay = useCallback(
+    (event: { serverId: string; channelId: string; soundId: string; userId: string }) =>
+      soundboardRef.current(event),
+    []
+  )
   const backend = useBackend(session, {
     onSessionInvalid: handleSessionInvalid,
     onIncomingMessage,
     onServerRemoved,
     onRelationshipChanged,
-    onConversationRemoved
+    onConversationRemoved,
+    onMessageFailed,
+    onSoundboardPlay
   })
 
   useEffect(() => {
@@ -303,6 +330,9 @@ function Workspace({
 
   // ---- Sound effects (one service for the whole workspace; see sound/) ----
   const [sound] = useState(() => new SoundService())
+  useEffect(() => {
+    messageFailedRef.current = () => sound.play('sendFailed')
+  }, [sound])
   const [seenMessages] = useState(() => new SeenMessages())
   const soundPrefs = useMemo<SoundPreferences>(
     () => ({
@@ -311,7 +341,8 @@ function Workspace({
       events: settings.soundEvents,
       categoryVolumes: settings.soundCategoryVolumes,
       eventVolumes: settings.soundEventVolumes,
-      custom: settings.soundCustom
+      custom: settings.soundCustom,
+      pack: settings.soundPack
     }),
     [
       settings.soundEffects,
@@ -319,13 +350,78 @@ function Workspace({
       settings.soundEvents,
       settings.soundCategoryVolumes,
       settings.soundEventVolumes,
-      settings.soundCustom
+      settings.soundCustom,
+      settings.soundPack
     ]
   )
 
   // ---- Appearance (synced preferences + this device's font size) and automatic idle ----
-  useAppearance(backend.preferences, settings.fontSize, settings.contrast)
+  // Milestone 14: the full-app theme follows your account on servers that support it (API 6);
+  // this device keeps a copy so the theme applies instantly at start-up and on older servers.
+  const themeKey = useMemo(
+    () => localThemeKey(session.httpUrl, session.username),
+    [session.httpUrl, session.username]
+  )
+  const [localTheme, setLocalTheme] = useState<AppThemeId | null>(() => readLocalTheme(themeKey))
+  // Picked while this server couldn't save themes: moved to the account once it can.
+  const [themeUnsynced, setThemeUnsynced] = useState(() => readThemeUnsynced(themeKey))
+  const syncedTheme = backend.preferences.appTheme
+  const [customizationSupported, setCustomizationSupported] = useState(false)
+  // Milestone 14: private notes about people (shown in profile popouts on servers that keep them).
+  const [userNotesSupported, setUserNotesSupported] = useState(false)
+  // Once the server's saved choice is known (API 6), it wins over this device's copy.
+  const serverTheme: AppThemeId | null | undefined =
+    customizationSupported && backend.preferencesLoaded && syncedTheme !== undefined
+      ? (appThemeById(syncedTheme)?.id ?? null)
+      : undefined
+  const appThemeId = resolveAppTheme(serverTheme, localTheme, themeUnsynced)
+  // Keep this device's copy in step (instant theme at the next start, and on older servers).
+  useEffect(() => {
+    writeLocalTheme(themeKey, appThemeId)
+  }, [appThemeId, themeKey])
+  // Once per start: a theme picked before the server could save it becomes the account's, unless
+  // another device has chosen one since. A failed save is retried at the next start (no loop).
+  const themeMoveStarted = useRef(false)
+  const updatePreferences = backend.updatePreferences
+  useEffect(() => {
+    if (themeMoveStarted.current) return
+    const action = unsyncedThemeAction(serverTheme, localTheme, themeUnsynced)
+    if (action === 'wait') return
+    themeMoveStarted.current = true
+    const settle = (): void => {
+      writeThemeUnsynced(themeKey, false)
+      setThemeUnsynced(false)
+    }
+    if (action === 'drop') void Promise.resolve().then(settle)
+    else
+      void updatePreferences({ appTheme: localTheme }).then((error) => {
+        if (!error) settle()
+      })
+  }, [serverTheme, localTheme, themeUnsynced, themeKey, updatePreferences])
+  // A theme being previewed in Settings (undefined = none): shown everywhere until applied/cancelled.
+  const [themePreview, setThemePreview] = useState<AppThemeId | null | undefined>(undefined)
+  const appTheme = appThemeById(themePreview !== undefined ? themePreview : appThemeId)
+  const setAppTheme = useCallback(
+    async (id: AppThemeId | null): Promise<string | null> => {
+      setLocalTheme(id)
+      writeLocalTheme(themeKey, id)
+      writeThemeUnsynced(themeKey, !customizationSupported)
+      setThemeUnsynced(!customizationSupported)
+      if (!customizationSupported) return null
+      return backend.updatePreferences({ appTheme: id })
+    },
+    [backend, customizationSupported, themeKey]
+  )
+  useAppearance(
+    backend.preferences,
+    settings.fontSize,
+    settings.contrast,
+    appTheme,
+    settings.themeEffects
+  )
   const reducedMotion = useReducedMotion(backend.preferences.reducedMotion)
+  // Profile decorations/effects/animated pictures move only if motion is allowed here.
+  const profileMotion = !reducedMotion && settings.profileEffects === 'full'
   useIdleDetection(backend.preferences.idleTimeoutMinutes, backend.setIdle)
 
   // Large downloads go straight to disk through the main process (never through memory).
@@ -351,21 +447,25 @@ function Workspace({
   // Asked again after every (re)connection: the first try may have failed while the server was
   // restarting, and an administrator may have switched a feature on or off since.
   const gatewayConnected = backend.gateway.status === 'connected'
+  const { fetchSaved } = backend
   useEffect(() => {
     if (!gatewayConnected) return
     let cancelled = false
     backend.api
       .meta()
-      .then(
-        (meta) =>
-          !cancelled &&
-          setServerFeatures({ gifs: meta.gifs ?? null, largeFiles: meta.largeFiles ?? null })
-      )
+      .then((meta) => {
+        if (cancelled) return
+        setServerFeatures({ gifs: meta.gifs ?? null, largeFiles: meta.largeFiles ?? null })
+        setCustomizationSupported(meta.customization === true)
+        // Milestone 14: private saved messages (the bookmark buttons appear once loaded).
+        if (meta.savedMessages === true) void fetchSaved().catch(() => undefined)
+        setUserNotesSupported(meta.userNotes === true)
+      })
       .catch(() => undefined)
     return () => {
       cancelled = true
     }
-  }, [backend.api, gatewayConnected])
+  }, [backend.api, gatewayConnected, fetchSaved])
 
   // ---- Uploads: owned by the workspace, so switching channels never cancels one ----
   const uploadDepsRef = useRef<UploadManagerDeps | null>(null)
@@ -398,7 +498,12 @@ function Workspace({
       isCancelled: (err) => err instanceof UploadAbortedError || err instanceof LargeUploadAborted,
       createPreview: (file) => URL.createObjectURL(file),
       revokePreview: (url) => URL.revokeObjectURL(url),
-      store: largeUploadStore
+      store: largeUploadStore,
+      // Milestone 14: a failure always sounds; success only for uploads you had to wait for.
+      onSettled: (outcome, ms) => {
+        if (outcome === 'failed') sound.play('uploadFailed')
+        else if (ms > 4000) sound.play('uploadDone')
+      }
     }
   })
   // Signing out (or switching account) cancels everything and deletes unsent attachments.
@@ -449,6 +554,26 @@ function Workspace({
     code: settings.pushToTalkKey,
     global: settings.pushToTalkGlobal
   })
+  // Milestone 14: optional push-to-talk cues (off by default), only while connected.
+  const pttWasActive = useRef(false)
+  useEffect(() => {
+    if (pushToTalkMode && voiceStatus === 'connected' && ptt.active !== pttWasActive.current) {
+      sound.play(ptt.active ? 'pttOn' : 'pttOff')
+    }
+    pttWasActive.current = ptt.active
+  }, [ptt.active, pushToTalkMode, voiceStatus, sound])
+  // Milestone 14: soundboard clips played in your voice channel (not while you're deafened).
+  useEffect(() => {
+    soundboardRef.current = (event) => {
+      if (deafened || voiceStatus !== 'connected' || event.channelId !== voice.state.channelId)
+        return
+      sound.playClip(
+        event.soundId,
+        () => backend.api.fetchSoundboardAudio(event.soundId),
+        settings.soundboardVolume
+      )
+    }
+  })
   // Permissions in the voice channel we're in (from the server's channel list).
   const voicePerms = useMemo(() => {
     if (!voiceChannelId) return undefined
@@ -459,6 +584,10 @@ function Workspace({
     return undefined
   }, [backend.servers, voiceChannelId])
   const canSpeak = hasPermission(voicePerms, Permissions.speak)
+  // Milestone 14: the server of the voice channel you're in (for its soundboard).
+  const voiceServer = voiceChannelId
+    ? backend.servers.find((s) => s.channels.some((c) => c.id === voiceChannelId))
+    : undefined
   const canStream = hasPermission(voicePerms, Permissions.stream)
   useEffect(() => {
     voice.session.setMicState({
@@ -497,7 +626,10 @@ function Workspace({
         bio: u.bio,
         pronouns: u.pronouns,
         createdAt: u.createdAt,
-        customStatus: isSelf ? selfCustomStatus : u.customStatus
+        customStatus: isSelf ? selfCustomStatus : u.customStatus,
+        profileStyle: u.profileStyle ?? null,
+        avatarAnimated: u.avatarAnimated === true,
+        bannerAnimated: u.bannerAnimated === true
       }
     },
     [backend.users, selfId, selfStatus, selfCustomStatus]
@@ -903,11 +1035,18 @@ function Workspace({
           activeChannelId: viewChannelId,
           windowFocused,
           mentionsMe,
-          mentionsOnly
+          mentionsOnly,
+          // Milestone 14: one-to-one conversations have their own sound (groups use the
+          // message chime, which coalesces in busy chats).
+          isDirect: conversation?.kind === 'dm'
         },
         soundPrefs
       )
       const played = wantedSound ? sound.play(wantedSound) : 'skipped'
+      // Milestone 14: blink the taskbar button for mentions and direct messages while unfocused.
+      if ((wantedSound === 'mention' || wantedSound === 'directMessage') && !windowFocused) {
+        attentionFlashRef.current = true
+      }
 
       const permission =
         typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
@@ -949,6 +1088,8 @@ function Workspace({
         tag: m.channelId
       })
       n.onclick = () => {
+        // Milestone 14: also restores a minimized or tray-hidden window.
+        void window.d2?.lifecycle?.showWindow()
         window.focus()
         jumpTo(m.channelId, m.id)
       }
@@ -973,6 +1114,21 @@ function Workspace({
       Object.fromEntries(Object.entries(backend.readStates).map(([id, r]) => [id, r.unreadCount])),
     [backend.readStates]
   )
+
+  // Milestone 14: taskbar overlay dot for unread mentions, direct messages and friend requests
+  // (and a flash for new mentions/DMs while the window isn't focused). Before any early return.
+  const attentionCount =
+    pendingRequestCount(backend.relationships) +
+    Object.keys(backend.conversations).reduce(
+      (sum, id) => sum + (id === viewChannelId ? 0 : (unreadCounts[id] ?? 0)),
+      0
+    ) +
+    Object.values(mentionsByServer).reduce((a, b) => a + b, 0)
+  useEffect(() => {
+    const flash = attentionFlashRef.current
+    attentionFlashRef.current = false
+    void window.d2?.lifecycle?.attention(attentionCount, flash)
+  }, [attentionCount])
 
   // Mute/deafen sounds come only from your own actions (buttons, settings), never from state sync.
   const toggleMute = (): void => {
@@ -1057,6 +1213,10 @@ function Workspace({
   useEffect(() => {
     relationshipChangedRef.current = (userId, type, previous) => {
       const name = resolveUser(userId).name
+      // Milestone 14: your request was accepted.
+      if (type === 'friend' && previous === 'outgoing' && statusPreference !== 'dnd') {
+        sound.play('friendAccepted')
+      }
       if (type === 'incoming' && previous !== 'incoming') {
         if (statusPreference === 'dnd') return
         sound.play('friendRequest')
@@ -1071,6 +1231,7 @@ function Workspace({
             tag: `friend-${userId}`
           })
           n.onclick = () => {
+            void window.d2?.lifecycle?.showWindow()
             window.focus()
             setActiveServerId(HOME_ID)
             setActiveConversationId(null)
@@ -1159,7 +1320,11 @@ function Workspace({
     },
     [backend]
   )
-  const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false)
+    // A theme preview never outlives Settings.
+    setThemePreview(undefined)
+  }, [])
   const closeProfileModal = useCallback(() => setProfileFor(null), [])
   const closeCustomStatus = useCallback(() => setCustomStatusOpen(false), [])
   /** A member's role in the server on screen (for profile cards). */
@@ -1266,6 +1431,8 @@ function Workspace({
       displayName={displayName}
       avatarColor={backend.me?.avatarColor ?? DEFAULT_ACCENT}
       avatarId={backend.me?.avatarId}
+      decoration={decorationOf(backend.me?.profileStyle)}
+      avatarAnimated={backend.me?.avatarAnimated === true}
       status={selfStatus}
       statusPreference={statusPreference}
       customStatus={selfCustomStatus}
@@ -1310,6 +1477,24 @@ function Workspace({
           <ShareHealthNote
             session={voice.session}
             profileId={voice.state.screenShare.options.profileId}
+          />
+        ) : undefined
+      }
+      soundboard={
+        voiceServer && customizationSupported ? (
+          <SoundboardPanel
+            api={backend.api}
+            serverId={voiceServer.id}
+            serverName={voiceServer.name}
+            canManage={hasPermission(voiceServer.permissions, Permissions.manageServer)}
+            onPreview={(s) => {
+              const result = sound.playClip(
+                s.id,
+                () => backend.api.fetchSoundboardAudio(s.id),
+                Math.max(settings.soundboardVolume, 30)
+              )
+              if (result === 'unavailable') setNotice('Sound couldn’t play right now.')
+            }}
           />
         ) : undefined
       }
@@ -1430,432 +1615,464 @@ function Workspace({
 
   return withSound(
     <ProfileMediaContext.Provider value={backend.profileMedia}>
-      <GifContext.Provider value={gifSupport}>
-        <ReducedMotionContext.Provider value={reducedMotion}>
-          <DiskDownloadContext.Provider value={diskDownloads}>
-            <UploadContext.Provider value={uploadManager}>
-              <div
-                className={narrowWindow ? 'app narrow-window' : 'app'}
-                style={
-                  {
-                    '--sidebar-width': `${clampSidebarWidth(settings.sidebarWidth)}px`
-                  } as React.CSSProperties
-                }
-              >
-                <ServerSidebar
-                  servers={servers}
-                  activeServerId={activeServer?.id ?? null}
-                  homeActive={homeActive}
-                  homeBadge={homeBadge}
-                  onSelectHome={selectHome}
-                  unreadServerIds={unreadServerIds}
-                  mentionsByServer={mentionsByServer}
-                  onSelectServer={selectServer}
-                  onAddServer={() => setCreateServerOpen(true)}
-                />
-
-                {activeServer ? (
-                  <ChannelSidebar
-                    server={activeServer}
-                    activeChannelId={activeChannel?.id ?? ''}
-                    unreadChannelIds={backend.unread}
-                    unreadCounts={unreadCounts}
-                    mentionCounts={backend.mentionCounts}
-                    voiceChannelId={voiceChannelId}
-                    selfId={selfId}
-                    resolveUser={resolveUser}
-                    voiceMembers={voiceMembers}
-                    voiceDetails={voiceDetails}
-                    getUserVolume={(userId) => settings.userVolumes[userId] ?? 100}
-                    onUserVolumeChange={(userId, volume) =>
-                      updateSettings({ userVolumes: { ...settings.userVolumes, [userId]: volume } })
-                    }
-                    isStreaming={isStreaming}
-                    watchingId={watching}
-                    onWatch={watchStream}
-                    getStreamVolume={(userId) => settings.streamVolumes[userId] ?? 100}
-                    onStreamVolumeChange={(userId, volume) =>
-                      updateSettings({
-                        streamVolumes: { ...settings.streamVolumes, [userId]: volume }
-                      })
-                    }
-                    onSelectChannel={selectChannel}
-                    serverActions={serverActions(activeServer)}
-                    footer={sidebarFooter}
+      <ProfileMotionContext.Provider value={profileMotion}>
+        <GifContext.Provider value={gifSupport}>
+          <ReducedMotionContext.Provider value={reducedMotion}>
+            <DiskDownloadContext.Provider value={diskDownloads}>
+              <UploadContext.Provider value={uploadManager}>
+                <div
+                  className={narrowWindow ? 'app narrow-window' : 'app'}
+                  style={
+                    {
+                      '--sidebar-width': `${clampSidebarWidth(settings.sidebarWidth)}px`
+                    } as React.CSSProperties
+                  }
+                >
+                  {appTheme && (
+                    <div className="app-ambient" data-ambient={appTheme.ambient} aria-hidden="true">
+                      <span className="amb-1" />
+                      <span className="amb-2" />
+                      <span className="amb-3" />
+                    </div>
+                  )}
+                  <ServerSidebar
+                    servers={servers}
+                    activeServerId={activeServer?.id ?? null}
+                    homeActive={homeActive}
+                    homeBadge={homeBadge}
+                    onSelectHome={selectHome}
+                    unreadServerIds={unreadServerIds}
+                    mentionsByServer={mentionsByServer}
+                    onSelectServer={selectServer}
+                    onAddServer={() => setCreateServerOpen(true)}
                   />
-                ) : (
-                  <HomeSidebar
-                    conversations={backend.conversations}
-                    loaded={backend.conversationsLoaded}
-                    users={backend.users}
-                    meId={selfId}
-                    activeConversationId={activeConversation?.id ?? null}
-                    gameActive={gameOpen && !activeConversation}
-                    unreadCounts={unreadCounts}
-                    pendingRequests={pendingRequests}
-                    resolveUser={resolveUser}
-                    onOpenFriends={() => {
-                      setGameOpen(false)
-                      setActiveConversationId(null)
-                    }}
-                    onOpenGame={() => {
-                      setGameOpen(true)
-                      setActiveConversationId(null)
-                    }}
-                    onOpenConversation={openConversation}
-                    onCloseConversation={closeOrLeave}
-                    onCreateGroup={() => setGroupDialog({ mode: 'create' })}
-                    footer={sidebarFooter}
-                  />
-                )}
-                <SidebarResizer
-                  width={clampSidebarWidth(settings.sidebarWidth)}
-                  onResize={(sidebarWidth) => updateSettings({ sidebarWidth })}
-                />
 
-                {watching && (
-                  // One viewer instance for both modes, so switching focus/mini never remounts the video.
-                  <main
-                    className={
-                      viewerMode === 'focus' ? 'chat-panel stream-main' : 'stream-slot-mini'
-                    }
-                  >
-                    <StreamViewer
-                      session={voice.session}
-                      identity={watching}
-                      isSelf={watchingSelf}
-                      sharerName={resolveUser(watching).name}
-                      channelName={voiceNames?.channelName ?? ''}
-                      live={watchedLive}
-                      streamRevision={voice.state.streamRevision}
-                      mode={viewerMode}
-                      quality={voice.state.connectionQuality}
-                      volume={
-                        !watchingSelf && watchedParticipant?.sharingAudio
-                          ? (settings.streamVolumes[watching] ?? 100)
-                          : null
-                      }
-                      defaultShowStats={settings.showStreamStats}
-                      onVolumeChange={(volume) =>
+                  {activeServer ? (
+                    <ChannelSidebar
+                      server={activeServer}
+                      activeChannelId={activeChannel?.id ?? ''}
+                      unreadChannelIds={backend.unread}
+                      unreadCounts={unreadCounts}
+                      mentionCounts={backend.mentionCounts}
+                      voiceChannelId={voiceChannelId}
+                      selfId={selfId}
+                      resolveUser={resolveUser}
+                      voiceMembers={voiceMembers}
+                      voiceDetails={voiceDetails}
+                      getUserVolume={(userId) => settings.userVolumes[userId] ?? 100}
+                      onUserVolumeChange={(userId, volume) =>
                         updateSettings({
-                          streamVolumes: { ...settings.streamVolumes, [watching]: volume }
+                          userVolumes: { ...settings.userVolumes, [userId]: volume }
                         })
                       }
-                      onModeChange={setViewerMode}
-                      onStopWatching={stopWatching}
+                      isStreaming={isStreaming}
+                      watchingId={watching}
+                      onWatch={watchStream}
+                      getStreamVolume={(userId) => settings.streamVolumes[userId] ?? 100}
+                      onStreamVolumeChange={(userId, volume) =>
+                        updateSettings({
+                          streamVolumes: { ...settings.streamVolumes, [userId]: volume }
+                        })
+                      }
+                      onSelectChannel={selectChannel}
+                      serverActions={serverActions(activeServer)}
+                      footer={sidebarFooter}
                     />
-                  </main>
-                )}
-
-                {watching && viewerMode === 'focus' ? null : chatChannel ? (
-                  <ChatPanel
-                    key={homeActive ? 'conversation' : 'channel'}
-                    channel={chatChannel}
-                    serverId={activeServer?.id ?? null}
-                    conversation={homeActive ? conversationInfo : undefined}
-                    state={backend.channels[chatChannel.id]}
-                    readState={backend.readStates[chatChannel.id]}
-                    meId={selfId}
-                    banner={
-                      <ConnectionBanner
-                        status={backend.gateway.status}
-                        retryInMs={backend.gateway.retryInMs}
-                      />
-                    }
-                    selfName={displayName}
-                    selfUsername={meUsername}
-                    showMembers={membersVisible}
-                    compactMode={backend.preferences.density === 'compact'}
-                    showTimestamps={backend.preferences.showTimestamps}
-                    notificationsMuted={Boolean(settings.mutedChannels[chatChannel.id])}
-                    pinsRevision={backend.pinsRevision[chatChannel.id] ?? 0}
-                    recentEmoji={settings.recentEmoji}
-                    jumpTarget={jumpTarget}
-                    users={
-                      homeActive && activeConversation
-                        ? userList.filter((u) => activeConversation.memberIds.includes(u.id))
-                        : userList
-                    }
-                    backend={backend}
-                    resolveUser={resolveUser}
-                    roleColor={roleColor}
-                    channelName={channelName}
-                    onToggleMembers={toggleMembers}
-                    onToggleNotificationsMuted={() => toggleChannelMute(chatChannel.id)}
-                    onEmojiUsed={useEmoji}
-                    onJumpTo={jumpTo}
-                    onOpenProfile={openProfile}
-                    drafts={drafts}
-                    onDraftChange={changeDraft}
-                    readOnlyReason={
-                      homeActive ? undefined : timeoutNotice(activeServer?.timeoutUntil)
-                    }
-                    largeFiles={serverFeatures.largeFiles}
-                  />
-                ) : homeActive && gameOpen && selfId ? (
-                  // Keyed by account so saved games/stats never cross users.
-                  <WordGame key={selfId} userId={selfId} />
-                ) : homeActive ? (
-                  <FriendsPage
-                    key={friendsTabRequest?.n ?? 0}
-                    initialTab={friendsTabRequest?.tab}
-                    relationships={backend.relationships}
-                    users={backend.users}
-                    loaded={backend.conversationsLoaded}
-                    supported={backend.connectionsSupported}
-                    resolveUser={resolveUser}
-                    banner={
-                      <ConnectionBanner
-                        status={backend.gateway.status}
-                        retryInMs={backend.gateway.retryInMs}
-                      />
-                    }
-                    onMessage={messageUser}
-                    onOpenProfile={openProfile}
-                    onSendRequest={backend.sendFriendRequest}
-                    onAccept={backend.acceptFriendRequest}
-                    onRemove={backend.removeRelationship}
-                    onUnblock={(userId) => backend.setBlocked(userId, false)}
-                  />
-                ) : (
-                  <main className="chat-panel empty-state">
-                    This server has no text channels yet.
-                  </main>
-                )}
-
-                {membersVisible &&
-                  !(watching && viewerMode === 'focus') &&
-                  activeServer &&
-                  activeChannel && (
-                    <MemberList
-                      server={activeServer}
+                  ) : (
+                    <HomeSidebar
+                      conversations={backend.conversations}
+                      loaded={backend.conversationsLoaded}
+                      users={backend.users}
+                      meId={selfId}
+                      activeConversationId={activeConversation?.id ?? null}
+                      gameActive={gameOpen && !activeConversation}
+                      unreadCounts={unreadCounts}
+                      pendingRequests={pendingRequests}
                       resolveUser={resolveUser}
+                      onOpenFriends={() => {
+                        setGameOpen(false)
+                        setActiveConversationId(null)
+                      }}
+                      onOpenGame={() => {
+                        setGameOpen(true)
+                        setActiveConversationId(null)
+                      }}
+                      onOpenConversation={openConversation}
+                      onCloseConversation={closeOrLeave}
+                      onCreateGroup={() => setGroupDialog({ mode: 'create' })}
+                      footer={sidebarFooter}
+                    />
+                  )}
+                  <SidebarResizer
+                    width={clampSidebarWidth(settings.sidebarWidth)}
+                    onResize={(sidebarWidth) => updateSettings({ sidebarWidth })}
+                  />
+
+                  {watching && (
+                    // One viewer instance for both modes, so switching focus/mini never remounts the video.
+                    <main
+                      className={
+                        viewerMode === 'focus' ? 'chat-panel stream-main' : 'stream-slot-mini'
+                      }
+                    >
+                      <StreamViewer
+                        session={voice.session}
+                        identity={watching}
+                        isSelf={watchingSelf}
+                        sharerName={resolveUser(watching).name}
+                        channelName={voiceNames?.channelName ?? ''}
+                        live={watchedLive}
+                        streamRevision={voice.state.streamRevision}
+                        mode={viewerMode}
+                        quality={voice.state.connectionQuality}
+                        volume={
+                          !watchingSelf && watchedParticipant?.sharingAudio
+                            ? (settings.streamVolumes[watching] ?? 100)
+                            : null
+                        }
+                        defaultShowStats={settings.showStreamStats}
+                        onVolumeChange={(volume) =>
+                          updateSettings({
+                            streamVolumes: { ...settings.streamVolumes, [watching]: volume }
+                          })
+                        }
+                        onModeChange={setViewerMode}
+                        onStopWatching={stopWatching}
+                      />
+                    </main>
+                  )}
+
+                  {watching && viewerMode === 'focus' ? null : chatChannel ? (
+                    <ChatPanel
+                      key={homeActive ? 'conversation' : 'channel'}
+                      channel={chatChannel}
+                      serverId={activeServer?.id ?? null}
+                      conversation={homeActive ? conversationInfo : undefined}
+                      state={backend.channels[chatChannel.id]}
+                      readState={backend.readStates[chatChannel.id]}
+                      meId={selfId}
+                      banner={
+                        <ConnectionBanner
+                          status={backend.gateway.status}
+                          retryInMs={backend.gateway.retryInMs}
+                        />
+                      }
+                      selfName={displayName}
+                      selfUsername={meUsername}
+                      showMembers={membersVisible}
+                      compactMode={backend.preferences.density === 'compact'}
+                      showTimestamps={backend.preferences.showTimestamps}
+                      notificationsMuted={Boolean(settings.mutedChannels[chatChannel.id])}
+                      pinsRevision={backend.pinsRevision[chatChannel.id] ?? 0}
+                      recentEmoji={settings.recentEmoji}
+                      jumpTarget={jumpTarget}
+                      users={
+                        homeActive && activeConversation
+                          ? userList.filter((u) => activeConversation.memberIds.includes(u.id))
+                          : userList
+                      }
+                      backend={backend}
+                      resolveUser={resolveUser}
+                      roleColor={roleColor}
+                      channelName={channelName}
+                      onToggleMembers={toggleMembers}
+                      onToggleNotificationsMuted={() => toggleChannelMute(chatChannel.id)}
+                      onEmojiUsed={useEmoji}
+                      onJumpTo={jumpTo}
                       onOpenProfile={openProfile}
+                      drafts={drafts}
+                      onDraftChange={changeDraft}
+                      readOnlyReason={
+                        homeActive ? undefined : timeoutNotice(activeServer?.timeoutUntil)
+                      }
+                      largeFiles={serverFeatures.largeFiles}
+                      wallpaper={settings.chatWallpaper}
+                      wallpaperIntensity={settings.chatWallpaperIntensity}
+                    />
+                  ) : homeActive && gameOpen && selfId ? (
+                    // Keyed by account so saved games/stats never cross users.
+                    <WordGame key={selfId} userId={selfId} />
+                  ) : homeActive ? (
+                    <FriendsPage
+                      key={friendsTabRequest?.n ?? 0}
+                      initialTab={friendsTabRequest?.tab}
+                      relationships={backend.relationships}
+                      users={backend.users}
+                      loaded={backend.conversationsLoaded}
+                      supported={backend.connectionsSupported}
+                      resolveUser={resolveUser}
+                      banner={
+                        <ConnectionBanner
+                          status={backend.gateway.status}
+                          retryInMs={backend.gateway.retryInMs}
+                        />
+                      }
+                      onMessage={messageUser}
+                      onOpenProfile={openProfile}
+                      onSendRequest={backend.sendFriendRequest}
+                      onAccept={backend.acceptFriendRequest}
+                      onRemove={backend.removeRelationship}
+                      onUnblock={(userId) => backend.setBlocked(userId, false)}
+                    />
+                  ) : (
+                    <main className="chat-panel empty-state">
+                      This server has no text channels yet.
+                    </main>
+                  )}
+
+                  {membersVisible &&
+                    !(watching && viewerMode === 'focus') &&
+                    activeServer &&
+                    activeChannel && (
+                      <MemberList
+                        server={activeServer}
+                        resolveUser={resolveUser}
+                        onOpenProfile={openProfile}
+                      />
+                    )}
+
+                  {membersVisible &&
+                    !(watching && viewerMode === 'focus') &&
+                    activeConversation && (
+                      <ConversationMembers
+                        key={activeConversation.id}
+                        conversation={activeConversation}
+                        meId={selfId}
+                        resolveUser={resolveUser}
+                        onOpenProfile={openProfile}
+                        onAddPeople={() =>
+                          setGroupDialog({ mode: 'add', channelId: activeConversation.id })
+                        }
+                        onRename={(name) => backend.renameGroup(activeConversation.id, name)}
+                        onRemove={(userId) =>
+                          backend.removeGroupMember(activeConversation.id, userId)
+                        }
+                        onLeave={() => closeOrLeave(activeConversation)}
+                      />
+                    )}
+
+                  {pickerOpen && (
+                    <ScreenSharePicker
+                      initial={shareDefaults}
+                      onGoLive={goLive}
+                      onClose={closePicker}
                     />
                   )}
 
-                {membersVisible && !(watching && viewerMode === 'focus') && activeConversation && (
-                  <ConversationMembers
-                    key={activeConversation.id}
-                    conversation={activeConversation}
-                    meId={selfId}
-                    resolveUser={resolveUser}
-                    onOpenProfile={openProfile}
-                    onAddPeople={() =>
-                      setGroupDialog({ mode: 'add', channelId: activeConversation.id })
-                    }
-                    onRename={(name) => backend.renameGroup(activeConversation.id, name)}
-                    onRemove={(userId) => backend.removeGroupMember(activeConversation.id, userId)}
-                    onLeave={() => closeOrLeave(activeConversation)}
-                  />
-                )}
+                  {settingsOpen && (
+                    <SettingsPanel
+                      settings={settings}
+                      voiceSession={voice.session}
+                      voiceState={voice.state}
+                      userName={(id) => resolveUser(id).name}
+                      username={backend.me?.username ?? session.username}
+                      serverUrl={session.httpUrl}
+                      muted={muted}
+                      deafened={deafened}
+                      initialSection={settingsSection}
+                      onChange={updateSettings}
+                      preferences={backend.preferences}
+                      preferencesLoaded={backend.preferencesLoaded}
+                      onPreferencesChange={backend.updatePreferences}
+                      onProfileSave={backend.updateProfile}
+                      onProfileImageUpload={backend.uploadProfileImage}
+                      onProfileImageRemove={backend.removeProfileImage}
+                      onSetStatus={setStatus}
+                      onEditCustomStatus={() => setCustomStatusOpen(true)}
+                      onLogout={signOut}
+                      api={backend.api}
+                      me={backend.me}
+                      servers={backend.servers}
+                      onSignedOutEverywhere={() => {
+                        void voice.session.leave()
+                        onSignOut('You signed out on all devices.')
+                      }}
+                      onToggleMute={toggleMute}
+                      onToggleDeafen={toggleDeafen}
+                      onClose={closeSettings}
+                      privacy={{
+                        allowServerDms: backend.me?.allowServerDms ?? true,
+                        onAllowServerDmsChange: backend.setAllowServerDms,
+                        blocked: Object.values(backend.relationships)
+                          .filter((r) => r.type === 'blocked')
+                          .map((r) => resolveUser(r.userId)),
+                        onUnblock: (userId) => backend.setBlocked(userId, false)
+                      }}
+                      shortcutStatus={shortcutStatus}
+                      customization={{
+                        supported: customizationSupported,
+                        appTheme: appThemeId,
+                        onAppThemeChange: setAppTheme,
+                        onPreviewTheme: setThemePreview
+                      }}
+                    />
+                  )}
 
-                {pickerOpen && (
-                  <ScreenSharePicker
-                    initial={shareDefaults}
-                    onGoLive={goLive}
-                    onClose={closePicker}
-                  />
-                )}
+                  {createServerOpen && (
+                    <CreateServerModal
+                      onCreate={createServer}
+                      api={backend.api}
+                      onJoined={joinedServer}
+                      onClose={closeCreateServer}
+                    />
+                  )}
 
-                {settingsOpen && (
-                  <SettingsPanel
-                    settings={settings}
-                    voiceSession={voice.session}
-                    voiceState={voice.state}
-                    userName={(id) => resolveUser(id).name}
-                    username={backend.me?.username ?? session.username}
-                    serverUrl={session.httpUrl}
-                    muted={muted}
-                    deafened={deafened}
-                    initialSection={settingsSection}
-                    onChange={updateSettings}
-                    preferences={backend.preferences}
-                    preferencesLoaded={backend.preferencesLoaded}
-                    onPreferencesChange={backend.updatePreferences}
-                    onProfileSave={backend.updateProfile}
-                    onProfileImageUpload={backend.uploadProfileImage}
-                    onProfileImageRemove={backend.removeProfileImage}
-                    onSetStatus={setStatus}
-                    onEditCustomStatus={() => setCustomStatusOpen(true)}
-                    onLogout={signOut}
-                    api={backend.api}
-                    me={backend.me}
-                    servers={backend.servers}
-                    onSignedOutEverywhere={() => {
-                      void voice.session.leave()
-                      onSignOut('You signed out on all devices.')
-                    }}
-                    onToggleMute={toggleMute}
-                    onToggleDeafen={toggleDeafen}
-                    onClose={closeSettings}
-                    privacy={{
-                      allowServerDms: backend.me?.allowServerDms ?? true,
-                      onAllowServerDmsChange: backend.setAllowServerDms,
-                      blocked: Object.values(backend.relationships)
-                        .filter((r) => r.type === 'blocked')
-                        .map((r) => resolveUser(r.userId)),
-                      onUnblock: (userId) => backend.setBlocked(userId, false)
-                    }}
-                    shortcutStatus={shortcutStatus}
-                  />
-                )}
+                  {serverSettingsFor && serverForSettings && (
+                    <ServerSettingsModal
+                      api={backend.api}
+                      server={serverForSettings}
+                      meId={selfId}
+                      members={backend.members[serverForSettings.id]}
+                      revision={backend.serversRevision}
+                      resolveUser={resolveUser}
+                      onInvite={() => setInviteFor(serverForSettings.id)}
+                      onClose={closeServerSettings}
+                    />
+                  )}
 
-                {createServerOpen && (
-                  <CreateServerModal
-                    onCreate={createServer}
-                    api={backend.api}
-                    onJoined={joinedServer}
-                    onClose={closeCreateServer}
-                  />
-                )}
-
-                {serverSettingsFor && serverForSettings && (
-                  <ServerSettingsModal
-                    api={backend.api}
-                    server={serverForSettings}
-                    meId={selfId}
-                    members={backend.members[serverForSettings.id]}
-                    revision={backend.serversRevision}
-                    resolveUser={resolveUser}
-                    onInvite={() => setInviteFor(serverForSettings.id)}
-                    onClose={closeServerSettings}
-                  />
-                )}
-
-                {inviteFor && (
-                  <InviteModal
-                    api={backend.api}
-                    serverId={inviteFor}
-                    serverName={
-                      backend.servers.find((s) => s.id === inviteFor)?.name ?? 'this server'
-                    }
-                    onClose={closeInvite}
-                  />
-                )}
-
-                {quickSwitchOpen && (
-                  <QuickSwitcher
-                    items={switchItems}
-                    recent={visits}
-                    onSelect={openSwitchItem}
-                    onClose={() => setQuickSwitchOpen(false)}
-                  />
-                )}
-
-                {welcomeVisible && backend.me && (
-                  <WelcomeModal
-                    displayName={backend.me.displayName}
-                    progress={welcomeProgress}
-                    onSaveDisplayName={backend.updateDisplayName}
-                    onChoosePicture={() => openSettings('profile')}
-                    onAddFriends={() => {
-                      setWelcome('done')
-                      setActiveServerId(HOME_ID)
-                      setActiveConversationId(null)
-                      setFriendsTabRequest((r) => ({ tab: 'add', n: (r?.n ?? 0) + 1 }))
-                    }}
-                    onJoinServer={() => setCreateServerOpen(true)}
-                    onClose={() => setWelcome('done')}
-                  />
-                )}
-
-                {popout && (
-                  <ProfilePopout
-                    user={resolveUser(popout.userId)}
-                    anchor={popout.anchor}
-                    role={roleOf(popout.userId)}
-                    isSelf={popout.userId === selfId}
-                    selfCustomStatus={selfCustomStatus}
-                    relationship={relationshipFor(popout.userId, closePopout)}
-                    onViewProfile={() => {
-                      setProfileFor(popout.userId)
-                      setPopout(null)
-                    }}
-                    onEditProfile={() => {
-                      setPopout(null)
-                      openSettings('profile')
-                    }}
-                    onClose={closePopout}
-                  />
-                )}
-
-                {profileFor && (
-                  <ProfileModal
-                    user={resolveUser(profileFor)}
-                    isSelf={profileFor === selfId}
-                    selfCustomStatus={selfCustomStatus}
-                    relationship={relationshipFor(profileFor, closeProfileModal)}
-                    role={roleOf(profileFor)}
-                    servers={backend.servers}
-                    fetchProfile={backend.fetchProfile}
-                    onEditProfile={() => {
-                      setProfileFor(null)
-                      openSettings('profile')
-                    }}
-                    onOpenServer={(serverId) => {
-                      setProfileFor(null)
-                      setActiveServerId(serverId)
-                    }}
-                    onClose={closeProfileModal}
-                  />
-                )}
-
-                {groupDialog && (
-                  <GroupDialog
-                    mode={groupDialog.mode}
-                    relationships={backend.relationships}
-                    users={backend.users}
-                    existingMemberIds={
-                      groupDialog.mode === 'add'
-                        ? (backend.conversations[groupDialog.channelId]?.memberIds ?? [])
-                        : undefined
-                    }
-                    resolveUser={resolveUser}
-                    onSubmit={async (userIds, name) => {
-                      if (groupDialog.mode === 'create') {
-                        const result = await backend.createGroup(userIds, name)
-                        if (result.conversation) openConversation(result.conversation.id)
-                        return result.error ?? null
+                  {inviteFor && (
+                    <InviteModal
+                      api={backend.api}
+                      serverId={inviteFor}
+                      serverName={
+                        backend.servers.find((s) => s.id === inviteFor)?.name ?? 'this server'
                       }
-                      // Added one at a time (each is checked and logged by the server).
-                      for (const userId of userIds) {
-                        const error = await backend.addGroupMember(groupDialog.channelId, userId)
-                        if (error) return error
+                      onClose={closeInvite}
+                    />
+                  )}
+
+                  {quickSwitchOpen && (
+                    <QuickSwitcher
+                      items={switchItems}
+                      recent={visits}
+                      onSelect={openSwitchItem}
+                      onClose={() => setQuickSwitchOpen(false)}
+                    />
+                  )}
+
+                  {welcomeVisible && backend.me && (
+                    <WelcomeModal
+                      displayName={backend.me.displayName}
+                      progress={welcomeProgress}
+                      onSaveDisplayName={backend.updateDisplayName}
+                      onChoosePicture={() => openSettings('profile')}
+                      onAddFriends={() => {
+                        setWelcome('done')
+                        setActiveServerId(HOME_ID)
+                        setActiveConversationId(null)
+                        setFriendsTabRequest((r) => ({ tab: 'add', n: (r?.n ?? 0) + 1 }))
+                      }}
+                      onJoinServer={() => setCreateServerOpen(true)}
+                      onClose={() => setWelcome('done')}
+                    />
+                  )}
+
+                  {popout && (
+                    <ProfilePopout
+                      user={resolveUser(popout.userId)}
+                      anchor={popout.anchor}
+                      role={roleOf(popout.userId)}
+                      isSelf={popout.userId === selfId}
+                      selfCustomStatus={selfCustomStatus}
+                      relationship={relationshipFor(popout.userId, closePopout)}
+                      note={
+                        userNotesSupported && popout.userId !== selfId
+                          ? {
+                              value: backend.notes[popout.userId],
+                              load: backend.fetchNote,
+                              save: backend.saveNote
+                            }
+                          : undefined
                       }
-                      return null
-                    }}
-                    onClose={() => setGroupDialog(null)}
-                  />
-                )}
+                      onViewProfile={() => {
+                        setProfileFor(popout.userId)
+                        setPopout(null)
+                      }}
+                      onEditProfile={() => {
+                        setPopout(null)
+                        openSettings('profile')
+                      }}
+                      onClose={closePopout}
+                    />
+                  )}
 
-                {customStatusOpen && (
-                  <CustomStatusModal
-                    current={selfCustomStatus}
-                    recentEmoji={settings.recentEmoji}
-                    onSave={backend.setCustomStatus}
-                    onClose={closeCustomStatus}
-                  />
-                )}
+                  {profileFor && (
+                    <ProfileModal
+                      user={resolveUser(profileFor)}
+                      isSelf={profileFor === selfId}
+                      selfCustomStatus={selfCustomStatus}
+                      relationship={relationshipFor(profileFor, closeProfileModal)}
+                      role={roleOf(profileFor)}
+                      servers={backend.servers}
+                      fetchProfile={backend.fetchProfile}
+                      onEditProfile={() => {
+                        setProfileFor(null)
+                        openSettings('profile')
+                      }}
+                      onOpenServer={(serverId) => {
+                        setProfileFor(null)
+                        setActiveServerId(serverId)
+                      }}
+                      onClose={closeProfileModal}
+                    />
+                  )}
 
-                {notice && (
-                  <div className="app-toast" role="status">
-                    {notice}
-                    <button
-                      type="button"
-                      className="icon-button small"
-                      aria-label="Dismiss"
-                      onClick={() => setNotice(null)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                )}
-              </div>
-            </UploadContext.Provider>
-          </DiskDownloadContext.Provider>
-        </ReducedMotionContext.Provider>
-      </GifContext.Provider>
+                  {groupDialog && (
+                    <GroupDialog
+                      mode={groupDialog.mode}
+                      relationships={backend.relationships}
+                      users={backend.users}
+                      existingMemberIds={
+                        groupDialog.mode === 'add'
+                          ? (backend.conversations[groupDialog.channelId]?.memberIds ?? [])
+                          : undefined
+                      }
+                      resolveUser={resolveUser}
+                      onSubmit={async (userIds, name) => {
+                        if (groupDialog.mode === 'create') {
+                          const result = await backend.createGroup(userIds, name)
+                          if (result.conversation) openConversation(result.conversation.id)
+                          return result.error ?? null
+                        }
+                        // Added one at a time (each is checked and logged by the server).
+                        for (const userId of userIds) {
+                          const error = await backend.addGroupMember(groupDialog.channelId, userId)
+                          if (error) return error
+                        }
+                        return null
+                      }}
+                      onClose={() => setGroupDialog(null)}
+                    />
+                  )}
+
+                  {customStatusOpen && (
+                    <CustomStatusModal
+                      current={selfCustomStatus}
+                      recentEmoji={settings.recentEmoji}
+                      onSave={backend.setCustomStatus}
+                      onClose={closeCustomStatus}
+                    />
+                  )}
+
+                  {notice && (
+                    <div className="app-toast" role="status">
+                      {notice}
+                      <button
+                        type="button"
+                        className="icon-button small"
+                        aria-label="Dismiss"
+                        onClick={() => setNotice(null)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </UploadContext.Provider>
+            </DiskDownloadContext.Provider>
+          </ReducedMotionContext.Provider>
+        </GifContext.Provider>
+      </ProfileMotionContext.Provider>
     </ProfileMediaContext.Provider>
   )
 }

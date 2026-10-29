@@ -1,0 +1,496 @@
+/*
+ * Milestone 14 — full-app themes (see lib/themes.ts). All artwork here is original CSS and
+ * inline SVG made for Discord 2.0; nothing is downloaded. The ambient layer sits behind the
+ * (slightly translucent) panels, never takes pointer events and never covers text.
+ * Motion: only transform/opacity animations (compositor-friendly). Reduced motion and
+ * "Reduced" theme effects stop all of it; reduced effects also drop the glass blur.
+ */
+
+:root[data-app-theme] body {
+  background: var(--app-backdrop, var(--bg-rail));
+}
+
+.app-ambient {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--app-backdrop, var(--bg-rail));
+  contain: strict;
+}
+.app-ambient > span,
+.app-ambient > span::before {
+  position: absolute;
+  pointer-events: none;
+}
+.app-ambient > span::before {
+  content: '';
+}
+
+/* Overlays keep the theme but are opaque: the app never shows through a dialog. */
+:root[data-app-theme] .settings-overlay,
+:root[data-app-theme] .modal,
+:root[data-app-theme] .splash-card {
+  background:
+    linear-gradient(var(--bg-primary), var(--bg-primary)), var(--app-backdrop, var(--bg-floating));
+}
+:root[data-app-theme] .search-panel,
+:root[data-app-theme] .pins-panel {
+  background: linear-gradient(var(--bg-panel), var(--bg-panel)), var(--bg-floating);
+}
+:root[data-app-theme] .message-toolbar {
+  background: var(--bg-floating);
+}
+
+/* Frosted Glass: blur what's behind the main panels (dropped in reduced effects). */
+:root[data-glass='on'][data-theme-effects='full'] .server-sidebar,
+:root[data-glass='on'][data-theme-effects='full'] .channel-sidebar,
+:root[data-glass='on'][data-theme-effects='full'] .member-list,
+:root[data-glass='on'][data-theme-effects='full'] .chat-panel {
+  backdrop-filter: blur(22px) saturate(160%);
+}
+
+/* No motion when reduced (the global reduced-motion rule also covers the preference). */
+:root[data-theme-effects='reduced'] .app-ambient *,
+:root[data-theme-effects='reduced'] .app-ambient *::before {
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-reduced-motion='off']) .app-ambient *,
+  :root:not([data-reduced-motion='off']) .app-ambient *::before {
+    animation: none !important;
+  }
+}
+
+/* ---- Midnight Obsidian: a violet glint across black glass ---- */
+.app-ambient[data-ambient='obsidian'] .amb-1 {
+  inset: 0;
+  background:
+    radial-gradient(1100px 600px at 88% -12%, rgba(108, 92, 245, 0.2), transparent 62%),
+    radial-gradient(900px 520px at -8% 112%, rgba(56, 74, 160, 0.18), transparent 60%);
+}
+.app-ambient[data-ambient='obsidian'] .amb-2 {
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 36%,
+    rgba(196, 188, 255, 0.07) 47%,
+    rgba(196, 188, 255, 0.02) 52%,
+    transparent 60%
+  );
+}
+.app-ambient[data-ambient='obsidian'] .amb-3 {
+  inset: 0;
+  opacity: 0.7;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><g fill='rgb(200,196,255)'><circle cx='18' cy='30' r='0.8' opacity='.5'/><circle cx='140' cy='12' r='0.6' opacity='.35'/><circle cx='96' cy='88' r='0.9' opacity='.45'/><circle cx='190' cy='130' r='0.7' opacity='.4'/><circle cx='40' cy='170' r='0.6' opacity='.3'/><circle cx='160' cy='200' r='0.8' opacity='.35'/></g></svg>");
+}
+
+/* ---- Cyber Neon: a circuit board under a midnight grid, softly pulsing ---- */
+.app-ambient[data-ambient='circuit'] .amb-1 {
+  inset: 0;
+  background:
+    radial-gradient(700px 420px at 100% 0%, rgba(240, 171, 252, 0.16), transparent 65%),
+    radial-gradient(800px 480px at 0% 100%, rgba(34, 211, 238, 0.16), transparent 65%),
+    repeating-linear-gradient(0deg, rgba(34, 211, 238, 0.05) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(90deg, rgba(34, 211, 238, 0.05) 0 1px, transparent 1px 44px);
+}
+.app-ambient[data-ambient='circuit'] .amb-2 {
+  inset: 0;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='176' height='176' fill='none' stroke-width='1.4' stroke-linecap='round'><g stroke='rgb(34,211,238)' stroke-opacity='.55'><path d='M0 44h40l16 16h44'/><path d='M100 60v52l20 20h56'/><path d='M44 176v-36l-20-20V88'/><path d='M132 0v28l-16 16'/></g><g stroke='rgb(240,171,252)' stroke-opacity='.5'><path d='M176 100h-30l-14 14v62'/><path d='M0 150h24l10-10'/></g><g fill='rgb(34,211,238)'><circle cx='100' cy='60' r='2.6'/><circle cx='24' cy='88' r='2.6'/><circle cx='116' cy='44' r='2.6'/></g><g fill='rgb(240,171,252)'><circle cx='146' cy='100' r='2.6'/><circle cx='34' cy='140' r='2.6'/></g></svg>");
+  animation: d2-amb-pulse 6s ease-in-out infinite alternate;
+}
+@keyframes d2-amb-pulse {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 0.75;
+  }
+}
+
+/* ---- Sakura Dream: petals drifting diagonally ---- */
+.app-ambient[data-ambient='petals'] .amb-1 {
+  inset: 0;
+  background:
+    radial-gradient(900px 600px at 10% 0%, rgba(255, 255, 255, 0.55), transparent 60%),
+    radial-gradient(700px 500px at 100% 100%, rgba(236, 140, 172, 0.25), transparent 60%);
+}
+.app-ambient[data-ambient='petals'] .amb-2 {
+  inset: -260px 0 0 -260px;
+  opacity: 0.85;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='260'><g fill='rgb(232,121,160)'><path transform='translate(40 50) rotate(20)' d='M0-9C6-9 9-3 0 9C-9-3-6-9 0-9Z' opacity='.55'/><path transform='translate(170 30) rotate(-35) scale(.8)' d='M0-9C6-9 9-3 0 9C-9-3-6-9 0-9Z' opacity='.45'/><path transform='translate(120 140) rotate(70) scale(1.15)' d='M0-9C6-9 9-3 0 9C-9-3-6-9 0-9Z' opacity='.5'/><path transform='translate(220 200) rotate(140) scale(.9)' d='M0-9C6-9 9-3 0 9C-9-3-6-9 0-9Z' opacity='.4'/><path transform='translate(30 220) rotate(-80) scale(.7)' d='M0-9C6-9 9-3 0 9C-9-3-6-9 0-9Z' opacity='.45'/></g><g fill='rgb(250,200,215)'><path transform='translate(90 80) rotate(-15) scale(.6)' d='M0-9C6-9 9-3 0 9C-9-3-6-9 0-9Z'/><path transform='translate(200 110) rotate(45) scale(.55)' d='M0-9C6-9 9-3 0 9C-9-3-6-9 0-9Z'/></g></svg>");
+  animation: d2-amb-drift 48s linear infinite;
+}
+@keyframes d2-amb-drift {
+  to {
+    transform: translate3d(260px, 260px, 0);
+  }
+}
+
+/* ---- Aurora Borealis: ribbons of light swaying over a starry night ---- */
+.app-ambient[data-ambient='aurora'] .amb-1 {
+  inset: -25%;
+  background:
+    radial-gradient(38% 22% at 30% 38%, rgba(61, 220, 151, 0.5), transparent 72%),
+    radial-gradient(34% 20% at 68% 30%, rgba(139, 92, 246, 0.45), transparent 72%),
+    radial-gradient(30% 16% at 52% 62%, rgba(34, 211, 238, 0.32), transparent 72%);
+  animation: d2-amb-sway 34s ease-in-out infinite alternate;
+}
+.app-ambient[data-ambient='aurora'] .amb-2 {
+  inset: 0;
+  opacity: 0.8;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><g fill='rgb(230,245,255)'><circle cx='20' cy='24' r='.8' opacity='.6'/><circle cx='130' cy='60' r='.6' opacity='.45'/><circle cx='200' cy='20' r='1' opacity='.55'/><circle cx='80' cy='150' r='.7' opacity='.4'/><circle cx='210' cy='190' r='.8' opacity='.5'/><circle cx='150' cy='120' r='.5' opacity='.35'/></g></svg>");
+}
+@keyframes d2-amb-sway {
+  from {
+    transform: translate3d(-4%, 0, 0) rotate(-3deg);
+  }
+  to {
+    transform: translate3d(5%, 3%, 0) rotate(4deg);
+  }
+}
+
+/* ---- AMOLED Void: pure black, nothing drawn ---- */
+.app-ambient[data-ambient='void'] > span {
+  display: none;
+}
+
+/* ---- Solar Flare: a sunrise burning in the corner, with lens ghosts ---- */
+.app-ambient[data-ambient='flare'] .amb-1 {
+  inset: 0;
+  background:
+    radial-gradient(55% 48% at 94% 2%, rgba(255, 170, 80, 0.36), transparent 62%),
+    radial-gradient(26% 22% at 94% 2%, rgba(255, 220, 150, 0.4), transparent 70%);
+  animation: d2-amb-breathe 8s ease-in-out infinite alternate;
+}
+.app-ambient[data-ambient='flare'] .amb-2 {
+  inset: 0;
+  background:
+    radial-gradient(circle at 74% 26%, rgba(255, 196, 120, 0.12) 0 16px, transparent 17px),
+    radial-gradient(circle at 62% 38%, rgba(255, 160, 90, 0.09) 0 38px, transparent 39px),
+    radial-gradient(circle at 44% 56%, rgba(255, 130, 70, 0.07) 0 72px, transparent 73px),
+    radial-gradient(circle at 24% 76%, rgba(255, 110, 60, 0.05) 0 110px, transparent 111px);
+}
+@keyframes d2-amb-breathe {
+  from {
+    opacity: 0.72;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- Ocean Abyss: caustic light rippling down into the deep ---- */
+.app-ambient[data-ambient='caustics'] .amb-1 {
+  inset: 0 -10%;
+  background: repeating-linear-gradient(
+    100deg,
+    rgba(94, 234, 212, 0.06) 0 46px,
+    transparent 46px 150px
+  );
+  -webkit-mask-image: linear-gradient(to bottom, #000, transparent 75%);
+  mask-image: linear-gradient(to bottom, #000, transparent 75%);
+  animation: d2-amb-shafts 16s ease-in-out infinite alternate;
+}
+.app-ambient[data-ambient='caustics'] .amb-2 {
+  inset: -200px 0 0 -200px;
+  opacity: 0.6;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200' fill='none' stroke='rgb(125,240,225)' stroke-opacity='.45' stroke-width='1.2'><path d='M0 40q30-25 60 0t60 0 80 10'/><path d='M0 110q40 20 70-5t70 10 60-15'/><path d='M0 170q25-20 55 0t75-5 70 10'/><path d='M40 0q-10 50 20 100t-10 100'/><path d='M150 0q20 40-10 90t15 110'/></svg>");
+  animation: d2-amb-drift-slow 60s linear infinite;
+}
+@keyframes d2-amb-shafts {
+  from {
+    transform: translate3d(-3%, 0, 0) skewX(-4deg);
+  }
+  to {
+    transform: translate3d(3%, 0, 0) skewX(4deg);
+  }
+}
+@keyframes d2-amb-drift-slow {
+  to {
+    transform: translate3d(200px, 200px, 0);
+  }
+}
+
+/* ---- Royal Amethyst: gold filigree lattice on velvet ---- */
+.app-ambient[data-ambient='lattice'] .amb-1 {
+  inset: 0;
+  background:
+    radial-gradient(1000px 520px at 50% -10%, rgba(229, 185, 78, 0.12), transparent 60%),
+    radial-gradient(900px 600px at 50% 120%, rgba(120, 60, 200, 0.24), transparent 60%);
+}
+.app-ambient[data-ambient='lattice'] .amb-2 {
+  inset: 0;
+  opacity: 0.9;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='72' height='72' fill='none'><path d='M36 2L70 36L36 70L2 36Z' stroke='rgb(229,185,78)' stroke-opacity='.16' stroke-width='1'/><path d='M36 18L54 36L36 54L18 36Z' stroke='rgb(229,185,78)' stroke-opacity='.08'/><circle cx='36' cy='2' r='1.4' fill='rgb(245,217,138)' fill-opacity='.35'/><circle cx='2' cy='36' r='1.4' fill='rgb(245,217,138)' fill-opacity='.35'/></svg>");
+}
+
+/* ---- Frosted Glass: soft pastel light and a fine grain behind frosted panels ---- */
+.app-ambient[data-ambient='frost'] .amb-1 {
+  inset: 0;
+  background:
+    radial-gradient(40% 45% at 12% 18%, rgba(147, 197, 253, 0.55), transparent 70%),
+    radial-gradient(38% 42% at 82% 26%, rgba(240, 171, 252, 0.5), transparent 70%),
+    radial-gradient(45% 40% at 60% 92%, rgba(153, 246, 228, 0.5), transparent 70%);
+}
+.app-ambient[data-ambient='frost'] .amb-2 {
+  inset: 0;
+  opacity: 0.12;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>");
+}
+
+/* ---- Retro Synthwave: a striped neon sun over a moving grid ---- */
+.app-ambient[data-ambient='horizon'] .amb-1 {
+  left: 50%;
+  bottom: 30%;
+  width: 52vmin;
+  height: 52vmin;
+  margin-left: -26vmin;
+  border-radius: 50%;
+  opacity: 0.62;
+  background: linear-gradient(#ffd36e, #ff7aa8 55%, #ff5fc8);
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0 50%,
+    transparent 50% 54%,
+    #000 54% 63%,
+    transparent 63% 68%,
+    #000 68% 76%,
+    transparent 76% 82%,
+    #000 82% 88%,
+    transparent 88%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0 50%,
+    transparent 50% 54%,
+    #000 54% 63%,
+    transparent 63% 68%,
+    #000 68% 76%,
+    transparent 76% 82%,
+    #000 82% 88%,
+    transparent 88%
+  );
+}
+.app-ambient[data-ambient='horizon'] .amb-2 {
+  left: -60%;
+  right: -60%;
+  bottom: -6%;
+  height: 40%;
+  overflow: hidden;
+  transform: perspective(260px) rotateX(64deg);
+  transform-origin: 50% 0;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 35%);
+  mask-image: linear-gradient(to bottom, transparent, #000 35%);
+}
+.app-ambient[data-ambient='horizon'] .amb-2::before {
+  inset: -64px 0 0 0;
+  background-image:
+    linear-gradient(rgba(255, 95, 200, 0.5) 2px, transparent 2px),
+    linear-gradient(90deg, rgba(255, 95, 200, 0.42) 2px, transparent 2px);
+  background-size: 64px 64px;
+  animation: d2-amb-grid 3.2s linear infinite;
+}
+@keyframes d2-amb-grid {
+  to {
+    transform: translate3d(0, 64px, 0);
+  }
+}
+.app-ambient[data-ambient='horizon'] .amb-3 {
+  inset: 0;
+  background: radial-gradient(70% 40% at 50% 70%, rgba(255, 95, 200, 0.18), transparent 70%);
+}
+
+/* ---- Forest Canopy: leaves and dappled light ---- */
+.app-ambient[data-ambient='canopy'] .amb-1 {
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(190, 242, 160, 0.1) 0 60px, transparent 120px),
+    radial-gradient(circle at 75% 35%, rgba(190, 242, 160, 0.08) 0 40px, transparent 100px),
+    radial-gradient(circle at 55% 80%, rgba(190, 242, 160, 0.07) 0 50px, transparent 110px);
+}
+.app-ambient[data-ambient='canopy'] .amb-2 {
+  inset: 0;
+  opacity: 0.8;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='210' height='210'><g fill='rgb(111,212,127)' fill-opacity='.14' stroke='rgb(155,231,166)' stroke-opacity='.12'><path transform='translate(20 40) rotate(-25)' d='M0 0C18-18 46-18 64 0C46 18 18 18 0 0Z'/><path transform='translate(120 20) rotate(30) scale(.8)' d='M0 0C18-18 46-18 64 0C46 18 18 18 0 0Z'/><path transform='translate(70 130) rotate(80) scale(.9)' d='M0 0C18-18 46-18 64 0C46 18 18 18 0 0Z'/><path transform='translate(150 150) rotate(-60) scale(.7)' d='M0 0C18-18 46-18 64 0C46 18 18 18 0 0Z'/></g></svg>");
+}
+
+/* ---- Mint Frost: gentle ripples from two corners ---- */
+.app-ambient[data-ambient='ripples'] .amb-1 {
+  inset: 0;
+  background:
+    repeating-radial-gradient(
+      circle at 0% 100%,
+      rgba(11, 122, 96, 0.07) 0 2px,
+      transparent 2px 46px
+    ),
+    repeating-radial-gradient(
+      circle at 100% 0%,
+      rgba(11, 122, 96, 0.05) 0 2px,
+      transparent 2px 58px
+    );
+}
+
+/* ---------- Theme gallery (Settings → Appearance) ---------- */
+.theme-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 12px;
+}
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 2px solid transparent;
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  color: var(--text-normal);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
+}
+.theme-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.theme-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.theme-card.selected {
+  border-color: var(--accent);
+}
+.theme-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 2px 2px;
+}
+.theme-card-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.theme-card-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  font-size: 11px;
+  font-weight: 700;
+}
+.theme-card-description {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+/* A miniature of the app in the theme's colors. */
+.theme-mini {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  height: 92px;
+  padding: 6px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.theme-mini > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 4px;
+  padding: 5px 4px;
+}
+.theme-mini .m-rail {
+  width: 18px;
+  align-items: center;
+  background: color-mix(in srgb, var(--m-rail) var(--m-alpha), transparent);
+}
+.theme-mini .m-rail i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--m-muted);
+  opacity: 0.6;
+}
+.theme-mini .m-rail i:first-child {
+  background: var(--m-accent);
+  opacity: 1;
+}
+.theme-mini .m-side {
+  width: 44px;
+  background: color-mix(in srgb, var(--m-side) var(--m-alpha), transparent);
+}
+.theme-mini .m-side i {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--m-muted);
+  opacity: 0.55;
+}
+.theme-mini .m-side i:nth-child(2) {
+  background: var(--m-text);
+  opacity: 0.9;
+}
+.theme-mini .m-chat {
+  flex: 1;
+  background: color-mix(in srgb, var(--m-chat) var(--m-alpha), transparent);
+}
+.theme-mini .m-chat b {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--m-text);
+  opacity: 0.85;
+}
+.theme-mini .m-chat b:nth-child(1) {
+  width: 70%;
+}
+.theme-mini .m-chat b:nth-child(2) {
+  width: 90%;
+  background: var(--m-muted);
+}
+.theme-mini .m-chat b:nth-child(3) {
+  width: 45%;
+  background: var(--m-accent);
+  opacity: 1;
+}
+.theme-mini .m-input {
+  margin-top: auto;
+  height: 10px;
+  border-radius: 4px;
+  background: var(--m-muted);
+  opacity: 0.3;
+}
+
+.theme-preview-bar {
+  position: sticky;
+  bottom: 8px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-floating);
+  box-shadow: var(--shadow-menu);
+  color: var(--text-normal);
+}
+.theme-preview-bar > span {
+  flex: 1;
+}
+.button.link.inline {
+  display: inline;
+  padding: 0;
+  font-size: inherit;
+}

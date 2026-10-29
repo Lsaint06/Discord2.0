@@ -40,6 +40,8 @@ import { VoiceStateStore } from './voice/voiceStates.js'
 import { createGifProvider, type GifProvider } from './gifs/provider.js'
 import { registerGifRoutes } from './routes/gifs.js'
 import { cleanupLargeFiles, LARGE_CHUNK_BYTES, registerLargeUploadRoutes } from './routes/largeUploads.js'
+import { registerSoundboardRoutes } from './routes/soundboard.js'
+import { registerPersonalRoutes } from './routes/personal.js'
 
 export interface BuildOptions {
   gateway?: Partial<GatewayOptions>
@@ -246,7 +248,7 @@ export async function buildApp(
 
   app.get('/api/meta', async () => ({
     name: 'Discord 2.0',
-    apiVersion: 5,
+    apiVersion: 6,
     devAuth: config.devAuth,
     voice: config.livekit !== null,
     // Real accounts. New ones: 'invite' = invitation code from an administrator, 'open' =
@@ -264,6 +266,12 @@ export async function buildApp(
     // Milestone 13 (API 5): server icons/descriptions, channel layout, voice user limits,
     // member timeouts, default notification level.
     serverAdmin: true,
+    // Milestone 14 (API 6): profile styles (gradient, decoration, effect, banner preset),
+    // animated profile pictures/banners and a synced full-app theme.
+    customization: true,
+    // Milestone 14: private saved messages and private notes about people.
+    savedMessages: true,
+    userNotes: true,
     // Milestone 13: GIF picker through this server (null = not set up).
     gifs: gifProvider ? { provider: gifProvider.name, attribution: gifProvider.attribution } : null,
     // Milestone 13: chunked uploads of large files (null = off; the default).
@@ -311,6 +319,8 @@ export async function buildApp(
   registerConversationRoutes(app, ctx)
   registerGifRoutes(app, ctx, gifProvider, { providerCallsPerHour: options.gifProviderCallsPerHour })
   registerLargeUploadRoutes(app, ctx)
+  registerSoundboardRoutes(app, ctx)
+  registerPersonalRoutes(app, ctx)
 
   const cleanupMs = options.attachmentCleanupIntervalMs ?? 60 * 60_000
   let cleanupTimer: NodeJS.Timeout | null = null

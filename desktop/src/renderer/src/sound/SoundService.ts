@@ -3,7 +3,9 @@
  *
  * - One AudioContext, created lazily, separate from LiveKit's voice audio (which it never
  *   touches). It suspends itself after a few seconds of silence so the device isn't kept busy.
- * - Each sound is rendered once per sample rate (sounds.ts) and cached as an AudioBuffer.
+ * - Milestone 14: sounds come from the selected sound pack (bundled WAV files, packs.ts), each
+ *   decoded once per audio context. If a file can't be loaded, the event's fallback recipe
+ *   (sounds.ts) is rendered instead, so a sound is never silently lost.
  * - Follows the selected output device (AudioContext.setSinkId); falls back to the default
  *   device if that fails or isn't supported.
  * - If audio is blocked (no user gesture yet) play() reports 'unavailable' so the caller can
@@ -11,6 +13,7 @@
  */
 import type { SoundEvent } from './sounds'
 import { RECIPES, renderRecipe } from './sounds'
+import { DEFAULT_SOUND_PACK, packSoundUrl } from './packs'
 import {
   eventEnabled,
   eventGain,
@@ -68,9 +71,14 @@ interface Options {
   clearTimer?: (handle: unknown) => void
   /** Suspend the context after this long without sound. */
   idleSuspendMs?: number
+  /** Where a pack's file for an event is (null = none: use the fallback recipe). */
+  urlFor?: (pack: string, event: SoundEvent) => string | null
+  /** Loads a bundled sound file. */
+  loadAsset?: (url: string) => Promise<ArrayBuffer>
 }
 
 const MAX_VOICES = 6
+const MAX_CLIPS = 32
 
 /** Perceptual volume curve: 0–100 % → linear gain. */
 export function volumeToGain(percent: number): number {
@@ -88,6 +96,11 @@ export class SoundService {
   private readonly customData = new Map<string, { data: ArrayBuffer; gain: number }>()
   /** Decoded imported sounds for the current context (null = couldn't be decoded). */
   private readonly customBuffers = new Map<string, Promise<AudioBufferLike | null>>()
+  /** Decoded pack files for the current context, keyed pack/event (null = unusable). */
+  private readonly packBuffers = new Map<string, Promise<AudioBufferLike | null>>()
+  private readonly packReady = new Map<string, AudioBufferLike | null>()
+  /** Decoded soundboard clips (Milestone 14), most recent last; at most MAX_CLIPS. */
+  private readonly clips = new Map<string, Promise<AudioBufferLike | null>>()
   private readonly active = new Set<BufferSourceLike>()
   private readonly gate = new SoundGate()
   private idleTimer: unknown = null
@@ -104,6 +117,8 @@ export class SoundService {
   private readonly setTimer: (fn: () => void, ms: number) => unknown
   private readonly clearTimer: (handle: unknown) => void
   private readonly idleSuspendMs: number
+  private readonly urlFor: (pack: string, event: SoundEvent) => string | null
+  private readonly loadAsset: (url: string) => Promise<ArrayBuffer>
 
   constructor(options: Options = {}) {
     this.createContext =
@@ -114,10 +129,25 @@ export class SoundService {
     this.clearTimer =
       options.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>))
     this.idleSuspendMs = options.idleSuspendMs ?? 8000
+    this.urlFor = options.urlFor ?? packSoundUrl
+    this.loadAsset =
+      options.loadAsset ??
+      (async (url) => {
+        const res = await fetch(url)
+        if (!res.ok) throw new Error(`sound ${res.status}`)
+        return res.arrayBuffer()
+      })
+  }
+
+  /** The selected pack (unknown ids fall back to the default pack's files). */
+  private pack(): string {
+    return this.prefs.pack || DEFAULT_SOUND_PACK
   }
 
   setPreferences(prefs: SoundPreferences): void {
+    const packChanged = (prefs.pack || DEFAULT_SOUND_PACK) !== this.pack()
     this.prefs = prefs
+    if (packChanged && this.context && this.context.state === 'running') this.preload()
     if (this.master) this.master.gain.value = volumeToGain(prefs.volume)
     if (!prefs.enabled) this.stopAll()
   }
@@ -134,6 +164,7 @@ export class SoundService {
   unlock(): void {
     const ctx = this.ensureContext()
     if (ctx && ctx.state === 'suspended') void this.resume(ctx)
+    if (ctx && this.packBuffers.size === 0) this.preload()
   }
 
   /** Plays an event if the preferences allow it (and it isn't part of a burst). */
@@ -142,10 +173,23 @@ export class SoundService {
     return this.start(event, true)
   }
 
-  /** Auditions a sound from Settings: ignores the event toggle, but not the global switch. */
-  preview(event: SoundEvent): PlayResult {
+  /**
+   * Auditions a sound from Settings: ignores the event toggle, but not the global switch.
+   * pack previews another pack's sound without changing your choice.
+   */
+  preview(event: SoundEvent, pack?: string): PlayResult {
     if (!this.prefs.enabled || this.prefs.volume <= 0) return 'skipped'
-    return this.start(event, false)
+    return this.start(event, false, undefined, pack)
+  }
+
+  /** Decodes the selected pack's files ahead of time (so the first sound has no delay). */
+  preload(): void {
+    const ctx = this.context
+    if (!ctx || typeof ctx.decodeAudioData !== 'function') return
+    for (const event of Object.keys(RECIPES) as SoundEvent[]) {
+      const url = this.urlFor(this.pack(), event)
+      if (url) void this.packBuffer(ctx, `${this.pack()}/${event}`, url)
+    }
   }
 
   /** Registers (or, with null, forgets) one of your own sounds by its library id. */
@@ -162,6 +206,42 @@ export class SoundService {
     return this.start(null, false, id)
   }
 
+  /**
+   * Milestone 14: a soundboard clip someone played in your voice channel (or your own preview).
+   * It has its own volume and goes straight to the output: the sound-effects volume, event
+   * toggles and burst rules don't apply (it isn't a notification).
+   */
+  playClip(id: string, load: () => Promise<ArrayBuffer>, volumePercent: number): PlayResult {
+    if (volumePercent <= 0) return 'skipped'
+    if (this.active.size >= MAX_VOICES) return 'skipped'
+    const ctx = this.ensureContext()
+    if (!ctx || typeof ctx.decodeAudioData !== 'function') return 'unavailable'
+    let pending = this.clips.get(id)
+    if (!pending) {
+      pending = load()
+        .then((data) => ctx.decodeAudioData!(data))
+        .catch(() => null)
+      this.clips.set(id, pending)
+      while (this.clips.size > MAX_CLIPS) {
+        const oldest = this.clips.keys().next().value
+        if (oldest === undefined) break
+        this.clips.delete(oldest)
+      }
+    }
+    const gain = volumeToGain(volumePercent)
+    const play = (): void => {
+      void pending.then((buffer) => {
+        if (buffer) this.schedule(ctx, buffer, gain, 0, true)
+      })
+    }
+    if (ctx.state === 'running') {
+      play()
+      return 'played'
+    }
+    void this.resume(ctx).then((ok) => ok && play())
+    return this.everRan ? 'played' : 'unavailable'
+  }
+
   /** Releases the audio device and cached buffers (sign-out, window close). Reusable later. */
   dispose(): void {
     this.stopAll()
@@ -172,6 +252,9 @@ export class SoundService {
     this.master = null
     this.buffers.clear()
     this.customBuffers.clear()
+    this.packBuffers.clear()
+    this.packReady.clear()
+    this.clips.clear()
     this.everRan = false
     this.failed = false
     if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => undefined)
@@ -181,7 +264,12 @@ export class SoundService {
    * `event` null = a library preview of `customId`. Imported sounds play through their own
    * loudness gain × the event's category/event volume; built-in ones through the volume only.
    */
-  private start(event: SoundEvent | null, gated: boolean, previewId?: string): PlayResult {
+  private start(
+    event: SoundEvent | null,
+    gated: boolean,
+    previewId?: string,
+    pack?: string
+  ): PlayResult {
     let delayMs = 0
     if (gated && event) {
       const decision = this.gate.admit(event, this.now())
@@ -192,8 +280,9 @@ export class SoundService {
     const ctx = this.ensureContext()
     if (!ctx) return 'unavailable'
 
-    const customId = previewId ?? (event ? this.prefs.custom?.[event] : undefined)
-    const play = (): boolean => this.playVoice(ctx, event, customId, delayMs)
+    // Previewing another pack plays that pack's sound, not your own replacement.
+    const customId = previewId ?? (event && !pack ? this.prefs.custom?.[event] : undefined)
+    const play = (): boolean => this.playVoice(ctx, event, customId, delayMs, pack)
 
     if (ctx.state === 'running') {
       return play() ? 'played' : 'unavailable'
@@ -215,7 +304,8 @@ export class SoundService {
     ctx: AudioContextLike,
     event: SoundEvent | null,
     customId: string | undefined,
-    delayMs: number
+    delayMs: number,
+    pack?: string
   ): boolean {
     const volume = event ? eventGain(this.prefs, event) : 1
     const custom = customId ? this.customData.get(customId) : undefined
@@ -228,7 +318,40 @@ export class SoundService {
       return true
     }
     if (!event) return false
+    const packId = pack ?? this.pack()
+    const url = this.urlFor(packId, event)
+    if (url && typeof ctx.decodeAudioData === 'function') {
+      const key = `${packId}/${event}`
+      const ready = this.packReady.get(key)
+      if (ready) return this.schedule(ctx, ready, volume, delayMs)
+      if (ready === undefined) {
+        void this.packBuffer(ctx, key, url).then((buffer) =>
+          this.schedule(ctx, buffer ?? this.bufferFor(ctx, event), volume, delayMs)
+        )
+        return true
+      }
+      // The file couldn't be decoded before: the fallback recipe plays.
+    }
     return this.schedule(ctx, this.bufferFor(ctx, event), volume, delayMs)
+  }
+
+  private packBuffer(
+    ctx: AudioContextLike,
+    key: string,
+    url: string
+  ): Promise<AudioBufferLike | null> {
+    let pending = this.packBuffers.get(key)
+    if (!pending) {
+      pending = this.loadAsset(url)
+        .then((data) => ctx.decodeAudioData!(data))
+        .catch(() => null)
+        .then((buffer) => {
+          if (ctx === this.context) this.packReady.set(key, buffer)
+          return buffer
+        })
+      this.packBuffers.set(key, pending)
+    }
+    return pending
   }
 
   private customBuffer(ctx: AudioContextLike, id: string): Promise<AudioBufferLike | null> {
@@ -256,6 +379,8 @@ export class SoundService {
       this.master = master
       this.buffers.clear()
       this.customBuffers.clear()
+      this.packBuffers.clear()
+      this.packReady.clear()
       if (ctx.state === 'running') this.everRan = true
       if (this.sinkId) void this.applySink(ctx)
       return ctx
@@ -307,7 +432,9 @@ export class SoundService {
     ctx: AudioContextLike,
     buffer: AudioBufferLike,
     volume: number,
-    delayMs: number
+    delayMs: number,
+    /** Soundboard clips bypass the sound-effects master volume. */
+    direct = false
   ): boolean {
     const master = this.master
     if (!master || ctx !== this.context) return false
@@ -317,10 +444,10 @@ export class SoundService {
       // Category / event volume (and an imported file's loudness match) for this voice only.
       let output: AudioNodeLike = master
       let voiceGain: GainNodeLike | null = null
-      if (volume !== 1) {
+      if (volume !== 1 || direct) {
         voiceGain = ctx.createGain()
         voiceGain.gain.value = Math.max(0, volume)
-        voiceGain.connect(master)
+        voiceGain.connect(direct ? ctx.destination : master)
         output = voiceGain
       }
       source.connect(output)

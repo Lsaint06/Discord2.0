@@ -73,12 +73,29 @@ describe('sound palette', () => {
     expect(Array.from(again.slice(0, 2000))).toEqual(Array.from(rendered.mention.slice(0, 2000)))
   })
 
-  it('makes every sound distinct', () => {
+  it('makes every original fallback recipe distinct (Milestone 14 events reuse them)', () => {
     const signature = (e: (typeof SOUND_EVENTS)[number]): string =>
       RECIPES[e].notes
         .map((n) => `${n.freq.toFixed(1)}>${(n.toFreq ?? n.freq).toFixed(1)}`)
         .join(',')
-    expect(new Set(SOUND_EVENTS.map(signature)).size).toBe(SOUND_EVENTS.length)
+    const base = SOUND_EVENTS.slice().filter(
+      (e) =>
+        ![
+          'directMessage',
+          'friendAccepted',
+          'voiceDrop',
+          'reconnect',
+          'streamRemoteStart',
+          'streamRemoteStop',
+          'pttOn',
+          'pttOff',
+          'uploadDone',
+          'uploadFailed',
+          'sendFailed'
+        ].includes(e)
+    )
+    expect(base).toHaveLength(13)
+    expect(new Set(base.map(signature)).size).toBe(base.length)
     // Rising vs falling pairs really move in opposite directions.
     const first = (e: (typeof SOUND_EVENTS)[number]): number => RECIPES[e].notes[0]!.freq
     const last = (e: (typeof SOUND_EVENTS)[number]): number => RECIPES[e].notes.at(-1)!.freq

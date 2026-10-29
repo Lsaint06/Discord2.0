@@ -57,6 +57,8 @@ export interface AppContext {
     editsPerUser: TokenBucketLimiter
     reactionsPerUser: TokenBucketLimiter
     pinsPerUser: TokenBucketLimiter
+    /** Saving messages and editing personal notes (Milestone 14). */
+    personalPerUser: TokenBucketLimiter
     uploadsPerUser: TokenBucketLimiter
     searchPerUser: TokenBucketLimiter
     readAcksPerUser: TokenBucketLimiter
@@ -114,6 +116,7 @@ export function createLimiters(): AppContext['limiters'] {
     editsPerUser: new TokenBucketLimiter(10, 1),
     reactionsPerUser: new TokenBucketLimiter(20, 4),
     pinsPerUser: new TokenBucketLimiter(10, 0.5),
+    personalPerUser: new TokenBucketLimiter(30, 2),
     // One request per file: a burst of 10 files, then about one every 2 s.
     uploadsPerUser: new TokenBucketLimiter(10, 0.5),
     searchPerUser: new TokenBucketLimiter(10, 1),

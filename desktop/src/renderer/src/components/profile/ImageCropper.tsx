@@ -13,6 +13,17 @@ import {
   type Size
 } from '../../lib/crop'
 import { CloseIcon } from '../Icons'
+import { isAnimatedImageFile } from '../../lib/animatedImage'
+
+/** The server's upload limit for profile images (bytes). */
+const MAX_UPLOAD_BYTES = LIMITS.profileImageMaxBytes
+
+export interface CropRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
 
 const FRAMES: Record<ProfileImageKind, Size> = {
   avatar: { width: 300, height: 300 },
@@ -23,8 +34,17 @@ interface ImageCropperProps {
   file: File
   kind: ProfileImageKind
   onCancel: () => void
-  /** Upload the cropped image; resolves to an error message or null on success. */
-  onConfirm: (image: Blob, onProgress: (fraction: number) => void) => Promise<string | null>
+  /**
+   * Upload the image; resolves to an error message or null on success. For an animated
+   * original (kept animated), crop is the chosen area in source pixels.
+   */
+  onConfirm: (
+    image: Blob,
+    onProgress: (fraction: number) => void,
+    crop?: CropRect
+  ) => Promise<string | null>
+  /** Milestone 14: the server keeps animations (otherwise the first frame is used). */
+  allowAnimated?: boolean
 }
 
 interface Loaded {
@@ -33,8 +53,27 @@ interface Loaded {
   size: Size
 }
 
-function ImageCropper({ file, kind, onCancel, onConfirm }: ImageCropperProps): React.JSX.Element {
+function ImageCropper({
+  file,
+  kind,
+  onCancel,
+  onConfirm,
+  allowAnimated = false
+}: ImageCropperProps): React.JSX.Element {
   const frame = FRAMES[kind]
+  /** The picked file is an animated GIF/WebP (null while checking). */
+  const [animated, setAnimated] = useState<boolean | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void isAnimatedImageFile(file).then(
+      (yes) => !cancelled && setAnimated(yes),
+      () => !cancelled && setAnimated(false)
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [file])
+  const keepAnimation = Boolean(animated && allowAnimated)
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [crop, setCrop] = useState<CropState | null>(null)
   /** The picked image can't be used at all (unreadable, too small). */
@@ -83,6 +122,29 @@ function ImageCropper({ file, kind, onCancel, onConfirm }: ImageCropperProps): R
 
   const confirm = async (): Promise<void> => {
     if (!loaded || !crop || busy || blocked) return
+    if (keepAnimation) {
+      if (file.size > MAX_UPLOAD_BYTES) {
+        setError(`Animated pictures can be at most ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`)
+        return
+      }
+      // Animations are cropped by the server (every frame); send the original and the area.
+      const { sx, sy, sw, sh } = sourceRect(loaded.size, frame, crop)
+      const left = Math.max(0, Math.floor(sx))
+      const top = Math.max(0, Math.floor(sy))
+      const area: CropRect = {
+        left,
+        top,
+        width: Math.min(loaded.size.width - left, Math.round(sw)),
+        height: Math.min(loaded.size.height - top, Math.round(sh))
+      }
+      setBusy(true)
+      setError(null)
+      setProgress(0)
+      const failure = await onConfirm(file, setProgress, area)
+      setBusy(false)
+      if (failure) setError(failure)
+      return
+    }
     setBusy(true)
     setError(null)
     setProgress(0)
@@ -116,7 +178,7 @@ function ImageCropper({ file, kind, onCancel, onConfirm }: ImageCropperProps): R
     <div className="modal-backdrop" onMouseDown={() => !busy && onCancel()}>
       <div
         ref={dialogRef}
-        className={`modal cropper-modal ${kind}`}
+        className={`modal cropper-modal cropper-${kind}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -133,10 +195,17 @@ function ImageCropper({ file, kind, onCancel, onConfirm }: ImageCropperProps): R
         </button>
         <h2>{title}</h2>
         <p className="modal-subtitle">Drag to reposition. Scroll or use the slider to zoom.</p>
+        {animated && (
+          <p className="cropper-note" role="note">
+            {allowAnimated
+              ? 'Animated picture — the animation is kept. People see it move when they hover over you or open your profile.'
+              : 'This server keeps only the first frame of animated pictures.'}
+          </p>
+        )}
 
         <div
           ref={frameRef}
-          className={`cropper-frame ${kind}`}
+          className={`cropper-frame cropper-${kind}`}
           style={{ width: frame.width, height: frame.height }}
           tabIndex={0}
           role="application"

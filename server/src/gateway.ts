@@ -137,7 +137,10 @@ export class GatewayHub {
       bio: user.bio ?? null,
       pronouns: user.pronouns ?? null,
       createdAt: user.createdAt,
-      customStatus: this.customStatusOf(user)
+      customStatus: this.customStatusOf(user),
+      profileStyle: user.profileStyle ?? null,
+      avatarAnimated: Boolean(user.avatarId && user.avatarAnimated),
+      bannerAnimated: Boolean(user.bannerId && user.bannerAnimated)
     }
   }
 

@@ -105,7 +105,7 @@ textarea {
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrollbar-thumb, rgba(0, 0, 0, 0.45));
   border-radius: 8px;
 }
 ::-webkit-scrollbar-track {
@@ -3457,7 +3457,7 @@ mark {
   padding: 0 2px;
   border-radius: 3px;
   background: color-mix(in srgb, var(--accent) 25%, transparent);
-  color: #c9cdfb;
+  color: var(--mention-text, #c9cdfb);
   font-weight: 500;
 }
 .md-mention.self {
@@ -3465,7 +3465,7 @@ mark {
   color: var(--text-strong);
 }
 .message-content a {
-  color: #00a8fc;
+  color: var(--text-link, #00a8fc);
 }
 .message-content a:hover {
   text-decoration: underline;
@@ -3474,7 +3474,7 @@ mark {
   padding: 0 4px;
   border-radius: 3px;
   background: var(--bg-hover);
-  color: #00a8fc;
+  color: var(--text-link, #00a8fc);
   font-size: 0.92em;
 }
 .md-message-link:hover {
@@ -4531,11 +4531,11 @@ mark {
   border-color: #dfe1e5 !important;
 }
 :root[data-theme='light'] .md-mention {
-  color: color-mix(in srgb, var(--accent) 70%, #000);
+  color: var(--mention-text, color-mix(in srgb, var(--accent) 70%, #000));
 }
 :root[data-theme='light'] .message-content a,
 :root[data-theme='light'] .md-message-link {
-  color: #006ce7;
+  color: var(--text-link, #006ce7);
 }
 :root[data-theme='light'] .tok-keyword {
   color: #8839ef;
@@ -5009,14 +5009,11 @@ mark {
   box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.85);
   border-radius: 6px;
 }
-.cropper-frame.avatar .cropper-mask {
+.cropper-frame.cropper-avatar .cropper-mask {
   border-radius: 50%;
   box-shadow:
     0 0 0 999px rgba(0, 0, 0, 0.55),
     inset 0 0 0 2px rgba(255, 255, 255, 0.85);
-}
-.cropper-frame.avatar {
-  border-radius: 6px;
 }
 .cropper-frame .spinner {
   position: absolute;

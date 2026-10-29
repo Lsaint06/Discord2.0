@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import type { PresenceStatus, SelectableStatus } from '../types'
-import type { ApiCustomStatus } from '../net/protocol'
+import type { ApiCustomStatus, AvatarDecorationId } from '../net/protocol'
 import { statusLabels } from '../lib/format'
 import StatusMenu from './profile/StatusMenu'
 import { CustomStatusText } from './profile/ProfileCard'
@@ -43,6 +43,9 @@ interface UserPanelProps {
   displayName: string
   avatarColor: string
   avatarId?: string | null
+  /** Milestone 14: your decoration and whether your picture is animated. */
+  decoration?: AvatarDecorationId | null
+  avatarAnimated?: boolean
   /** Presence shown on your avatar (from your chosen status). */
   status: PresenceStatus
   statusPreference: SelectableStatus
@@ -70,6 +73,8 @@ interface UserPanelProps {
   onStartAudio: () => void
   /** Rendered while sharing (e.g. a "limited by CPU/bandwidth" note). */
   shareStatus?: ReactNode
+  /** Milestone 14: the soundboard (shown while connected to voice). */
+  soundboard?: ReactNode
 }
 
 const STATUS_LABEL: Record<VoiceStatus, string> = {
@@ -143,6 +148,8 @@ function UserPanel({
   displayName,
   avatarColor,
   avatarId,
+  decoration,
+  avatarAnimated,
   status,
   statusPreference,
   customStatus,
@@ -167,7 +174,8 @@ function UserPanel({
   onDismissShareMessage,
   onDismissDeviceNotice,
   onStartAudio,
-  shareStatus
+  shareStatus,
+  soundboard
 }: UserPanelProps): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const micOff = muted || deafened
@@ -290,6 +298,8 @@ function UserPanel({
             </div>
           )}
 
+          {voice.status === 'connected' && soundboard}
+
           {share?.status === 'live' && shareStatus}
           {share?.status === 'live' && share.audio === 'live' && !share.audioEchoProtected && (
             <div className="voice-panel-message warn">
@@ -379,6 +389,8 @@ function UserPanel({
             size={34}
             status={status}
             ringColor="var(--bg-panel)"
+            decoration={decoration}
+            animatedImage={avatarAnimated}
           />
           <span className="user-panel-names">
             <span className="user-panel-name">{displayName}</span>

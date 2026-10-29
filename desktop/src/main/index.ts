@@ -13,6 +13,7 @@ import { APP_INDEX_URL, registerAppScheme, serveAppScheme } from './appProtocol'
 import { attachUiZoom, loadUiZoom, setupUiZoomIpc } from './uiZoom'
 import { setupGlobalShortcuts } from './shortcuts'
 import { setupDownloads } from './downloads'
+import { loadLifecyclePrefs, setupLifecycle, startsHidden } from './lifecycle'
 
 // Optional isolated profile (separate storage/session), e.g. D2_PROFILE=alice.
 // Lets two clients run side by side on one PC for testing.
@@ -23,6 +24,11 @@ if (profile) {
   }
   app.setPath('userData', `${app.getPath('userData')}-${profile}`)
 }
+
+// Milestone 14: one window per profile. A second launch brings the existing window forward.
+// (Isolated D2_PROFILE test instances skip this so several can run side by side.)
+const singleInstance = profile ? true : app.requestSingleInstanceLock()
+if (!singleInstance) app.quit()
 
 // Must run before 'ready' so Chromium's GPU process sees the features.
 applyEncoderFlags()
@@ -61,7 +67,17 @@ function createWindow(): void {
   }
 
   mainWindow.on('ready-to-show', () => {
+    if (!startsHidden()) mainWindow.show()
+    // Start minimized: hidden in the tray when close-to-tray is on, otherwise minimized.
+    else if (!loadLifecyclePrefs().closeToTray) mainWindow.minimize()
+  })
+
+  setupLifecycle(mainWindow, icon, isAppUrl)
+  app.on('second-instance', () => {
+    if (mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
+    mainWindow.focus()
   })
 
   attachUiZoom(mainWindow.webContents)
@@ -114,6 +130,7 @@ app.whenReady().then(() => {
   setupGlobalShortcuts(isAppUrl)
   setupDownloads(isAppUrl)
   serveAppScheme()
+  loadLifecyclePrefs()
 
   createWindow()
 

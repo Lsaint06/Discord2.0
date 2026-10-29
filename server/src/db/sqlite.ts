@@ -2,7 +2,8 @@ import { timingSafeEqual } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
-import type { ChannelType } from '../protocol.js'
+import type { ApiProfileStyle, ChannelType } from '../protocol.js'
+import { normalizeProfileStyle } from '../lib/validation.js'
 import { DIRECT_SERVER_ID, sqliteMigrations } from './migrations.js'
 import type {
   AddMemberResult,
@@ -44,6 +45,7 @@ import type {
   ServerRecord,
   SessionKind,
   SessionRecord,
+  SoundboardSoundRecord,
   UploadSessionRecord,
   UserRecord,
   ChannelPlacement
@@ -79,7 +81,10 @@ function toUser(r: Row): UserRecord {
     customStatusExpiresAt: nullableNum(r.custom_status_expires_at),
     email: nullableStr(r.email),
     emailVerifiedAt: nullableNum(r.email_verified_at),
-    signupPending: num(r.signup_pending ?? 0) === 1
+    signupPending: num(r.signup_pending ?? 0) === 1,
+    profileStyle: parseProfileStyle(r.profile_style),
+    avatarAnimated: num(r.avatar_animated ?? 0) === 1,
+    bannerAnimated: num(r.banner_animated ?? 0) === 1
   }
 }
 
@@ -123,6 +128,30 @@ function toProfileMedia(r: Row): ProfileMediaRecord {
 }
 
 const nullableStr = (v: unknown): string | null => (v == null ? null : str(v))
+
+function toSoundboardSound(r: Row): SoundboardSoundRecord {
+  return {
+    id: str(r.id),
+    serverId: str(r.server_id),
+    name: str(r.name),
+    emoji: nullableStr(r.emoji),
+    uploaderId: nullableStr(r.uploader_id),
+    durationMs: num(r.duration_ms),
+    size: num(r.size),
+    sha256: str(r.sha256),
+    createdAt: num(r.created_at)
+  }
+}
+
+/** Stored profile style → validated style (anything unreadable is treated as none). */
+function parseProfileStyle(v: unknown): ApiProfileStyle | null {
+  if (typeof v !== 'string') return null
+  try {
+    return normalizeProfileStyle(JSON.parse(v))
+  } catch {
+    return null
+  }
+}
 const nullableNum = (v: unknown): number | null => (v == null ? null : num(v))
 
 function toSession(r: Row): SessionRecord {
@@ -463,6 +492,9 @@ export class SqliteRepository implements Repository {
     if (patch.bio !== undefined) columns.push(['bio', patch.bio])
     if (patch.pronouns !== undefined) columns.push(['pronouns', patch.pronouns])
     if (patch.accentColor !== undefined) columns.push(['accent_color', patch.accentColor])
+    if (patch.profileStyle !== undefined) {
+      columns.push(['profile_style', patch.profileStyle ? JSON.stringify(patch.profileStyle) : null])
+    }
     if (columns.length > 0) {
       // Column names come from the fixed list above, never from input; values are bound.
       this.run(
@@ -527,7 +559,12 @@ export class SqliteRepository implements Repository {
           media.createdAt
         )
       }
-      this.run(`UPDATE users SET ${column} = ? WHERE id = ?`, media?.id ?? null, userId)
+      this.run(
+        `UPDATE users SET ${column} = ?, ${kind}_animated = ? WHERE id = ?`,
+        media?.id ?? null,
+        media?.animated ? 1 : 0,
+        userId
+      )
       if (previousId) this.run('DELETE FROM profile_media WHERE id = ?', previousId)
     })
     return { previousId, user: await this.getUser(userId) }
@@ -540,6 +577,116 @@ export class SqliteRepository implements Repository {
 
   async listProfileMediaIds() {
     return new Set(this.all('SELECT id FROM profile_media').map((r) => str(r.id)))
+  }
+
+  // ---- Soundboard (Milestone 14) ----
+
+  async listSoundboardSounds(serverId: string) {
+    return this.all(
+      'SELECT * FROM soundboard_sounds WHERE server_id = ? ORDER BY created_at, id',
+      serverId
+    ).map(toSoundboardSound)
+  }
+
+  async getSoundboardSound(id: string) {
+    const r = this.get('SELECT * FROM soundboard_sounds WHERE id = ?', id)
+    return r && toSoundboardSound(r)
+  }
+
+  async addSoundboardSound(sound: SoundboardSoundRecord, max: number) {
+    let added = false
+    this.transaction(() => {
+      const row = this.get('SELECT COUNT(*) AS n FROM soundboard_sounds WHERE server_id = ?', sound.serverId)
+      if (num(row?.n ?? 0) >= max) return
+      this.run(
+        `INSERT INTO soundboard_sounds (id, server_id, name, emoji, uploader_id, duration_ms, size, sha256, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sound.id,
+        sound.serverId,
+        sound.name,
+        sound.emoji,
+        sound.uploaderId,
+        sound.durationMs,
+        sound.size,
+        sound.sha256,
+        sound.createdAt
+      )
+      added = true
+    })
+    return added
+  }
+
+  async deleteSoundboardSound(id: string) {
+    return Number(this.run('DELETE FROM soundboard_sounds WHERE id = ?', id).changes) > 0
+  }
+
+  async listSoundboardSoundIds() {
+    return new Set(this.all('SELECT id FROM soundboard_sounds').map((r) => str(r.id)))
+  }
+
+  // ---- Saved messages and personal notes (Milestone 14) ----
+
+  async listSavedMessages(userId: string) {
+    return this.all(
+      'SELECT message_id, saved_at FROM saved_messages WHERE user_id = ? ORDER BY saved_at DESC, message_id DESC',
+      userId
+    ).map((r) => ({ messageId: str(r.message_id), savedAt: num(r.saved_at) }))
+  }
+
+  async saveMessage(userId: string, messageId: string, savedAt: number, max: number) {
+    let out: { result: 'ok' | 'limit'; savedAt: number } = { result: 'ok', savedAt }
+    this.transaction(() => {
+      const existing = this.get(
+        'SELECT saved_at FROM saved_messages WHERE user_id = ? AND message_id = ?',
+        userId,
+        Number(messageId)
+      )
+      if (existing) {
+        out = { result: 'ok', savedAt: num(existing.saved_at) }
+        return
+      }
+      const count = num(this.get('SELECT COUNT(*) AS n FROM saved_messages WHERE user_id = ?', userId)?.n ?? 0)
+      if (count >= max) {
+        out = { result: 'limit', savedAt }
+        return
+      }
+      this.run(
+        'INSERT INTO saved_messages (user_id, message_id, saved_at) VALUES (?, ?, ?)',
+        userId,
+        Number(messageId),
+        savedAt
+      )
+    })
+    return out
+  }
+
+  async unsaveMessage(userId: string, messageId: string) {
+    return (
+      Number(
+        this.run('DELETE FROM saved_messages WHERE user_id = ? AND message_id = ?', userId, Number(messageId))
+          .changes
+      ) > 0
+    )
+  }
+
+  async getUserNote(ownerId: string, targetId: string) {
+    const r = this.get('SELECT note, updated_at FROM user_notes WHERE owner_id = ? AND target_id = ?', ownerId, targetId)
+    return r ? { note: str(r.note), updatedAt: num(r.updated_at) } : undefined
+  }
+
+  async setUserNote(ownerId: string, targetId: string, note: string, updatedAt: number) {
+    if (!note) {
+      this.run('DELETE FROM user_notes WHERE owner_id = ? AND target_id = ?', ownerId, targetId)
+      return
+    }
+    this.run(
+      `INSERT INTO user_notes (owner_id, target_id, note, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (owner_id, target_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at`,
+      ownerId,
+      targetId,
+      note,
+      updatedAt
+    )
   }
 
   async isUserVisibleTo(viewerId: string, userId: string) {

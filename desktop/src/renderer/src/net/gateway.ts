@@ -34,6 +34,12 @@ export interface GatewayHandlers {
   onMeUpdate: (me: ApiMe) => void
   /** Your synced preferences changed on another device. */
   onPreferencesUpdate: (preferences: ApiPreferences) => void
+  /** Milestone 14: a soundboard clip was played in your voice channel (optional). */
+  onSoundboardPlay?: (event: GatewayEvent<'soundboard_play'>) => void
+  /** Milestone 14: you saved/unsaved a message (possibly on another device). */
+  onSavedMessageUpdate?: (event: GatewayEvent<'saved_message_update'>) => void
+  /** Milestone 14: your private note about someone changed (possibly on another device). */
+  onUserNoteUpdate?: (event: GatewayEvent<'user_note_update'>) => void
   onServerCreate: (server: ApiServer) => void
   onServerUpdate: (update: GatewayEvent<'server_update'>) => void
   onServerRemove: (removed: GatewayEvent<'server_remove'>) => void
@@ -221,6 +227,15 @@ export class GatewayClient {
         break
       case 'conversation_remove':
         this.handlers.onConversationRemove(frame.d)
+        break
+      case 'soundboard_play':
+        this.handlers.onSoundboardPlay?.(frame.d)
+        break
+      case 'saved_message_update':
+        this.handlers.onSavedMessageUpdate?.(frame.d)
+        break
+      case 'user_note_update':
+        this.handlers.onUserNoteUpdate?.(frame.d)
         break
     }
   }

@@ -1,5 +1,7 @@
 import type { Server, User } from '../types'
 import Avatar from './Avatar'
+import { StyledName } from './profile/ProfileCard'
+import { decorationOf } from '../lib/profileStyle'
 import { CustomStatusText } from './profile/ProfileCard'
 
 interface MemberListProps {
@@ -68,10 +70,12 @@ function MemberList({ server, resolveUser, onOpenProfile }: MemberListProps): Re
                     size={32}
                     status={user.status}
                     ringColor="var(--bg-secondary)"
+                    decoration={decorationOf(user.profileStyle)}
+                    animatedImage={user.avatarAnimated}
                   />
                   <span className="member-text">
                     <span className="member-name" style={{ color: colorFor(user.id) }}>
-                      {user.name}
+                      <StyledName user={user}>{user.name}</StyledName>
                       {user.bot && <span className="bot-tag">BOT</span>}
                     </span>
                     {user.status !== 'offline' && (

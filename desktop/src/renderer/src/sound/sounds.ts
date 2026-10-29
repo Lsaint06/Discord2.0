@@ -1,7 +1,10 @@
 /**
- * Discord 2.0's original sound palette. Every sound is synthesized here from a small recipe
- * (notes with waveform, partials, pitch glide, envelope and a gentle low-pass) — no audio files,
- * no third-party samples. Rendering is plain TypeScript DSP into a Float32Array, so it is
+ * Discord 2.0's sound events and their fallback recipes.
+ *
+ * Milestone 14: the sounds you hear come from the rendered sound packs (WAV files made by
+ * desktop/scripts/sounds/render-sounds.mjs, see packs.ts). The small recipes below are only the
+ * fallback if a pack file can't be loaded or decoded. Every sound is original — no third-party
+ * samples. Rendering is plain TypeScript DSP into a Float32Array, so it is
  * deterministic and unit-testable; the SoundService copies the result into a Web Audio buffer.
  *
  * All sounds are loudness-matched (RMS of the audible part) and peak-limited, so the master
@@ -22,27 +25,50 @@ export type SoundEvent =
   | 'friendRequest'
   | 'streamStart'
   | 'streamStop'
+  // ---- Milestone 14 ----
+  | 'directMessage'
+  | 'friendAccepted'
+  | 'voiceDrop'
+  | 'reconnect'
+  | 'streamRemoteStart'
+  | 'streamRemoteStop'
+  | 'pttOn'
+  | 'pttOff'
+  | 'uploadDone'
+  | 'uploadFailed'
+  | 'sendFailed'
 
 export const SOUND_EVENTS: readonly SoundEvent[] = [
   'message',
   'mention',
+  'directMessage',
   'friendRequest',
+  'friendAccepted',
   'voiceJoin',
   'voiceLeave',
   'connect',
   'disconnect',
+  'voiceDrop',
+  'reconnect',
   'streamStart',
   'streamStop',
+  'streamRemoteStart',
+  'streamRemoteStop',
   'mute',
   'unmute',
   'deafen',
-  'undeafen'
+  'undeafen',
+  'pttOn',
+  'pttOff',
+  'uploadDone',
+  'uploadFailed',
+  'sendFailed'
 ]
 
 export interface SoundInfo {
   label: string
   description: string
-  group: 'messages' | 'voice' | 'controls'
+  group: 'messages' | 'voice' | 'controls' | 'system'
 }
 
 export const SOUND_INFO: Record<SoundEvent, SoundInfo> = {
@@ -53,8 +79,17 @@ export const SOUND_INFO: Record<SoundEvent, SoundInfo> = {
   },
   mention: {
     label: 'Mention',
-    description:
-      'Someone mentions you (@username, @display name or @everyone), or sends you a direct message.',
+    description: 'Someone mentions you (@username, @display name or @everyone).',
+    group: 'messages'
+  },
+  directMessage: {
+    label: 'Direct message',
+    description: 'A direct or group message arrives in a conversation you aren’t looking at.',
+    group: 'messages'
+  },
+  friendAccepted: {
+    label: 'Friend request accepted',
+    description: 'Someone accepts your friend request.',
     group: 'messages'
   },
   friendRequest: {
@@ -82,20 +117,65 @@ export const SOUND_INFO: Record<SoundEvent, SoundInfo> = {
     description: 'You leave voice, or the connection is lost.',
     group: 'voice'
   },
+  voiceDrop: {
+    label: 'Connection lost',
+    description: 'Your voice connection drops unexpectedly (not when you leave).',
+    group: 'voice'
+  },
+  reconnect: {
+    label: 'Reconnected',
+    description: 'Your voice connection recovers after a drop.',
+    group: 'voice'
+  },
   streamStart: {
-    label: 'Screen share starts',
-    description: 'You or someone in your voice channel starts sharing their screen.',
+    label: 'You start sharing',
+    description: 'Your screen share goes live (after it has really started).',
     group: 'voice'
   },
   streamStop: {
-    label: 'Screen share ends',
+    label: 'You stop sharing',
+    description: 'Your screen share ends.',
+    group: 'voice'
+  },
+  streamRemoteStart: {
+    label: 'Someone starts sharing',
+    description: 'Someone in your voice channel starts sharing their screen.',
+    group: 'voice'
+  },
+  streamRemoteStop: {
+    label: 'Someone stops sharing',
     description: 'A screen share in your voice channel stops (not when the person leaves).',
     group: 'voice'
   },
   mute: { label: 'Mute', description: 'You mute your microphone.', group: 'controls' },
   unmute: { label: 'Unmute', description: 'You unmute your microphone.', group: 'controls' },
   deafen: { label: 'Deafen', description: 'You deafen yourself.', group: 'controls' },
-  undeafen: { label: 'Undeafen', description: 'You undeafen yourself.', group: 'controls' }
+  undeafen: { label: 'Undeafen', description: 'You undeafen yourself.', group: 'controls' },
+  pttOn: {
+    label: 'Push-to-talk on',
+    description: 'You press your push-to-talk key (off by default).',
+    group: 'controls'
+  },
+  pttOff: {
+    label: 'Push-to-talk off',
+    description: 'You release your push-to-talk key (off by default).',
+    group: 'controls'
+  },
+  uploadDone: {
+    label: 'Upload finished',
+    description: 'A file you’re sending finishes uploading.',
+    group: 'system'
+  },
+  uploadFailed: {
+    label: 'Upload failed',
+    description: 'A file you’re sending couldn’t be uploaded.',
+    group: 'system'
+  },
+  sendFailed: {
+    label: 'Message not sent',
+    description: 'A message you sent couldn’t be delivered.',
+    group: 'system'
+  }
 }
 
 export type Waveform = 'sine' | 'triangle'
@@ -155,7 +235,22 @@ const B5 = hz(14)
 const E6 = hz(19)
 const Fs6 = hz(21)
 
-export const RECIPES: Record<SoundEvent, SoundRecipe> = {
+type BaseEvent = Exclude<
+  SoundEvent,
+  | 'directMessage'
+  | 'friendAccepted'
+  | 'voiceDrop'
+  | 'reconnect'
+  | 'streamRemoteStart'
+  | 'streamRemoteStop'
+  | 'pttOn'
+  | 'pttOff'
+  | 'uploadDone'
+  | 'uploadFailed'
+  | 'sendFailed'
+>
+
+const BASE_RECIPES: Record<BaseEvent, SoundRecipe> = {
   // Gentle two-note digital chime: a soft fourth up, bell partials.
   message: {
     notes: [
@@ -516,6 +611,22 @@ export const RECIPES: Record<SoundEvent, SoundRecipe> = {
     ],
     lowpass: 4500
   }
+}
+
+/** Fallback recipes for every event (Milestone 14 events reuse the closest original one). */
+export const RECIPES: Record<SoundEvent, SoundRecipe> = {
+  ...BASE_RECIPES,
+  directMessage: BASE_RECIPES.mention,
+  friendAccepted: BASE_RECIPES.friendRequest,
+  voiceDrop: BASE_RECIPES.disconnect,
+  reconnect: BASE_RECIPES.connect,
+  streamRemoteStart: BASE_RECIPES.streamStart,
+  streamRemoteStop: BASE_RECIPES.streamStop,
+  pttOn: BASE_RECIPES.unmute,
+  pttOff: BASE_RECIPES.mute,
+  uploadDone: BASE_RECIPES.message,
+  uploadFailed: BASE_RECIPES.disconnect,
+  sendFailed: BASE_RECIPES.disconnect
 }
 
 /** Target loudness (RMS of the audible part) and peak ceiling for every rendered sound. */

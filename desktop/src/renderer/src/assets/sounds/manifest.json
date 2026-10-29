@@ -1,0 +1,2766 @@
+{
+ "generator": "desktop/scripts/sounds/render-sounds.mjs",
+ "license": "Original work for Discord 2.0 (procedural synthesis; no samples or third-party audio).",
+ "format": {
+  "container": "WAV",
+  "codec": "PCM s16le",
+  "sampleRate": 48000,
+  "channels": 1
+ },
+ "loudnessTargetsLufs": {
+  "alert": -18,
+  "standard": -20,
+  "control": -25
+ },
+ "peakCeilingDbfs": -1.5,
+ "packs": {
+  "signature": {
+   "message": {
+    "file": "signature/message.wav",
+    "class": "standard",
+    "bytes": 95450,
+    "sha256": "b2407c4cbec5a1dba005f03ff4ef26b68d913ee2cf913e943af7fda5462845c3",
+    "durationMs": 994,
+    "peakDbfs": -10.47,
+    "truePeakDbfsApprox": -10.47,
+    "rmsDbfs": -23.75,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 6.1e-7,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 19.5,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mention": {
+    "file": "signature/mention.wav",
+    "class": "alert",
+    "bytes": 110396,
+    "sha256": "5a695d3ac8879d3a73026397d67198434b9e7e7c1054de4ca9432fb3d4a9bb16",
+    "durationMs": 1150,
+    "peakDbfs": -8.75,
+    "truePeakDbfsApprox": -8.72,
+    "rmsDbfs": -22.37,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 6.22e-7,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "directMessage": {
+    "file": "signature/directMessage.wav",
+    "class": "alert",
+    "bytes": 109870,
+    "sha256": "1c6f4ba13e7508ecb161065d41c8616adde438c0dff973802a0a0de3b35c58ca",
+    "durationMs": 1144,
+    "peakDbfs": -8.41,
+    "truePeakDbfsApprox": -8.36,
+    "rmsDbfs": -21.88,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 0.00000147,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendRequest": {
+    "file": "signature/friendRequest.wav",
+    "class": "alert",
+    "bytes": 118910,
+    "sha256": "784a1cb28e130a4f6fbbbf08ff5c243939144738d7ac94cd14dbbc01e254c891",
+    "durationMs": 1238,
+    "peakDbfs": -8.11,
+    "truePeakDbfsApprox": -8.11,
+    "rmsDbfs": -21.97,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 2.17e-7,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendAccepted": {
+    "file": "signature/friendAccepted.wav",
+    "class": "standard",
+    "bytes": 118220,
+    "sha256": "632279a0e29ac2f4dd67e0d116cefdd1fe90e76c196e8ca359af666539c44a76",
+    "durationMs": 1231,
+    "peakDbfs": -9.3,
+    "truePeakDbfsApprox": -9.3,
+    "rmsDbfs": -24.03,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000131,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceJoin": {
+    "file": "signature/voiceJoin.wav",
+    "class": "standard",
+    "bytes": 95050,
+    "sha256": "b0794e965ba1f88dddd9d88ebb0528c40a6ce6125435d203e2575c9777b14015",
+    "durationMs": 990,
+    "peakDbfs": -9.19,
+    "truePeakDbfsApprox": -9.16,
+    "rmsDbfs": -22.9,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000441,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceLeave": {
+    "file": "signature/voiceLeave.wav",
+    "class": "standard",
+    "bytes": 95162,
+    "sha256": "0a19fa0fc310bd20406dd96defa96d1ee0b084b6beefde89bc6ddc9eb68a8512",
+    "durationMs": 991,
+    "peakDbfs": -9.9,
+    "truePeakDbfsApprox": -9.89,
+    "rmsDbfs": -22.96,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 3.5e-7,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "connect": {
+    "file": "signature/connect.wav",
+    "class": "standard",
+    "bytes": 113322,
+    "sha256": "a7ee4e79ff7b065e65afe9ffa6e063b422b6d5db665f16cf9da4fa5762e232ad",
+    "durationMs": 1180,
+    "peakDbfs": -9.75,
+    "truePeakDbfsApprox": -9.72,
+    "rmsDbfs": -23.48,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000286,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "disconnect": {
+    "file": "signature/disconnect.wav",
+    "class": "standard",
+    "bytes": 101298,
+    "sha256": "324a1b58741b8d9186350fba5515733d5816c49c86cb1603a2a942ca5fe740ec",
+    "durationMs": 1055,
+    "peakDbfs": -10.63,
+    "truePeakDbfsApprox": -10.62,
+    "rmsDbfs": -23.26,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000152,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceDrop": {
+    "file": "signature/voiceDrop.wav",
+    "class": "alert",
+    "bytes": 130716,
+    "sha256": "94306bc1de1135daa9c434ab8972086d17f4bd7309dd6d200806c1269c2bdf82",
+    "durationMs": 1361,
+    "peakDbfs": -8.76,
+    "truePeakDbfsApprox": -8.75,
+    "rmsDbfs": -21.79,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 2.15e-7,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "reconnect": {
+    "file": "signature/reconnect.wav",
+    "class": "standard",
+    "bytes": 90326,
+    "sha256": "9022f78281301d5d4b57da1411097b8dcbab6a8d2f00b073f936ab514913028a",
+    "durationMs": 940,
+    "peakDbfs": -10.29,
+    "truePeakDbfsApprox": -10.29,
+    "rmsDbfs": -23.17,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 8.79e-8,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStart": {
+    "file": "signature/streamStart.wav",
+    "class": "standard",
+    "bytes": 122714,
+    "sha256": "e29fc864c495bc1ba339e89caaf2563558288334cc31518c82f08b9f43208345",
+    "durationMs": 1278,
+    "peakDbfs": -11.52,
+    "truePeakDbfsApprox": -11.51,
+    "rmsDbfs": -25.86,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -1.69e-8,
+    "leadingSilenceMs": 16.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStop": {
+    "file": "signature/streamStop.wav",
+    "class": "standard",
+    "bytes": 103606,
+    "sha256": "ba2c5f052d51ccce84f09bd92dca83094cb592a84ad45f08e79db2258766f869",
+    "durationMs": 1079,
+    "peakDbfs": -9.72,
+    "truePeakDbfsApprox": -9.72,
+    "rmsDbfs": -23.62,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -1.65e-8,
+    "leadingSilenceMs": 5.6,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStart": {
+    "file": "signature/streamRemoteStart.wav",
+    "class": "standard",
+    "bytes": 89690,
+    "sha256": "acc1ed64ac8b45a17647cef70b07af62091f6c4965b3b204d5352b2a37ea37b7",
+    "durationMs": 934,
+    "peakDbfs": -11.86,
+    "truePeakDbfsApprox": -11.86,
+    "rmsDbfs": -24.16,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -4.25e-7,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStop": {
+    "file": "signature/streamRemoteStop.wav",
+    "class": "standard",
+    "bytes": 91424,
+    "sha256": "10d6d650413419d399773f844f3c0ec437fba4209bd7bf93424d15c62e4b0b8f",
+    "durationMs": 952,
+    "peakDbfs": -11.38,
+    "truePeakDbfsApprox": -11.35,
+    "rmsDbfs": -24.42,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000102,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 19.6,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mute": {
+    "file": "signature/mute.wav",
+    "class": "control",
+    "bytes": 51222,
+    "sha256": "f9ff24682b8d53992b525ef6538723ae2ca6ab722bfa4243e5e90f216651f2a6",
+    "durationMs": 533,
+    "peakDbfs": -3.98,
+    "truePeakDbfsApprox": -3.97,
+    "rmsDbfs": -25.95,
+    "momentaryMaxLufs": -25.14,
+    "dcOffset": 0.0000281,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "unmute": {
+    "file": "signature/unmute.wav",
+    "class": "control",
+    "bytes": 46432,
+    "sha256": "c5f137c217edfce7a017d58e32614f33ab72097c1376da5ae27535435e788744",
+    "durationMs": 483,
+    "peakDbfs": -3.37,
+    "truePeakDbfsApprox": -3.35,
+    "rmsDbfs": -25.81,
+    "momentaryMaxLufs": -25.09,
+    "dcOffset": 0.0000437,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "deafen": {
+    "file": "signature/deafen.wav",
+    "class": "control",
+    "bytes": 54872,
+    "sha256": "871cb9cf97930a9870bfc32db3b28d174a5b01c37f9393300ab3c7b69315b8fb",
+    "durationMs": 571,
+    "peakDbfs": -7.06,
+    "truePeakDbfsApprox": -7.03,
+    "rmsDbfs": -26.01,
+    "momentaryMaxLufs": -25.04,
+    "dcOffset": -0.0000172,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "undeafen": {
+    "file": "signature/undeafen.wav",
+    "class": "control",
+    "bytes": 55062,
+    "sha256": "d9c0e8fbf70423f070a4f748d6a2e3160325b69d1befc56241762e6c0563eb95",
+    "durationMs": 573,
+    "peakDbfs": -8.13,
+    "truePeakDbfsApprox": -8.13,
+    "rmsDbfs": -26.58,
+    "momentaryMaxLufs": -25.05,
+    "dcOffset": 0.0000292,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOn": {
+    "file": "signature/pttOn.wav",
+    "class": "control",
+    "bytes": 42516,
+    "sha256": "c2fe80b72441105ac1f2d598a9ffe779654598db8569473761845c6172058b79",
+    "durationMs": 442,
+    "peakDbfs": -6.6,
+    "truePeakDbfsApprox": -6.6,
+    "rmsDbfs": -26.88,
+    "momentaryMaxLufs": -25.07,
+    "dcOffset": 0.00000519,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOff": {
+    "file": "signature/pttOff.wav",
+    "class": "control",
+    "bytes": 46188,
+    "sha256": "5ce2e589f532a47aa91c8f16bf111dcbbb2360c8bd6083fad5427514c1a59076",
+    "durationMs": 481,
+    "peakDbfs": -5.35,
+    "truePeakDbfsApprox": -5.34,
+    "rmsDbfs": -26.2,
+    "momentaryMaxLufs": -25.08,
+    "dcOffset": -0.00000449,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadDone": {
+    "file": "signature/uploadDone.wav",
+    "class": "standard",
+    "bytes": 98852,
+    "sha256": "f2fb583e898b7cd9b8a61eca928858ecd9937ebd4d71df993935fae7ca6f899e",
+    "durationMs": 1029,
+    "peakDbfs": -10.69,
+    "truePeakDbfsApprox": -10.68,
+    "rmsDbfs": -23.88,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 7.93e-7,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadFailed": {
+    "file": "signature/uploadFailed.wav",
+    "class": "standard",
+    "bytes": 95298,
+    "sha256": "946fc7a8fec5e5b4013ce28a89dbdfeb69206709f8815c04fcf16fb6fc871283",
+    "durationMs": 992,
+    "peakDbfs": -10.16,
+    "truePeakDbfsApprox": -10.16,
+    "rmsDbfs": -22.99,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000176,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "sendFailed": {
+    "file": "signature/sendFailed.wav",
+    "class": "standard",
+    "bytes": 94044,
+    "sha256": "fd2e8c7b80336cdebba3c5eaea10f11edfb1b4ddfb56413cec9eea6f0667a137",
+    "durationMs": 979,
+    "peakDbfs": -10.67,
+    "truePeakDbfsApprox": -10.66,
+    "rmsDbfs": -22.99,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 2.99e-7,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   }
+  },
+  "classic": {
+   "message": {
+    "file": "classic/message.wav",
+    "class": "standard",
+    "bytes": 53276,
+    "sha256": "6246cc9045b29fa3e5bab09bd2f96580377a78d2dd07ef274ffe15a7b3e60a1f",
+    "durationMs": 555,
+    "peakDbfs": -8.71,
+    "truePeakDbfsApprox": -8.7,
+    "rmsDbfs": -21.43,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000373,
+    "leadingSilenceMs": 0.7,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mention": {
+    "file": "classic/mention.wav",
+    "class": "alert",
+    "bytes": 75754,
+    "sha256": "aab0ec01b1649e930b2eb150b54c6a0e1e7170d90c32844fe8aef200b4eb303d",
+    "durationMs": 789,
+    "peakDbfs": -8.5,
+    "truePeakDbfsApprox": -8.49,
+    "rmsDbfs": -21.25,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 0.00000249,
+    "leadingSilenceMs": 0.7,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "directMessage": {
+    "file": "classic/directMessage.wav",
+    "class": "alert",
+    "bytes": 74844,
+    "sha256": "f80239086a945e39bd4812630719de69faa10a772fa7c709ccb0e9b243203e8d",
+    "durationMs": 779,
+    "peakDbfs": -8.24,
+    "truePeakDbfsApprox": -8.22,
+    "rmsDbfs": -20.64,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 0.0000033,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendRequest": {
+    "file": "classic/friendRequest.wav",
+    "class": "alert",
+    "bytes": 77744,
+    "sha256": "a054e0183970909a7e9ccb0a10d19a990d259be9b9b8ebc493bda04a8d61072c",
+    "durationMs": 809,
+    "peakDbfs": -7.82,
+    "truePeakDbfsApprox": -7.82,
+    "rmsDbfs": -20.55,
+    "momentaryMaxLufs": -18,
+    "dcOffset": -6.92e-7,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendAccepted": {
+    "file": "classic/friendAccepted.wav",
+    "class": "standard",
+    "bytes": 77714,
+    "sha256": "5833a59e0577a0b28f035cfc2c3708b8b1253b63f68f435e1f633aad057106b7",
+    "durationMs": 809,
+    "peakDbfs": -8.29,
+    "truePeakDbfsApprox": -8.28,
+    "rmsDbfs": -22.76,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000256,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceJoin": {
+    "file": "classic/voiceJoin.wav",
+    "class": "standard",
+    "bytes": 56572,
+    "sha256": "9bad0992be37d23e9895b3f3f06204078d54b26ffa4bfcfad9484464f7b4138b",
+    "durationMs": 589,
+    "peakDbfs": -8.73,
+    "truePeakDbfsApprox": -8.73,
+    "rmsDbfs": -20.99,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000667,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceLeave": {
+    "file": "classic/voiceLeave.wav",
+    "class": "standard",
+    "bytes": 56594,
+    "sha256": "215b2023df2190d0907717a6bef7ed2aa42411710918b1e5540e5ba75d7301e0",
+    "durationMs": 589,
+    "peakDbfs": -8.44,
+    "truePeakDbfsApprox": -8.44,
+    "rmsDbfs": -20.99,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.0000014,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "connect": {
+    "file": "classic/connect.wav",
+    "class": "standard",
+    "bytes": 70012,
+    "sha256": "8a629253d3dc6034a07b2aa3527cd8f56aef5caa9488bee1d8e368106f5145fc",
+    "durationMs": 729,
+    "peakDbfs": -7.97,
+    "truePeakDbfsApprox": -7.97,
+    "rmsDbfs": -21.91,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000432,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "disconnect": {
+    "file": "classic/disconnect.wav",
+    "class": "standard",
+    "bytes": 71950,
+    "sha256": "ab7acf08a70285df56ad471de895ea627cb4f2d57ade447ac58392be02e7facd",
+    "durationMs": 749,
+    "peakDbfs": -9.82,
+    "truePeakDbfsApprox": -9.82,
+    "rmsDbfs": -22.02,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000323,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceDrop": {
+    "file": "classic/voiceDrop.wav",
+    "class": "alert",
+    "bytes": 87348,
+    "sha256": "3034eedecf433762b934aba9ca56782034b0b41d725d167c253aaf772da789c5",
+    "durationMs": 909,
+    "peakDbfs": -8.24,
+    "truePeakDbfsApprox": -8.24,
+    "rmsDbfs": -20.52,
+    "momentaryMaxLufs": -18,
+    "dcOffset": -7.91e-7,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "reconnect": {
+    "file": "classic/reconnect.wav",
+    "class": "standard",
+    "bytes": 47982,
+    "sha256": "352090de505838c9a40cc9d23adeddd7572bf2123fa4c39e7173bf480987659a",
+    "durationMs": 499,
+    "peakDbfs": -8.24,
+    "truePeakDbfsApprox": -8.24,
+    "rmsDbfs": -20.57,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000124,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStart": {
+    "file": "classic/streamStart.wav",
+    "class": "standard",
+    "bytes": 83436,
+    "sha256": "509136cefb3af6fbbbe349df0c928f05ae01dac723839b2d9111e26b65da537c",
+    "durationMs": 869,
+    "peakDbfs": -9.42,
+    "truePeakDbfsApprox": -9.41,
+    "rmsDbfs": -23.28,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 7.28e-7,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStop": {
+    "file": "classic/streamStop.wav",
+    "class": "standard",
+    "bytes": 67154,
+    "sha256": "22491f69f3571b89fd43a3dd5a7cd39052768b8dc93c9d8aa56f3a57f5e67187",
+    "durationMs": 699,
+    "peakDbfs": -9.44,
+    "truePeakDbfsApprox": -9.43,
+    "rmsDbfs": -21.95,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000101,
+    "leadingSilenceMs": 0.6,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStart": {
+    "file": "classic/streamRemoteStart.wav",
+    "class": "standard",
+    "bytes": 54662,
+    "sha256": "881f317ecf65998384863985a05182e9f621e7d1d59d55bde4f6dd83acd2c50d",
+    "durationMs": 569,
+    "peakDbfs": -9.26,
+    "truePeakDbfsApprox": -9.26,
+    "rmsDbfs": -22.19,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -9.11e-7,
+    "leadingSilenceMs": 0.6,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStop": {
+    "file": "classic/streamRemoteStop.wav",
+    "class": "standard",
+    "bytes": 54680,
+    "sha256": "b53e37fe2c24686926d8a203006c7018f1ae00ba3c1bee4de45b6d703db6f573",
+    "durationMs": 569,
+    "peakDbfs": -10.02,
+    "truePeakDbfsApprox": -10,
+    "rmsDbfs": -22.12,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 1.17e-7,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 19.7,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mute": {
+    "file": "classic/mute.wav",
+    "class": "control",
+    "bytes": 19320,
+    "sha256": "22fe46f6d1bc364be76e48a86a2710415702523e13bad44edf9b4a9921439990",
+    "durationMs": 201,
+    "peakDbfs": -4.97,
+    "truePeakDbfsApprox": -4.95,
+    "rmsDbfs": -21.56,
+    "momentaryMaxLufs": -25.08,
+    "dcOffset": 0.0000539,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "unmute": {
+    "file": "classic/unmute.wav",
+    "class": "control",
+    "bytes": 21324,
+    "sha256": "bfb1a839554a1ca051b35f43482674e4a8cd475b55cdf9a2d166bb86221bed70",
+    "durationMs": 222,
+    "peakDbfs": -3.79,
+    "truePeakDbfsApprox": -3.79,
+    "rmsDbfs": -22.33,
+    "momentaryMaxLufs": -25.06,
+    "dcOffset": 0.0000905,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "deafen": {
+    "file": "classic/deafen.wav",
+    "class": "control",
+    "bytes": 25632,
+    "sha256": "20ea1cf05a906e05ec2d3f6d702f3bbbfb94b19af4acb2d771017caa51b2a59c",
+    "durationMs": 267,
+    "peakDbfs": -5.87,
+    "truePeakDbfsApprox": -5.86,
+    "rmsDbfs": -22.67,
+    "momentaryMaxLufs": -25.03,
+    "dcOffset": -0.000041,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "undeafen": {
+    "file": "classic/undeafen.wav",
+    "class": "control",
+    "bytes": 24356,
+    "sha256": "a4764e30c91a1144199168ae20f2a59d08b06352d22e259315553541a4a36c8c",
+    "durationMs": 253,
+    "peakDbfs": -6.89,
+    "truePeakDbfsApprox": -6.86,
+    "rmsDbfs": -22.98,
+    "momentaryMaxLufs": -25.04,
+    "dcOffset": 0.0000736,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOn": {
+    "file": "classic/pttOn.wav",
+    "class": "control",
+    "bytes": 17452,
+    "sha256": "5ae285add00701a02aeca2cf01801eb1bb5e749d55d163c81374d5e4fc085c84",
+    "durationMs": 181,
+    "peakDbfs": -7.1,
+    "truePeakDbfsApprox": -7.1,
+    "rmsDbfs": -22.98,
+    "momentaryMaxLufs": -25.06,
+    "dcOffset": 0.000017,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOff": {
+    "file": "classic/pttOff.wav",
+    "class": "control",
+    "bytes": 21092,
+    "sha256": "71398666b842f4542bea87da05d82d57fabe85ecfc63b8b085760d04a0519293",
+    "durationMs": 219,
+    "peakDbfs": -5.39,
+    "truePeakDbfsApprox": -5.38,
+    "rmsDbfs": -22.75,
+    "momentaryMaxLufs": -25.07,
+    "dcOffset": -0.0000253,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadDone": {
+    "file": "classic/uploadDone.wav",
+    "class": "standard",
+    "bytes": 57566,
+    "sha256": "ffa061ac05758ef0c47624e18e0ad987ab73daa00d8ec2730303d9b9d4df2505",
+    "durationMs": 599,
+    "peakDbfs": -9.23,
+    "truePeakDbfsApprox": -9.21,
+    "rmsDbfs": -21.75,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000387,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadFailed": {
+    "file": "classic/uploadFailed.wav",
+    "class": "standard",
+    "bytes": 62366,
+    "sha256": "a7018d278939df85772e2ee5b0db222afa93f5b942282e97e4e7ad641123c2b5",
+    "durationMs": 649,
+    "peakDbfs": -9.53,
+    "truePeakDbfsApprox": -9.53,
+    "rmsDbfs": -21.45,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.0000029,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "sendFailed": {
+    "file": "classic/sendFailed.wav",
+    "class": "standard",
+    "bytes": 53736,
+    "sha256": "19d39649ef332a12302d5337ec3999ffae605cb1e919308fee5ba4d28679fc88",
+    "durationMs": 559,
+    "peakDbfs": -8.58,
+    "truePeakDbfsApprox": -8.57,
+    "rmsDbfs": -20.79,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000131,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   }
+  },
+  "minimal": {
+   "message": {
+    "file": "minimal/message.wav",
+    "class": "standard",
+    "bytes": 38330,
+    "sha256": "c6a15172fb980573b4565fbf32e33853e80603096d47b4adb8f90483ccf0b186",
+    "durationMs": 399,
+    "peakDbfs": -9.66,
+    "truePeakDbfsApprox": -9.63,
+    "rmsDbfs": -22.54,
+    "momentaryMaxLufs": -22,
+    "dcOffset": -6.7e-8,
+    "leadingSilenceMs": 0.6,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mention": {
+    "file": "minimal/mention.wav",
+    "class": "alert",
+    "bytes": 38374,
+    "sha256": "4e9c33e7da2ebc5ad8b1c4a1efeff328b555be89b2529ac77e1ec4a0ed09ce39",
+    "durationMs": 399,
+    "peakDbfs": -9.16,
+    "truePeakDbfsApprox": -9.11,
+    "rmsDbfs": -21.45,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 2.55e-8,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "directMessage": {
+    "file": "minimal/directMessage.wav",
+    "class": "alert",
+    "bytes": 38380,
+    "sha256": "aa79406a71c7aebeccfed57e3248fecc3472780b5428a2638ad272f6a5973087",
+    "durationMs": 399,
+    "peakDbfs": -8.3,
+    "truePeakDbfsApprox": -8.28,
+    "rmsDbfs": -20.33,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000519,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendRequest": {
+    "file": "minimal/friendRequest.wav",
+    "class": "alert",
+    "bytes": 38370,
+    "sha256": "4c743033cf007e252bc48a4a22e326510f9618917c1fb4e70ba2600ae48c6461",
+    "durationMs": 399,
+    "peakDbfs": -8.01,
+    "truePeakDbfsApprox": -7.99,
+    "rmsDbfs": -20.55,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 1.23e-7,
+    "leadingSilenceMs": 0.6,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendAccepted": {
+    "file": "minimal/friendAccepted.wav",
+    "class": "standard",
+    "bytes": 38370,
+    "sha256": "0dbf08cdd6a02cb936939ccc1c73073606041857ff36ca4e211f654e49a8afd5",
+    "durationMs": 399,
+    "peakDbfs": -10.2,
+    "truePeakDbfsApprox": -10.17,
+    "rmsDbfs": -22.64,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 7.64e-8,
+    "leadingSilenceMs": 0.6,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceJoin": {
+    "file": "minimal/voiceJoin.wav",
+    "class": "standard",
+    "bytes": 38352,
+    "sha256": "c5b1432a2e2f45a7e847b8b364523fd9243a6138ee9ee9e4f4706573dda228a0",
+    "durationMs": 399,
+    "peakDbfs": -8.78,
+    "truePeakDbfsApprox": -8.78,
+    "rmsDbfs": -21.42,
+    "momentaryMaxLufs": -22,
+    "dcOffset": -0.00000356,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceLeave": {
+    "file": "minimal/voiceLeave.wav",
+    "class": "standard",
+    "bytes": 38310,
+    "sha256": "d9beddfbafef22c81651538fe636ec645c2fe3dbc14b4e2c780c6b3aa292b274",
+    "durationMs": 399,
+    "peakDbfs": -9.29,
+    "truePeakDbfsApprox": -9.29,
+    "rmsDbfs": -21.4,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 0.00000611,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "connect": {
+    "file": "minimal/connect.wav",
+    "class": "standard",
+    "bytes": 38382,
+    "sha256": "e6d7e61873fe69e0210f42d2ed068ebba42f1262965306117db66ffffdad495b",
+    "durationMs": 399,
+    "peakDbfs": -9.42,
+    "truePeakDbfsApprox": -9.42,
+    "rmsDbfs": -21.61,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 0.00000497,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "disconnect": {
+    "file": "minimal/disconnect.wav",
+    "class": "standard",
+    "bytes": 38316,
+    "sha256": "95baca525baa239c6f52f32ddf9e8242c7f7cbd9449ef936a5cd85f8341860d5",
+    "durationMs": 399,
+    "peakDbfs": -9.42,
+    "truePeakDbfsApprox": -9.42,
+    "rmsDbfs": -21.39,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 0.00000608,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceDrop": {
+    "file": "minimal/voiceDrop.wav",
+    "class": "alert",
+    "bytes": 38384,
+    "sha256": "2dad69fe4d2df731e7d6d0a1b3a3fb5563dbcc7065d2c6af8d63b90df3e5a9f7",
+    "durationMs": 399,
+    "peakDbfs": -7.22,
+    "truePeakDbfsApprox": -7.22,
+    "rmsDbfs": -19.37,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000546,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "reconnect": {
+    "file": "minimal/reconnect.wav",
+    "class": "standard",
+    "bytes": 38326,
+    "sha256": "71ea0cb2ffe873b0c3eac38298e4d7faf2a2e9829bfbc47e1b5adebaed6ed028",
+    "durationMs": 399,
+    "peakDbfs": -8.91,
+    "truePeakDbfsApprox": -8.91,
+    "rmsDbfs": -21.81,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 0.00000504,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStart": {
+    "file": "minimal/streamStart.wav",
+    "class": "standard",
+    "bytes": 38356,
+    "sha256": "50d9ad70fc7a6e4c75b331ecb4fea41a5424bf311c2d8e4b3076d102547cd21f",
+    "durationMs": 399,
+    "peakDbfs": -11.32,
+    "truePeakDbfsApprox": -11.32,
+    "rmsDbfs": -23.87,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 1.27e-8,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStop": {
+    "file": "minimal/streamStop.wav",
+    "class": "standard",
+    "bytes": 32612,
+    "sha256": "1b1b2735018699b4650619f59892ced78b305195e4d1cb94e92a5c8dfe65c804",
+    "durationMs": 339,
+    "peakDbfs": -10.15,
+    "truePeakDbfsApprox": -10.15,
+    "rmsDbfs": -21.27,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 6.37e-8,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStart": {
+    "file": "minimal/streamRemoteStart.wav",
+    "class": "standard",
+    "bytes": 38342,
+    "sha256": "ba42130fc54313518281c338b45041640ef9611efd74016f224c0e8742a7291c",
+    "durationMs": 399,
+    "peakDbfs": -10.77,
+    "truePeakDbfsApprox": -10.72,
+    "rmsDbfs": -23.45,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 6.85e-8,
+    "leadingSilenceMs": 0.5,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStop": {
+    "file": "minimal/streamRemoteStop.wav",
+    "class": "standard",
+    "bytes": 38324,
+    "sha256": "e638a6be84b837531f69b4a9afc340eeb405d54a08cfe9e70be3c5202d85082e",
+    "durationMs": 399,
+    "peakDbfs": -10.9,
+    "truePeakDbfsApprox": -10.9,
+    "rmsDbfs": -23.35,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 2.61e-7,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mute": {
+    "file": "minimal/mute.wav",
+    "class": "control",
+    "bytes": 6276,
+    "sha256": "a1f4870833822df2b0ce25a413a9d58cd3c914404b988547eb6d24e52e88a40c",
+    "durationMs": 65,
+    "peakDbfs": -4.67,
+    "truePeakDbfsApprox": -4.67,
+    "rmsDbfs": -18.82,
+    "momentaryMaxLufs": -27.13,
+    "dcOffset": 0.000144,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "unmute": {
+    "file": "minimal/unmute.wav",
+    "class": "control",
+    "bytes": 6270,
+    "sha256": "64f99b75c0c962e59a68db3ec26fde73ce379d6a3d1e7c0938d6fd3a03584f9e",
+    "durationMs": 65,
+    "peakDbfs": -6.76,
+    "truePeakDbfsApprox": -6.72,
+    "rmsDbfs": -19.08,
+    "momentaryMaxLufs": -27.09,
+    "dcOffset": 0.000256,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "deafen": {
+    "file": "minimal/deafen.wav",
+    "class": "control",
+    "bytes": 13478,
+    "sha256": "2ab5836ea5b2fa02467aae8a3c88bda186d78f997c79fe12d67d4147afab9f5f",
+    "durationMs": 140,
+    "peakDbfs": -8.58,
+    "truePeakDbfsApprox": -8.53,
+    "rmsDbfs": -21.95,
+    "momentaryMaxLufs": -27.03,
+    "dcOffset": -0.0000832,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "undeafen": {
+    "file": "minimal/undeafen.wav",
+    "class": "control",
+    "bytes": 13438,
+    "sha256": "76b40c1403f950959bf59fb9dad6213b1e102ec2776b80f7b44e2ac5f167edec",
+    "durationMs": 140,
+    "peakDbfs": -9.03,
+    "truePeakDbfsApprox": -9,
+    "rmsDbfs": -22.43,
+    "momentaryMaxLufs": -27.04,
+    "dcOffset": 0.0000989,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOn": {
+    "file": "minimal/pttOn.wav",
+    "class": "control",
+    "bytes": 6248,
+    "sha256": "f2c6e002b879cebf4e1c516d6cc04c9c6b0f2697d19e6d966904afb948d9c1ee",
+    "durationMs": 65,
+    "peakDbfs": -8.52,
+    "truePeakDbfsApprox": -8.52,
+    "rmsDbfs": -20.61,
+    "momentaryMaxLufs": -27.13,
+    "dcOffset": 0.0000554,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.8,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOff": {
+    "file": "minimal/pttOff.wav",
+    "class": "control",
+    "bytes": 6268,
+    "sha256": "1cd04262d4c0c4ead82371985fc8df233393b9558c29649417b714f1a979b154",
+    "durationMs": 65,
+    "peakDbfs": -7.46,
+    "truePeakDbfsApprox": -7.38,
+    "rmsDbfs": -19.54,
+    "momentaryMaxLufs": -27.11,
+    "dcOffset": -0.0000284,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadDone": {
+    "file": "minimal/uploadDone.wav",
+    "class": "standard",
+    "bytes": 38362,
+    "sha256": "7b641f334e773899a84fd504f69b071dc7c44567e9f659a6c6b5c0483a53e3d6",
+    "durationMs": 399,
+    "peakDbfs": -9.84,
+    "truePeakDbfsApprox": -9.82,
+    "rmsDbfs": -22.56,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 1.15e-7,
+    "leadingSilenceMs": 0.6,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadFailed": {
+    "file": "minimal/uploadFailed.wav",
+    "class": "standard",
+    "bytes": 38344,
+    "sha256": "2ca582965108577081929fc9cda750d44c71faa5c7617b77ef61965856c6d606",
+    "durationMs": 399,
+    "peakDbfs": -9.27,
+    "truePeakDbfsApprox": -9.27,
+    "rmsDbfs": -21.51,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 0.00000681,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "sendFailed": {
+    "file": "minimal/sendFailed.wav",
+    "class": "standard",
+    "bytes": 38338,
+    "sha256": "076f1503bb80dac0631ff19f2dea5b2443f75491233c983291c90fd826a74267",
+    "durationMs": 399,
+    "peakDbfs": -8.8,
+    "truePeakDbfsApprox": -8.8,
+    "rmsDbfs": -21.42,
+    "momentaryMaxLufs": -22,
+    "dcOffset": 0.00000653,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   }
+  },
+  "cyber": {
+   "message": {
+    "file": "cyber/message.wav",
+    "class": "standard",
+    "bytes": 69970,
+    "sha256": "4bc8faaa24e85313a0fc119039cf117d6eb7159c98d3fac702d1f08ada10a8f0",
+    "durationMs": 728,
+    "peakDbfs": -5.29,
+    "truePeakDbfsApprox": -5.2,
+    "rmsDbfs": -23.34,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 8.97e-7,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mention": {
+    "file": "cyber/mention.wav",
+    "class": "alert",
+    "bytes": 89936,
+    "sha256": "2f93f846be8e9ccd624cb6aaef835e88da86ef531996925085c69a0f0ae085ac",
+    "durationMs": 936,
+    "peakDbfs": -5.05,
+    "truePeakDbfsApprox": -4.92,
+    "rmsDbfs": -22.16,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 8.06e-7,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "directMessage": {
+    "file": "cyber/directMessage.wav",
+    "class": "alert",
+    "bytes": 91832,
+    "sha256": "aa4e9c475a36c9b83160965b3008e1bb64400113d955e13f27e08467535ce595",
+    "durationMs": 956,
+    "peakDbfs": -4.75,
+    "truePeakDbfsApprox": -4.64,
+    "rmsDbfs": -22.31,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 0.00000633,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendRequest": {
+    "file": "cyber/friendRequest.wav",
+    "class": "alert",
+    "bytes": 93530,
+    "sha256": "d9c4cf2e25734b8e97dc9bb44c95ca9f8d53a892836a89519ae535121e9158ba",
+    "durationMs": 974,
+    "peakDbfs": -3.27,
+    "truePeakDbfsApprox": -3.27,
+    "rmsDbfs": -21.92,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 0.00000882,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendAccepted": {
+    "file": "cyber/friendAccepted.wav",
+    "class": "standard",
+    "bytes": 92412,
+    "sha256": "8c5855a9293895d3f52c0e3e8bd3e8377626f7e673e7a6f5441379dc9b8a05aa",
+    "durationMs": 962,
+    "peakDbfs": -6.02,
+    "truePeakDbfsApprox": -5.96,
+    "rmsDbfs": -24.08,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000936,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceJoin": {
+    "file": "cyber/voiceJoin.wav",
+    "class": "standard",
+    "bytes": 81264,
+    "sha256": "be57efcb4a20e5e1fa5367499d951911156378aa64a62ac98eda19cded5626d7",
+    "durationMs": 846,
+    "peakDbfs": -3.87,
+    "truePeakDbfsApprox": -3.78,
+    "rmsDbfs": -23.32,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.0000192,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceLeave": {
+    "file": "cyber/voiceLeave.wav",
+    "class": "standard",
+    "bytes": 73870,
+    "sha256": "fffa749e78bd0e84aebdf671bfaf5dd05d0379839ad77abf3cf3dd979afd7090",
+    "durationMs": 769,
+    "peakDbfs": -3.89,
+    "truePeakDbfsApprox": -3.64,
+    "rmsDbfs": -22.95,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.0000173,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "connect": {
+    "file": "cyber/connect.wav",
+    "class": "standard",
+    "bytes": 87226,
+    "sha256": "c8f32d387b0f24ec70980989c86281af93a33dc29e6d9852ac02d03a2e1aaa3c",
+    "durationMs": 908,
+    "peakDbfs": -5.37,
+    "truePeakDbfsApprox": -5.22,
+    "rmsDbfs": -23.51,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.0000135,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "disconnect": {
+    "file": "cyber/disconnect.wav",
+    "class": "standard",
+    "bytes": 89142,
+    "sha256": "aecb6f1d7accb6646f1999a9aa931061b43f83b0a5e2175578d82c161053046d",
+    "durationMs": 928,
+    "peakDbfs": -4.83,
+    "truePeakDbfsApprox": -4.73,
+    "rmsDbfs": -23.76,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000658,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceDrop": {
+    "file": "cyber/voiceDrop.wav",
+    "class": "alert",
+    "bytes": 104898,
+    "sha256": "cbbf130485c3d60fa19b21149fea04aeaa6be42578828ad4c9918ffa89ab5c81",
+    "durationMs": 1092,
+    "peakDbfs": -3.28,
+    "truePeakDbfsApprox": -3.02,
+    "rmsDbfs": -22,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 0.000013,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "reconnect": {
+    "file": "cyber/reconnect.wav",
+    "class": "standard",
+    "bytes": 65142,
+    "sha256": "881b4c69f271dcedc7cc6744c82cce299553927c5a72b9c9d456a5d9d18aaf58",
+    "durationMs": 678,
+    "peakDbfs": -4.31,
+    "truePeakDbfsApprox": -4.31,
+    "rmsDbfs": -22.84,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.0000153,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStart": {
+    "file": "cyber/streamStart.wav",
+    "class": "standard",
+    "bytes": 92386,
+    "sha256": "857c76c7539ded2abc39512224bc27b7b15241bc4c6f17a0671a2ad54794c286",
+    "durationMs": 962,
+    "peakDbfs": -7.96,
+    "truePeakDbfsApprox": -7.95,
+    "rmsDbfs": -24.52,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000634,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStop": {
+    "file": "cyber/streamStop.wav",
+    "class": "standard",
+    "bytes": 84394,
+    "sha256": "54c0d31337ce920277a69b0453b500fe01332acf7c297fa89a2099e959c4dbf7",
+    "durationMs": 879,
+    "peakDbfs": -4.69,
+    "truePeakDbfsApprox": -4.69,
+    "rmsDbfs": -23.78,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000785,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStart": {
+    "file": "cyber/streamRemoteStart.wav",
+    "class": "standard",
+    "bytes": 71252,
+    "sha256": "ce721dec05e4a0ee3bb475bbf42b32498b394a70bd0b6f2118938a4945b2c960",
+    "durationMs": 742,
+    "peakDbfs": -6.46,
+    "truePeakDbfsApprox": -6.14,
+    "rmsDbfs": -23.63,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000781,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStop": {
+    "file": "cyber/streamRemoteStop.wav",
+    "class": "standard",
+    "bytes": 67206,
+    "sha256": "2936259969004647e78f4fdb5cdc29d424f84716e3b8a7fb8e18e266efdff3af",
+    "durationMs": 700,
+    "peakDbfs": -6.06,
+    "truePeakDbfsApprox": -6.06,
+    "rmsDbfs": -23.38,
+    "momentaryMaxLufs": -20.01,
+    "dcOffset": -0.00000283,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mute": {
+    "file": "cyber/mute.wav",
+    "class": "control",
+    "bytes": 35500,
+    "sha256": "dd10689fb400b8d0dd56dfac7a70f281c43cd24605cf6fec4e13ab730515a618",
+    "durationMs": 369,
+    "peakDbfs": -5.59,
+    "truePeakDbfsApprox": -5.52,
+    "rmsDbfs": -25.86,
+    "momentaryMaxLufs": -25.16,
+    "dcOffset": 0.000142,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "unmute": {
+    "file": "cyber/unmute.wav",
+    "class": "control",
+    "bytes": 36120,
+    "sha256": "c572eb5bf617c0569689507e5360389214a8504f4779bcbcdff9fa0bad40e1eb",
+    "durationMs": 376,
+    "peakDbfs": -6.34,
+    "truePeakDbfsApprox": -6.28,
+    "rmsDbfs": -26.74,
+    "momentaryMaxLufs": -25.16,
+    "dcOffset": 0.000114,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "deafen": {
+    "file": "cyber/deafen.wav",
+    "class": "control",
+    "bytes": 42868,
+    "sha256": "726e4cbde28554260ae2ccbe160b080ce690c01186eec58093db5dc774f43af3",
+    "durationMs": 446,
+    "peakDbfs": -7.52,
+    "truePeakDbfsApprox": -7.42,
+    "rmsDbfs": -25.96,
+    "momentaryMaxLufs": -25.06,
+    "dcOffset": 0.00012,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "undeafen": {
+    "file": "cyber/undeafen.wav",
+    "class": "control",
+    "bytes": 42904,
+    "sha256": "74cd01a32b6906a50d8f0b26b4344bec4559ec3421bdb5da6c6a494d0137a326",
+    "durationMs": 446,
+    "peakDbfs": -9.28,
+    "truePeakDbfsApprox": -9.23,
+    "rmsDbfs": -27.49,
+    "momentaryMaxLufs": -25.08,
+    "dcOffset": 0.0000678,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOn": {
+    "file": "cyber/pttOn.wav",
+    "class": "control",
+    "bytes": 32636,
+    "sha256": "7f5542421379c2f93d2ea6a70c3cb936b1a901675ce091427e6883cc0d30386b",
+    "durationMs": 340,
+    "peakDbfs": -7.02,
+    "truePeakDbfsApprox": -6.89,
+    "rmsDbfs": -27.19,
+    "momentaryMaxLufs": -25.16,
+    "dcOffset": 0.00012,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOff": {
+    "file": "cyber/pttOff.wav",
+    "class": "control",
+    "bytes": 35256,
+    "sha256": "458cdb543cde9b749e240c6b9a2fa30604c58327fd9e13589cc91084565b378f",
+    "durationMs": 367,
+    "peakDbfs": -6.63,
+    "truePeakDbfsApprox": -6.5,
+    "rmsDbfs": -26.93,
+    "momentaryMaxLufs": -25.16,
+    "dcOffset": 0.000113,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadDone": {
+    "file": "cyber/uploadDone.wav",
+    "class": "standard",
+    "bytes": 74462,
+    "sha256": "1a13c33a9e727fbe5581d9cb1bd9191abfa0de080ed73e90f29d46bd30e1a8e7",
+    "durationMs": 775,
+    "peakDbfs": -6,
+    "truePeakDbfsApprox": -5.86,
+    "rmsDbfs": -23.54,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000102,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadFailed": {
+    "file": "cyber/uploadFailed.wav",
+    "class": "standard",
+    "bytes": 79270,
+    "sha256": "a25514ee963983e7004ae76cbe244ec8b711cf95e4c67404359724ffedf36140",
+    "durationMs": 825,
+    "peakDbfs": -4.03,
+    "truePeakDbfsApprox": -4.02,
+    "rmsDbfs": -23.29,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000985,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "sendFailed": {
+    "file": "cyber/sendFailed.wav",
+    "class": "standard",
+    "bytes": 71604,
+    "sha256": "408d43b1017396aa14bbbd69b8e9e7e027ca11f296df1daa856f42ba091ee518",
+    "durationMs": 745,
+    "peakDbfs": -3.81,
+    "truePeakDbfsApprox": -3.56,
+    "rmsDbfs": -22.78,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.0000181,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   }
+  },
+  "cozy": {
+   "message": {
+    "file": "cozy/message.wav",
+    "class": "standard",
+    "bytes": 117330,
+    "sha256": "12f45d7936168018e71aa29c209eb7b2e7ece60dbe8d45169c8d594e76520a2e",
+    "durationMs": 1222,
+    "peakDbfs": -9.92,
+    "truePeakDbfsApprox": -9.9,
+    "rmsDbfs": -23.56,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 5.21e-7,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mention": {
+    "file": "cozy/mention.wav",
+    "class": "alert",
+    "bytes": 144516,
+    "sha256": "8b81d599c2d7712ac60af64589b72e32195de8b2c9eec07700380aafc46c5aa5",
+    "durationMs": 1505,
+    "peakDbfs": -7.91,
+    "truePeakDbfsApprox": -7.89,
+    "rmsDbfs": -22.14,
+    "momentaryMaxLufs": -18,
+    "dcOffset": 0.0000019,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "directMessage": {
+    "file": "cozy/directMessage.wav",
+    "class": "alert",
+    "bytes": 143238,
+    "sha256": "6bb66e7277c8673415d7e7e02ea94104fcd003ed77eb0ae5987985d049fe75d6",
+    "durationMs": 1492,
+    "peakDbfs": -8.54,
+    "truePeakDbfsApprox": -8.51,
+    "rmsDbfs": -22.01,
+    "momentaryMaxLufs": -18,
+    "dcOffset": -0.00000337,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendRequest": {
+    "file": "cozy/friendRequest.wav",
+    "class": "alert",
+    "bytes": 135190,
+    "sha256": "ea6e66b14f7c17bbad455debbd41dc56401bdfb0a842a708f9894fdc8e9a2ce7",
+    "durationMs": 1408,
+    "peakDbfs": -6.88,
+    "truePeakDbfsApprox": -6.87,
+    "rmsDbfs": -21.56,
+    "momentaryMaxLufs": -18,
+    "dcOffset": -0.00000724,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendAccepted": {
+    "file": "cozy/friendAccepted.wav",
+    "class": "standard",
+    "bytes": 133664,
+    "sha256": "ab1c22cdf861dfc0ed3a68f2d2e82fc57e26a88334ada2b33dc22182a5d94171",
+    "durationMs": 1392,
+    "peakDbfs": -9.32,
+    "truePeakDbfsApprox": -9.31,
+    "rmsDbfs": -23.55,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000847,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceJoin": {
+    "file": "cozy/voiceJoin.wav",
+    "class": "standard",
+    "bytes": 116188,
+    "sha256": "2c4d4ad64dd07f63b5ad9e5c609634e9fda0a927472a6a4b7af745815551e7cf",
+    "durationMs": 1210,
+    "peakDbfs": -9.59,
+    "truePeakDbfsApprox": -9.59,
+    "rmsDbfs": -23.16,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.0000128,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceLeave": {
+    "file": "cozy/voiceLeave.wav",
+    "class": "standard",
+    "bytes": 117620,
+    "sha256": "4913a9c836acde13564ae9b841694d83183304152f4dc991e9b577d8873bf487",
+    "durationMs": 1225,
+    "peakDbfs": -10.17,
+    "truePeakDbfsApprox": -10.17,
+    "rmsDbfs": -23.4,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000648,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "connect": {
+    "file": "cozy/connect.wav",
+    "class": "standard",
+    "bytes": 127036,
+    "sha256": "be27d4dd688a7f89bced12c68f4fa397b21e01d2ecc4c1d8f5f75155416694bc",
+    "durationMs": 1323,
+    "peakDbfs": -9.16,
+    "truePeakDbfsApprox": -9.15,
+    "rmsDbfs": -23.4,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000672,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "disconnect": {
+    "file": "cozy/disconnect.wav",
+    "class": "standard",
+    "bytes": 131490,
+    "sha256": "84fe872975b7c8e69575f116675757e9eea937f227a57136a90e7a82ca2c3a01",
+    "durationMs": 1369,
+    "peakDbfs": -10.38,
+    "truePeakDbfsApprox": -10.37,
+    "rmsDbfs": -23.7,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000411,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceDrop": {
+    "file": "cozy/voiceDrop.wav",
+    "class": "alert",
+    "bytes": 155192,
+    "sha256": "33a8a473382af4a69951882a2baa7ba0f2ccfbe24a0f7187e57df34dc1ec90ad",
+    "durationMs": 1616,
+    "peakDbfs": -8.17,
+    "truePeakDbfsApprox": -8.17,
+    "rmsDbfs": -21.46,
+    "momentaryMaxLufs": -18,
+    "dcOffset": -0.00000569,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "reconnect": {
+    "file": "cozy/reconnect.wav",
+    "class": "standard",
+    "bytes": 125188,
+    "sha256": "92a61823055b420a0dfe6e0d1f0bdb9d1269335b869a4b18de40d197461ab50c",
+    "durationMs": 1304,
+    "peakDbfs": -8.66,
+    "truePeakDbfsApprox": -8.66,
+    "rmsDbfs": -23.84,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000695,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStart": {
+    "file": "cozy/streamStart.wav",
+    "class": "standard",
+    "bytes": 141434,
+    "sha256": "922d3c2c8141070835ab4b2a80f14a8df903a4481968445928632020023992b7",
+    "durationMs": 1473,
+    "peakDbfs": -10.59,
+    "truePeakDbfsApprox": -10.57,
+    "rmsDbfs": -24.61,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 1.64e-8,
+    "leadingSilenceMs": 23.5,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStop": {
+    "file": "cozy/streamStop.wav",
+    "class": "standard",
+    "bytes": 145640,
+    "sha256": "d3140aea8df32f4f306479d1f8e13ea7623a5a66b8f680b17c01113d26701d00",
+    "durationMs": 1517,
+    "peakDbfs": -9.47,
+    "truePeakDbfsApprox": -9.47,
+    "rmsDbfs": -24.02,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 4.78e-8,
+    "leadingSilenceMs": 11.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStart": {
+    "file": "cozy/streamRemoteStart.wav",
+    "class": "standard",
+    "bytes": 112580,
+    "sha256": "49ab3a8f38d2c77205c284c191003f3d3e0e52b2797e1587a7a4b5a0a51a949c",
+    "durationMs": 1172,
+    "peakDbfs": -10.05,
+    "truePeakDbfsApprox": -10.05,
+    "rmsDbfs": -23.66,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.000002,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStop": {
+    "file": "cozy/streamRemoteStop.wav",
+    "class": "standard",
+    "bytes": 101770,
+    "sha256": "e581341dcf4645d4e37680c43761add4181e1689382356c5973ff01b72c299fe",
+    "durationMs": 1060,
+    "peakDbfs": -10.24,
+    "truePeakDbfsApprox": -10.24,
+    "rmsDbfs": -23.38,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -9.09e-7,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mute": {
+    "file": "cozy/mute.wav",
+    "class": "control",
+    "bytes": 59534,
+    "sha256": "ce7d7693c10014d489a5a79656a6cf861b48aaa4b6729cbabcee8eb6df1cc920",
+    "durationMs": 620,
+    "peakDbfs": -6.89,
+    "truePeakDbfsApprox": -6.89,
+    "rmsDbfs": -26.7,
+    "momentaryMaxLufs": -25.02,
+    "dcOffset": 0.0000265,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "unmute": {
+    "file": "cozy/unmute.wav",
+    "class": "control",
+    "bytes": 58996,
+    "sha256": "615b7d9e8abf205c2b11a63cace858f4974de1a3fe7e4eaaab4220205a044238",
+    "durationMs": 614,
+    "peakDbfs": -7.41,
+    "truePeakDbfsApprox": -7.41,
+    "rmsDbfs": -26.95,
+    "momentaryMaxLufs": -25.02,
+    "dcOffset": -9.2e-7,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "deafen": {
+    "file": "cozy/deafen.wav",
+    "class": "control",
+    "bytes": 71898,
+    "sha256": "5b2002472ef3b02eb5cf6623599cb827c37099d21679d517f563fce6de598bc7",
+    "durationMs": 748,
+    "peakDbfs": -8.54,
+    "truePeakDbfsApprox": -8.53,
+    "rmsDbfs": -27.4,
+    "momentaryMaxLufs": -25.01,
+    "dcOffset": 0.00000499,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "undeafen": {
+    "file": "cozy/undeafen.wav",
+    "class": "control",
+    "bytes": 64976,
+    "sha256": "051675de65cf2839aea980d1c8a179908af9ec00923372639f647b2d95bb16e1",
+    "durationMs": 676,
+    "peakDbfs": -9.89,
+    "truePeakDbfsApprox": -9.89,
+    "rmsDbfs": -27.48,
+    "momentaryMaxLufs": -25.01,
+    "dcOffset": 0.00000974,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOn": {
+    "file": "cozy/pttOn.wav",
+    "class": "control",
+    "bytes": 47816,
+    "sha256": "0ac93b5299875e532db778ea0bc1f559c32efccfc3e78e5cd1afbbab4593af8b",
+    "durationMs": 498,
+    "peakDbfs": -9.86,
+    "truePeakDbfsApprox": -9.85,
+    "rmsDbfs": -28.01,
+    "momentaryMaxLufs": -25.02,
+    "dcOffset": 0.0000162,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOff": {
+    "file": "cozy/pttOff.wav",
+    "class": "control",
+    "bytes": 52626,
+    "sha256": "aed29ab7f610d83498609f323909008e5934a573de98e692c831c81e40dc3128",
+    "durationMs": 548,
+    "peakDbfs": -8.53,
+    "truePeakDbfsApprox": -8.52,
+    "rmsDbfs": -27.26,
+    "momentaryMaxLufs": -25.02,
+    "dcOffset": -0.0000138,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadDone": {
+    "file": "cozy/uploadDone.wav",
+    "class": "standard",
+    "bytes": 114986,
+    "sha256": "d3b99c1c471d24bdb99a1b149c5b2584df5c0c373a51a75af9915f8c237a28c3",
+    "durationMs": 1197,
+    "peakDbfs": -10.1,
+    "truePeakDbfsApprox": -10.09,
+    "rmsDbfs": -23.46,
+    "momentaryMaxLufs": -20,
+    "dcOffset": 0.00000192,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadFailed": {
+    "file": "cozy/uploadFailed.wav",
+    "class": "standard",
+    "bytes": 122560,
+    "sha256": "93e9bc28fb39ee24aaf47fd4dbe3e92009b1fa5e6ff620af85484495b3255420",
+    "durationMs": 1276,
+    "peakDbfs": -9.75,
+    "truePeakDbfsApprox": -9.75,
+    "rmsDbfs": -23.39,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000579,
+    "leadingSilenceMs": 0.4,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "sendFailed": {
+    "file": "cozy/sendFailed.wav",
+    "class": "standard",
+    "bytes": 117074,
+    "sha256": "6b3c25e8abc557c232070b56097388f131f86fc0baa60de4390e90b783de3aca",
+    "durationMs": 1219,
+    "peakDbfs": -10.72,
+    "truePeakDbfsApprox": -10.72,
+    "rmsDbfs": -23.45,
+    "momentaryMaxLufs": -20,
+    "dcOffset": -0.00000901,
+    "leadingSilenceMs": 0.3,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   }
+  },
+  "arcade": {
+   "message": {
+    "file": "arcade/message.wav",
+    "class": "standard",
+    "bytes": 31966,
+    "sha256": "60b6e0dc3ab5aae4534eb143a5656a2716aaf595e40faeeb400402e13d76f766",
+    "durationMs": 333,
+    "peakDbfs": -7.29,
+    "truePeakDbfsApprox": -7.28,
+    "rmsDbfs": -21.4,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.0000887,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mention": {
+    "file": "arcade/mention.wav",
+    "class": "alert",
+    "bytes": 39050,
+    "sha256": "9c576b748f54f655a6c247e01a35d9c783de9cf361e6ceb44b5ac2e0aba9c837",
+    "durationMs": 406,
+    "peakDbfs": -6.95,
+    "truePeakDbfsApprox": -6.95,
+    "rmsDbfs": -20.6,
+    "momentaryMaxLufs": -19,
+    "dcOffset": 0.0000711,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "directMessage": {
+    "file": "arcade/directMessage.wav",
+    "class": "alert",
+    "bytes": 35076,
+    "sha256": "c69bc4ac0e73368f95461424ae016a53eb74b82b50a8bfc0647ce8f999628ed9",
+    "durationMs": 365,
+    "peakDbfs": -6.03,
+    "truePeakDbfsApprox": -6.03,
+    "rmsDbfs": -19.62,
+    "momentaryMaxLufs": -19.01,
+    "dcOffset": 0.000107,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendRequest": {
+    "file": "arcade/friendRequest.wav",
+    "class": "alert",
+    "bytes": 43738,
+    "sha256": "4cce8bac615578b60d931b0a5fc7fe8b12bc29d7b5ee04074736d44358218695",
+    "durationMs": 455,
+    "peakDbfs": -6.1,
+    "truePeakDbfsApprox": -6.05,
+    "rmsDbfs": -20.47,
+    "momentaryMaxLufs": -19,
+    "dcOffset": 0.0000494,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "friendAccepted": {
+    "file": "arcade/friendAccepted.wav",
+    "class": "standard",
+    "bytes": 37012,
+    "sha256": "e6c332b0e8f8dba016c65877a35af5c3e936a0083426d81cf5ac79df12ba767c",
+    "durationMs": 385,
+    "peakDbfs": -6.98,
+    "truePeakDbfsApprox": -6.98,
+    "rmsDbfs": -21.97,
+    "momentaryMaxLufs": -21.02,
+    "dcOffset": 0.00014,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceJoin": {
+    "file": "arcade/voiceJoin.wav",
+    "class": "standard",
+    "bytes": 34374,
+    "sha256": "414b3c811575ba1f40a09671ad63f5c92e4436e69456f3f5eae7d9f9f2f60556",
+    "durationMs": 358,
+    "peakDbfs": -6.77,
+    "truePeakDbfsApprox": -6.77,
+    "rmsDbfs": -20.67,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.0000419,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceLeave": {
+    "file": "arcade/voiceLeave.wav",
+    "class": "standard",
+    "bytes": 34316,
+    "sha256": "70ac4973373fb62bba9d5c5c17ad8f69873f935423810bc17bcfb5ef5c2b8699",
+    "durationMs": 357,
+    "peakDbfs": -6.83,
+    "truePeakDbfsApprox": -6.82,
+    "rmsDbfs": -20.63,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.0000969,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "connect": {
+    "file": "arcade/connect.wav",
+    "class": "standard",
+    "bytes": 38322,
+    "sha256": "6ce98f60724528ccbd5c56b9ff7955f03cc5933e6ad018bb8471c94e0a114a5f",
+    "durationMs": 399,
+    "peakDbfs": -6.92,
+    "truePeakDbfsApprox": -6.85,
+    "rmsDbfs": -21.34,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.0000295,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "disconnect": {
+    "file": "arcade/disconnect.wav",
+    "class": "standard",
+    "bytes": 39636,
+    "sha256": "b9a9c6300afef51b967e40b1be718cb34d111e0bd866725291ba7b651da518d9",
+    "durationMs": 412,
+    "peakDbfs": -7.19,
+    "truePeakDbfsApprox": -7.19,
+    "rmsDbfs": -21.42,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.0000919,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "voiceDrop": {
+    "file": "arcade/voiceDrop.wav",
+    "class": "alert",
+    "bytes": 43732,
+    "sha256": "09ef8ef804bdc0c2748a2c43836f06fc6cb89072c30f6ae4688b700056334c41",
+    "durationMs": 455,
+    "peakDbfs": -6.36,
+    "truePeakDbfsApprox": -6.35,
+    "rmsDbfs": -19.65,
+    "momentaryMaxLufs": -19.01,
+    "dcOffset": 0.000079,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "reconnect": {
+    "file": "arcade/reconnect.wav",
+    "class": "standard",
+    "bytes": 32316,
+    "sha256": "5fadee6529af2794929b762c7095a7db4dfd7301571b5528906ba84b058fe360",
+    "durationMs": 336,
+    "peakDbfs": -6.66,
+    "truePeakDbfsApprox": -6.66,
+    "rmsDbfs": -20.96,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.0000804,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStart": {
+    "file": "arcade/streamStart.wav",
+    "class": "standard",
+    "bytes": 47702,
+    "sha256": "6f6df0462b383cc7a695eb121c896e2baf3e3bd86eef8af4401a5a320b343410",
+    "durationMs": 496,
+    "peakDbfs": -8.52,
+    "truePeakDbfsApprox": -8.52,
+    "rmsDbfs": -23.57,
+    "momentaryMaxLufs": -21,
+    "dcOffset": 0.0000369,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamStop": {
+    "file": "arcade/streamStop.wav",
+    "class": "standard",
+    "bytes": 39712,
+    "sha256": "e15d17a88d6eac8eb1370afb0007af9c434deb9d0102b1c0ae569cc829842f94",
+    "durationMs": 413,
+    "peakDbfs": -7.4,
+    "truePeakDbfsApprox": -7.4,
+    "rmsDbfs": -22.23,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.0000633,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStart": {
+    "file": "arcade/streamRemoteStart.wav",
+    "class": "standard",
+    "bytes": 32956,
+    "sha256": "3e1e5f3a2e722108b3bd644b696d3190db3d9b36734196cc44bff922192af9c2",
+    "durationMs": 343,
+    "peakDbfs": -7.94,
+    "truePeakDbfsApprox": -7.93,
+    "rmsDbfs": -22.05,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.0000587,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "streamRemoteStop": {
+    "file": "arcade/streamRemoteStop.wav",
+    "class": "standard",
+    "bytes": 32906,
+    "sha256": "003498a28a2568582af10476649e08c3cc453e95d7183b5ce415a700dd946c09",
+    "durationMs": 342,
+    "peakDbfs": -8.1,
+    "truePeakDbfsApprox": -8.08,
+    "rmsDbfs": -22,
+    "momentaryMaxLufs": -21.02,
+    "dcOffset": 0.0000731,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "mute": {
+    "file": "arcade/mute.wav",
+    "class": "control",
+    "bytes": 6288,
+    "sha256": "fcf24283e7a0cc82d2a7258a801d101fca62d6efc9c6d32449267eebad7daa56",
+    "durationMs": 65,
+    "peakDbfs": -10.12,
+    "truePeakDbfsApprox": -10.08,
+    "rmsDbfs": -18.57,
+    "momentaryMaxLufs": -26.12,
+    "dcOffset": 0.000205,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "unmute": {
+    "file": "arcade/unmute.wav",
+    "class": "control",
+    "bytes": 6286,
+    "sha256": "6b8f58a88b1cfb9d689ee8dc6389f47cb9a7ca2d698dad6660561bd9cb45a4f5",
+    "durationMs": 65,
+    "peakDbfs": -11.37,
+    "truePeakDbfsApprox": -11.35,
+    "rmsDbfs": -19.47,
+    "momentaryMaxLufs": -26.11,
+    "dcOffset": -0.00000126,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "deafen": {
+    "file": "arcade/deafen.wav",
+    "class": "control",
+    "bytes": 13492,
+    "sha256": "f8e3e153e0900ee35a204c6f086d343075cf7a82319da3e3bbe7ad7e570ae3de",
+    "durationMs": 140,
+    "peakDbfs": -12.26,
+    "truePeakDbfsApprox": -12.26,
+    "rmsDbfs": -21.55,
+    "momentaryMaxLufs": -26.06,
+    "dcOffset": 0.0000618,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "undeafen": {
+    "file": "arcade/undeafen.wav",
+    "class": "control",
+    "bytes": 13486,
+    "sha256": "6364ab4baf73d79ff175ccd3d6ccb476e329cc544a95e58af1fcaadb37ae91ad",
+    "durationMs": 140,
+    "peakDbfs": -14.35,
+    "truePeakDbfsApprox": -14.26,
+    "rmsDbfs": -22.88,
+    "momentaryMaxLufs": -26.05,
+    "dcOffset": 0.0000115,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOn": {
+    "file": "arcade/pttOn.wav",
+    "class": "control",
+    "bytes": 6286,
+    "sha256": "8bb2dc9a78e7781f25b5707d5a71970f9daeba4bb53babd1b09be553b3d4dd06",
+    "durationMs": 65,
+    "peakDbfs": -12.64,
+    "truePeakDbfsApprox": -12.6,
+    "rmsDbfs": -20.49,
+    "momentaryMaxLufs": -26.12,
+    "dcOffset": 0.00000718,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "pttOff": {
+    "file": "arcade/pttOff.wav",
+    "class": "control",
+    "bytes": 6392,
+    "sha256": "c68e9323672bc4f4a177da859f50d5d2363f9134a09f1ae761ae64cc13c7e9ce",
+    "durationMs": 66,
+    "peakDbfs": -11.64,
+    "truePeakDbfsApprox": -11.6,
+    "rmsDbfs": -19.64,
+    "momentaryMaxLufs": -26.12,
+    "dcOffset": 0.0000147,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 19.6,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadDone": {
+    "file": "arcade/uploadDone.wav",
+    "class": "standard",
+    "bytes": 32966,
+    "sha256": "0f5e8d6ba0b5270f19a1a863e6d6469cb04c2c097b023ef0554c132909dd463b",
+    "durationMs": 343,
+    "peakDbfs": -7.78,
+    "truePeakDbfsApprox": -7.75,
+    "rmsDbfs": -21.55,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.0000908,
+    "leadingSilenceMs": 0.2,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "uploadFailed": {
+    "file": "arcade/uploadFailed.wav",
+    "class": "standard",
+    "bytes": 36274,
+    "sha256": "778bdf6086804edcdc5c1785c46474c40d9eebfb52e4008ed38e142904fb962b",
+    "durationMs": 377,
+    "peakDbfs": -7.65,
+    "truePeakDbfsApprox": -7.59,
+    "rmsDbfs": -21.06,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.000106,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 20,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   },
+   "sendFailed": {
+    "file": "arcade/sendFailed.wav",
+    "class": "standard",
+    "bytes": 34928,
+    "sha256": "927312c7682161975b5f71ac9ccbccd35c98622eb9538c9be5a91585a67e149a",
+    "durationMs": 363,
+    "peakDbfs": -6.95,
+    "truePeakDbfsApprox": -6.92,
+    "rmsDbfs": -20.76,
+    "momentaryMaxLufs": -21.01,
+    "dcOffset": 0.0000978,
+    "leadingSilenceMs": 0.1,
+    "trailingSilenceMs": 19.9,
+    "clippedSamples": 0,
+    "edgeSamples": [
+     0,
+     0
+    ]
+   }
+  }
+ }
+}

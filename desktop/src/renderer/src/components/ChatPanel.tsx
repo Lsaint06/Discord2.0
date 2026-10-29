@@ -12,7 +12,8 @@ import {
 import type { Channel, Message, User } from '../types'
 import { ALL_PERMISSIONS, Permissions, type ApiAttachment } from '../net/protocol'
 import { hasPermission } from '../lib/permissions'
-import type { Backend, ChannelState } from '../hooks/useBackend'
+import type { Backend, ChannelState, SavedItem } from '../hooks/useBackend'
+import { wallpaperInk, type ChatWallpaperId } from '../lib/wallpapers'
 import { describeError } from '../hooks/useBackend'
 import { formatDayDivider, formatTimestamp, isSameDay } from '../lib/format'
 import { lastConfirmedId } from '../chat/messageState'
@@ -34,7 +35,16 @@ import { GifContext } from '../chat/gifContext'
 import type { LargeFileSupport } from '../net/api'
 import { anyDialogOpen } from '../lib/focusTrap'
 import { useDialog } from '../hooks/useDialog'
-import { AtIcon, BellIcon, FriendsIcon, HashIcon, MembersIcon, PinIcon, SearchIcon } from './Icons'
+import {
+  AtIcon,
+  BellIcon,
+  BookmarkIcon,
+  FriendsIcon,
+  HashIcon,
+  MembersIcon,
+  PinIcon,
+  SearchIcon
+} from './Icons'
 import Avatar from './Avatar'
 import MessageItem, { type MessageActions } from './chat/MessageItem'
 import Composer, { type ComposerHandle } from './chat/Composer'
@@ -43,6 +53,7 @@ import EmojiPicker from './chat/EmojiPicker'
 import Lightbox from './chat/Lightbox'
 import SearchPanel from './chat/SearchPanel'
 import PinsPanel from './chat/PinsPanel'
+import SavedPanel from './chat/SavedPanel'
 
 const GROUP_WINDOW_MS = 7 * 60_000
 const EDGE_PX = 300
@@ -105,6 +116,9 @@ interface ChatPanelProps {
   readOnlyReason?: string
   /** The server accepts large files (chunked uploads); null = normal limits only. */
   largeFiles?: LargeFileSupport | null
+  /** Milestone 14: chat wallpaper on this device (null = none) and its strength (10–100). */
+  wallpaper?: ChatWallpaperId | null
+  wallpaperIntensity?: number
 }
 
 function useWindowFocus(): boolean {
@@ -161,6 +175,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(() => new Set())
   const [searchOpen, setSearchOpen] = useState(false)
   const [pinsOpen, setPinsOpen] = useState(false)
+  const [savedOpen, setSavedOpen] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [flashId, setFlashId] = useState<string | null>(null)
@@ -206,6 +221,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
     setEditingId(null)
     setNewBelow(0)
     setPinsOpen(false)
+    setSavedOpen(false)
   }
 
   const showToast = useCallback((text: string) => {
@@ -410,7 +426,8 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
       jump: (c, id) => jumpRef.current(c, id),
       retry: (nonce) => backend.retryMessage(channel.id, nonce),
       discard: (nonce) => backend.discardMessage(channel.id, nonce),
-      openProfile: (userId, anchor) => props.onOpenProfile(userId, anchor)
+      openProfile: (userId, anchor) => props.onOpenProfile(userId, anchor),
+      toggleSaved: (m) => toggleSavedRef.current(m)
     }),
     // props.onEmojiUsed and props.onOpenProfile are stable (useCallback in Workspace).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -420,6 +437,37 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
   useEffect(() => {
     jumpRef.current = jump
   }, [jump])
+
+  // ---- Saved messages (Milestone 14; null = this server can't save them) ----
+  const toggleSaved = (m: Message): void => {
+    const wasSaved = Boolean(backend.saved?.[m.id])
+    void backend.setSaved(m.id, !wasSaved).then((failure) => {
+      if (failure) showToast(`Couldn’t update saved messages: ${failure}`)
+      else showToast(wasSaved ? 'Removed from saved messages.' : 'Saved — it’s in Saved Messages.')
+    })
+  }
+  const toggleSavedRef = useRef(toggleSaved)
+  useEffect(() => {
+    toggleSavedRef.current = toggleSaved
+  })
+  const savedRevision = useMemo(
+    () => (backend.saved ? Object.keys(backend.saved).sort().join(',') : ''),
+    [backend.saved]
+  )
+  const { fetchSaved } = backend
+  const loadSaved = useCallback(() => fetchSaved(), [fetchSaved])
+  const servers = backend.servers
+  const placeOf = useCallback(
+    (item: SavedItem): string => {
+      if (item.serverId === null) return 'Direct message'
+      const server = servers.find((s) => s.id === item.serverId)
+      const name = props.channelName(item.message.channelId)
+      return server ? `#${name} · ${server.name}` : `#${name}`
+    },
+    // props.channelName is stable (useCallback in Workspace, keyed by the server list).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [servers]
+  )
 
   const deleteNow = async (m: Message): Promise<void> => {
     setConfirmDelete(null)
@@ -475,6 +523,12 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
           void backend
             .setPinned(m, !m.pinned)
             .then((f) => f && showToast(`Couldn’t update pin: ${f}`))
+      })
+    }
+    if (backend.saved && !m.pending && !m.failed) {
+      items.push({
+        label: backend.saved[m.id] ? 'Remove from Saved' : 'Save Message',
+        onSelect: () => toggleSavedRef.current(m)
       })
     }
     if (m.content)
@@ -634,6 +688,35 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
               />
             )}
           </div>
+          {backend.saved && (
+            <div className="pins-anchor">
+              <button
+                type="button"
+                className={`icon-button header-button${savedOpen ? ' selected' : ''}`}
+                onClick={() => setSavedOpen((o) => !o)}
+                aria-expanded={savedOpen}
+                aria-label="Saved messages"
+                title="Saved messages (only you see them)"
+              >
+                <BookmarkIcon size={22} />
+              </button>
+              {savedOpen && (
+                <SavedPanel
+                  revision={savedRevision}
+                  load={loadSaved}
+                  resolveUser={props.resolveUser}
+                  placeOf={placeOf}
+                  describeError={describeError}
+                  onJump={(m) => {
+                    setSavedOpen(false)
+                    jump(m.channelId, m.id)
+                  }}
+                  onRemove={(m) => toggleSavedRef.current(m)}
+                  onClose={() => setSavedOpen(false)}
+                />
+              )}
+            </div>
+          )}
           <button
             type="button"
             className={`icon-button header-button${props.showMembers ? ' selected' : ''}`}
@@ -660,7 +743,17 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
       {props.banner}
 
       <div className="chat-body">
-        <div className="chat-column">
+        <div
+          className="chat-column"
+          data-wallpaper={props.wallpaper ?? undefined}
+          style={
+            props.wallpaper
+              ? ({
+                  '--wallpaper-strength': `${Math.round(wallpaperInk(props.wallpaperIntensity ?? 50) * 1000) / 10}%`
+                } as React.CSSProperties)
+              : undefined
+          }
+        >
           {marker.channelId === channel.id &&
           marker.count > 0 &&
           unreadStart &&
@@ -808,6 +901,7 @@ function ChatPanel(props: ChatPanelProps): React.JSX.Element {
                       canReply={can.send}
                       canEdit={message.authorId === meId && can.edit}
                       deleting={deletingIds.has(message.id)}
+                      saved={backend.saved ? Boolean(backend.saved[message.id]) : undefined}
                       mentioned={mentionsSelf(message)}
                       flash={flashId === message.id}
                       editing={editingId === message.id}

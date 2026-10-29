@@ -21,7 +21,13 @@ import VoiceSettings from './VoiceSettings'
 import DiagnosticsPanel from './DiagnosticsPanel'
 import { AdminSection, DevicesSection, SecuritySection } from './manage/AccountSections'
 import type { ApiClient, PreferencesPatch, ProfilePatch } from '../net/api'
-import type { ApiMe, ApiPreferences, ApiServer, ProfileImageKind } from '../net/protocol'
+import type {
+  ApiMe,
+  ApiPreferences,
+  ApiServer,
+  AppThemeId,
+  ProfileImageKind
+} from '../net/protocol'
 import ProfileSettings from './profile/ProfileSettings'
 import AppearanceSettings from './profile/AppearanceSettings'
 import ProfileCard, { CustomStatusText } from './profile/ProfileCard'
@@ -31,6 +37,7 @@ import KeybindSettings from './KeybindSettings'
 import { parseKeybinds, type CommandId } from '../lib/keybinds'
 import type { ServerNotificationChoice } from '../chat/unread'
 import PrivacySettings, { type PrivacyProps } from './PrivacySettings'
+import WindowsSettings from './WindowsSettings'
 
 export type SectionId =
   | 'account'
@@ -84,7 +91,8 @@ interface SettingsPanelProps {
   onProfileImageUpload: (
     kind: ProfileImageKind,
     image: Blob,
-    onProgress: (fraction: number) => void
+    onProgress: (fraction: number) => void,
+    crop?: { left: number; top: number; width: number; height: number }
   ) => Promise<string | null>
   onProfileImageRemove: (kind: ProfileImageKind) => Promise<string | null>
   onSetStatus: (status: SelectableStatus) => void
@@ -101,6 +109,17 @@ interface SettingsPanelProps {
   privacy: PrivacyProps
   /** Whether each system-wide shortcut could be registered (Keybinds). */
   shortcutStatus?: Partial<Record<CommandId, boolean>>
+  /** Milestone 14: themes and profile customization. */
+  customization: CustomizationProps
+}
+
+export interface CustomizationProps {
+  /** The server stores profile styles, animated images and the synced theme (API 6). */
+  supported: boolean
+  appTheme: AppThemeId | null
+  onAppThemeChange: (id: AppThemeId | null) => Promise<string | null>
+  /** Show a theme everywhere without saving it (undefined = stop previewing). */
+  onPreviewTheme: (id: AppThemeId | null | undefined) => void
 }
 
 function SettingsPanel({
@@ -131,7 +150,8 @@ function SettingsPanel({
   onToggleDeafen,
   onClose,
   privacy,
-  shortcutStatus = {}
+  shortcutStatus = {},
+  customization
 }: SettingsPanelProps): React.JSX.Element {
   const [section, setSection] = useState<SectionId>(initialSection)
   const [now] = useState(() => Date.now())
@@ -326,6 +346,7 @@ function SettingsPanel({
                   onSave={onProfileSave}
                   onUpload={onProfileImageUpload}
                   onRemove={onProfileImageRemove}
+                  customizationSupported={customization.supported}
                 />
               ) : (
                 <div className="spinner" aria-label="Loading" />
@@ -342,6 +363,20 @@ function SettingsPanel({
               onFontSizeChange={(fontSize) => onChange({ fontSize })}
               contrast={settings.contrast}
               onContrastChange={(contrast) => onChange({ contrast })}
+              appTheme={customization.appTheme}
+              onAppThemeChange={customization.onAppThemeChange}
+              onPreviewTheme={customization.onPreviewTheme}
+              themeSynced={customization.supported}
+              themeEffects={settings.themeEffects}
+              onThemeEffectsChange={(themeEffects) => onChange({ themeEffects })}
+              profileEffects={settings.profileEffects}
+              onProfileEffectsChange={(profileEffects) => onChange({ profileEffects })}
+              chatWallpaper={settings.chatWallpaper}
+              chatWallpaperIntensity={settings.chatWallpaperIntensity}
+              onChatWallpaperChange={(chatWallpaper) => onChange({ chatWallpaper })}
+              onChatWallpaperIntensityChange={(chatWallpaperIntensity) =>
+                onChange({ chatWallpaperIntensity })
+              }
             />
           )}
           {section === 'voice' && (
@@ -493,6 +528,7 @@ function SettingsPanel({
                 . Windows notifications themselves are silent unless the app can&rsquo;t play its
                 own sound.
               </p>
+              <WindowsSettings />
               {servers.length > 0 && (
                 <>
                   <h3 className="settings-subheading">Per server</h3>

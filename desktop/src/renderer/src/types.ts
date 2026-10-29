@@ -1,6 +1,7 @@
 import type { SoundEvent } from './sound/sounds'
 import type { SoundGroup } from './sound/soundPolicy'
 import type { Keybinds } from './lib/keybinds'
+import type { ChatWallpaperId } from './lib/wallpapers'
 import type {
   ScreenCodec,
   ScreenContentHint,
@@ -10,6 +11,7 @@ import type {
 import type {
   ApiAttachment,
   ApiCustomStatus,
+  ApiProfileStyle,
   ApiMessageReference,
   ApiReaction,
   ServerRole
@@ -35,6 +37,11 @@ export interface User {
   pronouns?: string | null
   createdAt?: number
   customStatus?: ApiCustomStatus | null
+  /** Milestone 14: gradient, decoration, effect, banner preset, name style (null = none). */
+  profileStyle?: ApiProfileStyle | null
+  /** The picture / banner is animated (a still frame exists for lists and reduced motion). */
+  avatarAnimated?: boolean
+  bannerAnimated?: boolean
 }
 
 export type ChannelType = 'text' | 'voice'
@@ -176,4 +183,16 @@ export interface UserSettings {
   soundEventVolumes: Partial<Record<SoundEvent, number>>
   /** Your own sound per event (custom sound library id; missing = built-in). */
   soundCustom: Partial<Record<SoundEvent, string>>
+  /** Milestone 14: theme motion and blur on this device ('reduced' keeps the colors). */
+  themeEffects: 'full' | 'reduced'
+  /** Milestone 14: animated profile effects and decorations (this device). */
+  profileEffects: 'full' | 'reduced'
+  /** Milestone 14: built-in sound pack (see sound/packs.ts). */
+  soundPack: string
+  /** Milestone 14: soundboard clips played in your voice channel, percent (0 = off). */
+  soundboardVolume: number
+  /** Milestone 14: chat wallpaper pattern on this device (null = none). */
+  chatWallpaper: ChatWallpaperId | null
+  /** Milestone 14: wallpaper strength, 10–100 percent. */
+  chatWallpaperIntensity: number
 }

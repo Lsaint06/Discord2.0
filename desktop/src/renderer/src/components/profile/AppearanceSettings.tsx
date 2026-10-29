@@ -3,6 +3,7 @@ import type { PreferencesPatch } from '../../net/api'
 import {
   LIMITS,
   type ApiPreferences,
+  type AppThemeId,
   type MessageDensity,
   type ReducedMotionPreference,
   type ThemePreference
@@ -11,6 +12,8 @@ import { accentChoices, DEFAULT_ACCENT } from '../../data/defaults'
 import { Field, Toggle } from '../SettingsControls'
 import AppScaleControl from './AppScaleControl'
 import type { ContrastPreference } from '../../hooks/useAppearance'
+import ThemeGallery from './ThemeGallery'
+import { CHAT_WALLPAPERS, type ChatWallpaperId } from '../../lib/wallpapers'
 
 interface AppearanceSettingsProps {
   preferences: ApiPreferences
@@ -20,6 +23,20 @@ interface AppearanceSettingsProps {
   onFontSizeChange: (size: number) => void
   contrast: ContrastPreference
   onContrastChange: (contrast: ContrastPreference) => void
+  // ---- Milestone 14 ----
+  appTheme: AppThemeId | null
+  onAppThemeChange: (id: AppThemeId | null) => Promise<string | null>
+  onPreviewTheme: (id: AppThemeId | null | undefined) => void
+  /** The theme is stored on the account (else on this device). */
+  themeSynced: boolean
+  themeEffects: 'full' | 'reduced'
+  onThemeEffectsChange: (value: 'full' | 'reduced') => void
+  profileEffects: 'full' | 'reduced'
+  onProfileEffectsChange: (value: 'full' | 'reduced') => void
+  chatWallpaper: ChatWallpaperId | null
+  chatWallpaperIntensity: number
+  onChatWallpaperChange: (id: ChatWallpaperId | null) => void
+  onChatWallpaperIntensityChange: (value: number) => void
 }
 
 const CONTRAST: { id: ContrastPreference; label: string }[] = [
@@ -56,7 +73,19 @@ function AppearanceSettings({
   fontSize,
   onFontSizeChange,
   contrast,
-  onContrastChange
+  onContrastChange,
+  appTheme,
+  onAppThemeChange,
+  onPreviewTheme,
+  themeSynced,
+  themeEffects,
+  onThemeEffectsChange,
+  profileEffects,
+  onProfileEffectsChange,
+  chatWallpaper,
+  chatWallpaperIntensity,
+  onChatWallpaperChange,
+  onChatWallpaperIntensityChange
 }: AppearanceSettingsProps): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const change = (patch: PreferencesPatch): void => {
@@ -95,8 +124,28 @@ function AppearanceSettings({
         </p>
       )}
 
-      <Field label="Theme">
-        <div className="theme-options" role="radiogroup" aria-label="Theme">
+      <Field label="App Theme">
+        <ThemeGallery
+          value={appTheme}
+          classicBase={
+            preferences.theme === 'light' ||
+            (preferences.theme === 'system' &&
+              window.matchMedia('(prefers-color-scheme: light)').matches)
+              ? 'light'
+              : 'dark'
+          }
+          onApply={onAppThemeChange}
+          onPreview={onPreviewTheme}
+          synced={themeSynced}
+        />
+      </Field>
+
+      <Field
+        label={
+          appTheme ? 'Classic Theme Mode (used when the theme is Classic)' : 'Classic Theme Mode'
+        }
+      >
+        <div className="theme-options" role="radiogroup" aria-label="Classic theme mode">
           {THEMES.map((t) => (
             <label
               key={t.id}
@@ -203,6 +252,74 @@ function AppearanceSettings({
       <div className="settings-subsection">
         <h3>This device only</h3>
         <AppScaleControl />
+        <Field label="Theme Effects">
+          <select
+            className="text-input"
+            value={themeEffects}
+            onChange={(e) =>
+              onThemeEffectsChange(e.target.value === 'reduced' ? 'reduced' : 'full')
+            }
+          >
+            <option value="full">Full — animated backgrounds and frosted glass</option>
+            <option value="reduced">
+              Reduced — same colors, no motion or blur (lighter on the GPU)
+            </option>
+          </select>
+        </Field>
+        <Field label="Profile Effects">
+          <select
+            className="text-input"
+            value={profileEffects}
+            onChange={(e) =>
+              onProfileEffectsChange(e.target.value === 'reduced' ? 'reduced' : 'full')
+            }
+          >
+            <option value="full">Full — play decorations, effects and animated pictures</option>
+            <option value="reduced">Reduced — show them still</option>
+          </select>
+          <p className="setting-description">Reduced motion (above) also keeps everything still.</p>
+        </Field>
+        <Field label="Chat Wallpaper">
+          <div className="wallpaper-tiles" role="group" aria-label="Chat wallpaper">
+            {[null, ...CHAT_WALLPAPERS.map((w) => w.id)].map((id) => {
+              const selected = chatWallpaper === id
+              return (
+                <button
+                  key={id ?? 'none'}
+                  type="button"
+                  className={`wallpaper-tile${selected ? ' selected' : ''}`}
+                  aria-pressed={selected}
+                  onClick={() => onChatWallpaperChange(id)}
+                >
+                  <span
+                    className="wallpaper-swatch"
+                    data-wallpaper={id ?? undefined}
+                    aria-hidden="true"
+                  />
+                  <span>{id ? CHAT_WALLPAPERS.find((w) => w.id === id)?.name : 'None'}</span>
+                </button>
+              )
+            })}
+          </div>
+          {chatWallpaper && (
+            <label className="wallpaper-intensity">
+              <span>Strength — {chatWallpaperIntensity}%</span>
+              <input
+                type="range"
+                className="slider"
+                min={10}
+                max={100}
+                step={5}
+                value={chatWallpaperIntensity}
+                onChange={(e) => onChatWallpaperIntensityChange(Number(e.target.value))}
+              />
+            </label>
+          )}
+          <p className="setting-description">
+            A subtle pattern behind your messages, drawn in your theme’s colors. Text stays readable
+            at every strength. This device only — nothing is uploaded.
+          </p>
+        </Field>
         <Field label="Contrast">
           <select
             className="text-input"

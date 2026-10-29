@@ -16,6 +16,10 @@ import {
 } from '../sound/customSounds'
 import { formatBytes } from '../chat/uploads'
 import { Field, Toggle } from './SettingsControls'
+import { DEFAULT_SOUND_PACK, SOUND_PACKS, soundPackById, type SoundPackId } from '../sound/packs'
+
+/** A short tour of a pack: one message, mention, voice and control sound. */
+const AUDITION: SoundEvent[] = ['message', 'mention', 'connect', 'voiceJoin', 'mute', 'unmute']
 
 interface SoundSettingsProps {
   settings: UserSettings
@@ -25,7 +29,8 @@ interface SoundSettingsProps {
 const GROUPS: { id: SoundInfo['group']; label: string }[] = [
   { id: 'messages', label: 'Messages' },
   { id: 'voice', label: 'Voice' },
-  { id: 'controls', label: 'Your controls' }
+  { id: 'controls', label: 'Your controls' },
+  { id: 'system', label: 'Uploads & errors' }
 ]
 
 /** Settings → Sounds. Previews play only when their button is clicked. */
@@ -37,6 +42,27 @@ function SoundSettings({ settings, onChange }: SoundSettingsProps): React.JSX.El
   const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const audible = settings.soundEffects && settings.soundVolume > 0
+  const currentPack = soundPackById(settings.soundPack).id
+  /** Pack being auditioned (its sounds play in sequence). */
+  const [auditioning, setAuditioning] = useState<SoundPackId | null>(null)
+  const auditionTimers = useRef<ReturnType<typeof setTimeout>[]>([])
+  useEffect(
+    () => () => {
+      for (const timer of auditionTimers.current) clearTimeout(timer)
+    },
+    []
+  )
+  const audition = (pack: SoundPackId): void => {
+    if (!sound) return
+    for (const timer of auditionTimers.current) clearTimeout(timer)
+    auditionTimers.current = AUDITION.map((event, i) =>
+      setTimeout(() => {
+        reportPlay(sound.preview(event, pack))
+        if (i === AUDITION.length - 1) setAuditioning(null)
+      }, i * 750)
+    )
+    setAuditioning(pack)
+  }
 
   useEffect(() => {
     let alive = true
@@ -172,6 +198,63 @@ function SoundSettings({ settings, onChange }: SoundSettingsProps): React.JSX.El
           {notice}
         </p>
       )}
+
+      <Field label={`Soundboard Volume — ${settings.soundboardVolume}%`}>
+        <input
+          className="slider"
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={settings.soundboardVolume}
+          aria-label="Soundboard volume"
+          onChange={(e) => onChange({ soundboardVolume: Number(e.target.value) })}
+        />
+        <p className="setting-description">
+          Clips people play from a server’s soundboard in your voice channel. Separate from sound
+          effects; 0% turns them off. Deafening also silences them.
+        </p>
+      </Field>
+
+      <Field label="Sound Pack">
+        <div className="sound-packs" role="radiogroup" aria-label="Sound pack">
+          {SOUND_PACKS.map((pack) => {
+            const selected = pack.id === currentPack
+            return (
+              <div key={pack.id} className={`sound-pack${selected ? ' selected' : ''}`}>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  className="sound-pack-choose"
+                  onClick={() => onChange({ soundPack: pack.id })}
+                >
+                  <span className="sound-pack-name">
+                    {pack.name}
+                    {pack.id === DEFAULT_SOUND_PACK && (
+                      <span className="sound-pack-badge">Default</span>
+                    )}
+                  </span>
+                  <span className="sound-pack-description">{pack.description}</span>
+                </button>
+                <button
+                  type="button"
+                  className="button secondary small"
+                  disabled={!audible || !sound}
+                  onClick={() => audition(pack.id)}
+                  aria-label={`Audition the ${pack.name} pack`}
+                >
+                  {auditioning === pack.id ? 'Playing…' : 'Audition'}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        <p className="setting-description">
+          Audition plays a few of the pack’s sounds without switching. Your own imported sounds
+          (below) replace pack sounds for the events you choose them for, whatever the pack.
+        </p>
+      </Field>
 
       {GROUPS.map((group) => (
         <section key={group.id} className="sound-group" aria-label={group.label}>
@@ -338,7 +421,9 @@ function SoundSettings({ settings, onChange }: SoundSettingsProps): React.JSX.El
               soundEvents: { ...DEFAULT_SOUND_EVENTS },
               soundCategoryVolumes: {},
               soundEventVolumes: {},
-              soundCustom: {}
+              soundCustom: {},
+              soundPack: DEFAULT_SOUND_PACK,
+              soundboardVolume: 70
             })
           }}
         >

@@ -131,6 +131,15 @@ export function PinIcon(props: IconProps): React.JSX.Element {
   )
 }
 
+/** Saved messages (Milestone 14). */
+export function BookmarkIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M7 3.5h10a1 1 0 0 1 1 1v16l-6-4-6 4v-16a1 1 0 0 1 1-1z" />
+    </Svg>
+  )
+}
+
 export function SearchIcon(props: IconProps): React.JSX.Element {
   return (
     <Svg {...props}>

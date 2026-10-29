@@ -183,7 +183,7 @@ after(async () => {
 describe('server overview: description and default notifications', () => {
   test('meta advertises API 5 with server administration', async () => {
     const meta = (await (await fetch(`${base}/api/meta`)).json()) as { apiVersion: number; serverAdmin: boolean }
-    assert.equal(meta.apiVersion, 5)
+    assert.ok(meta.apiVersion >= 5)
     assert.equal(meta.serverAdmin, true)
   })
 
