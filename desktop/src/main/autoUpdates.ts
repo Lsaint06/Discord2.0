@@ -1,4 +1,4 @@
-import { app, dialog, Menu } from 'electron'
+﻿import { app, dialog, Menu } from 'electron'
 import { autoUpdater } from 'electron-updater'
 
 export function setupAutoUpdates(): void {
@@ -8,41 +8,82 @@ export function setupAutoUpdates(): void {
   autoUpdater.autoInstallOnAppQuit = false
   autoUpdater.allowPrerelease = false
 
+  let checking = false
+  let updateAvailable = false
   let readyVersion: string | null = null
 
-  async function check(manual: boolean): Promise<void> {
-    if (readyVersion) {
-      const result = await dialog.showMessageBox({
-        type: 'info',
-        title: 'Discord 2.0 Update',
-        message: `Version ${readyVersion} is ready to install.`,
-        buttons: ['Later', 'Restart to Update'],
-        defaultId: 1,
-        cancelId: 0
-      })
-      if (result.response === 1) autoUpdater.quitAndInstall(false, true)
-      return
-    }
+  async function showReady(): Promise<void> {
+    if (!readyVersion) return
 
-    try {
-      const result = await autoUpdater.checkForUpdates()
-      if (manual && !result?.updateInfo) {
-        await dialog.showMessageBox({
-          message: 'No update information is available.'
-        })
-      }
-    } catch (error) {
-      console.error('Update check failed:', error)
-      if (manual) {
-        await dialog.showMessageBox({
-          type: 'warning',
-          message: 'Could not check for updates. Try again later.'
-        })
-      }
+    const result = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Discord 2.0 Update',
+      message: `Discord 2.0 ${readyVersion} is ready.`,
+      detail: 'Restarting will close Discord 2.0 and disconnect any active calls.',
+      buttons: ['Later', 'Restart to Update'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    })
+
+    if (result.response === 1) {
+      autoUpdater.quitAndInstall(false, true)
     }
   }
 
+  async function check(manual: boolean): Promise<void> {
+    if (readyVersion) {
+      if (manual) await showReady()
+      return
+    }
+
+    if (checking) {
+      if (manual) {
+        await dialog.showMessageBox({
+          message: 'Discord 2.0 is already checking for updates.'
+        })
+      }
+      return
+    }
+
+    checking = true
+    updateAvailable = false
+
+    try {
+      await autoUpdater.checkForUpdates()
+
+      if (manual) {
+        await dialog.showMessageBox({
+          type: 'info',
+          title: 'Discord 2.0 Updates',
+          message: updateAvailable
+            ? 'An update is available and is downloading.'
+            : `Discord 2.0 ${app.getVersion()} is up to date.`
+        })
+      }
+    } catch (error) {
+      console.error('Discord 2.0 update check failed:', error)
+
+      if (manual) {
+        await dialog.showMessageBox({
+          type: 'warning',
+          title: 'Discord 2.0 Updates',
+          message: 'Could not check for updates.',
+          detail: 'Check your internet connection and try again.'
+        })
+      }
+    } finally {
+      checking = false
+    }
+  }
+
+  autoUpdater.on('update-available', (info) => {
+    updateAvailable = true
+    console.info('Discord 2.0 update available:', info.version)
+  })
+
   autoUpdater.on('update-not-available', () => {
+    updateAvailable = false
     console.info('Discord 2.0 is up to date')
   })
 
@@ -52,7 +93,9 @@ export function setupAutoUpdates(): void {
 
   autoUpdater.on('update-downloaded', (info) => {
     readyVersion = info.version
-    void check(false).catch((error) => console.error('Update prompt:', error))
+    void showReady().catch((error) => {
+      console.error('Discord 2.0 update prompt failed:', error)
+    })
   })
 
   Menu.setApplicationMenu(
@@ -66,14 +109,15 @@ export function setupAutoUpdates(): void {
         submenu: [
           {
             label: 'Check for Updates',
-            click: () => { void check(true) }
+            click: () => {
+              void check(true)
+            }
           }
         ]
       }
     ])
   )
 
-  // Initial check after startup. Never close a voice call without confirmation.
   setTimeout(() => {
     void check(false)
   }, 10000)
