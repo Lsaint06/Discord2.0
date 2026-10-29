@@ -34,6 +34,10 @@ case "$1 $2" in
   "network inspect")
     echo d2staging
     exit 0 ;;
+  "compose version")
+    # `docker compose version --short`; FAKE_COMPOSE_VERSION may be empty (no output).
+    printf '%s\n' "${FAKE_COMPOSE_VERSION-5.1.4}"
+    exit 0 ;;
   "compose -p")
     [[ $* == *" ps -q server"* ]] && echo stg-server-id
     exit 0 ;;

@@ -108,6 +108,114 @@ check "init-env: never overwrites" failed_run
 run snapshot '../../etc'
 check "names are validated (no paths)" failed_run
 
+# ---------------------------------------------------------------- preflight parsers
+# Pure helpers from stg.sh, called by sourcing it (nothing runs: main only runs when executed).
+in_stg() { bash -c 'stg=$1; shift; source "$stg" && "$@"' in_stg "$STG" "$@"; }
+
+compose_ok() { in_stg compose_version_ok "$1"; }
+compose_bad() { ! in_stg compose_version_ok "$1"; }
+for v in 5.1.4 v5.1.4 'v5.1.4'$'\r' ' 5.1.4 ' 2.20.0 v2.20 2.20.1 2.24.6-desktop.1 2.29.7 2.100.0 3.0.0 08.1.0 10.0.0 2.20.1-rc.1 5.1.4+build.7; do
+  check "compose $(printf '%q' "$v") is supported" compose_ok "$v"
+done
+for v in 2.19.9 2.2.0 v2.2.14 1.29.2 0.9.0 2.20.0-rc.1 '' v 5 5. 5.1.4.2 2.x.0 -5.1.4 'v 5.1.4' 'Docker Compose version v5.1.4' \
+  "docker: 'compose' is not a docker command." 1234567.0.0 5.1.4-; do
+  check "compose $(printf '%q' "$v") is refused" compose_bad "$v"
+done
+
+kind_is() { [[ $(in_stg ipv6_kind "$1") == "$2" ]] || { echo "     | $1 -> $(in_stg ipv6_kind "$1"), expected $2" > "$TMP/out"; false; }; }
+while read -r addr want; do
+  check "ipv6 $addr is $want" kind_is "$addr" "$want"
+done << 'EOF'
+fd7c:73c9:de8d:acc1:9190:2071:f383:68fd/64 unique-local
+fd7c:73c9:de8d:acc1:c9c8:92de:485b:9544/64 unique-local
+fd7c:73c9:de8d:acc1:ab2f:e5fa:1a78:60ef/64 unique-local
+fc00::1 unique-local
+FDFF:FFFF::1 unique-local
+fbff:ffff::1 unclassified
+fe80::1%eth0 link-local
+fe80::1ff:fe23:4567:890a/64 link-local
+febf:ffff::1 link-local
+fec0::1 site-local
+::1 loopback
+0:0:0:0:0:0:0:1 loopback
+::1/128 loopback
+:: unspecified
+ff02::1 multicast
+2001:db8::1 global
+2a02:1234:5678:9abc::1/64 global
+2600:1f18:4a3:6900:8b62:9f1c:2d4e:7a10/128 global
+3fff:ffff::1 global
+1fff::1 unclassified
+4000::1 unclassified
+::ffff:192.0.2.1 unclassified
+1:2:3:4:5:6:192.0.2.1 unclassified
+fd7c:73c9:de8d:acc1:27fe:3f10:e38/64 invalid
+1:2:3:4:5:6:7:8:9 invalid
+fd00::1::2 invalid
+fd00:::1 invalid
+:1:2:3:4:5:6:7 invalid
+1:2:3:4:5:6:7: invalid
+gggg::1 invalid
+12345::1 invalid
+192.168.68.65 invalid
+::ffff:300.1.1.1 invalid
+1.2.3.4:: invalid
+fd00::1,fd00::2 invalid
+EOF
+check "ipv6 empty input is invalid" kind_is "" invalid
+
+ULA=$'2: eth0    inet6 fd7c:73c9:de8d:acc1:9190:2071:f383:68fd/64 scope global temporary dynamic \\       valid_lft 604523sec preferred_lft 85744sec\n2: eth0    inet6 fd7c:73c9:de8d:acc1:c9c8:92de:485b:9544/64 scope global temporary deprecated dynamic \\       valid_lft 518123sec preferred_lft 0sec\n2: eth0    inet6 fd7c:73c9:de8d:acc1:ab2f:e5fa:1a78:60ef/64 scope global dynamic mngtmpaddr noprefixroute \\       valid_lft forever preferred_lft forever'
+PUBLIC=$'3: wlan0    inet6 2a02:1234:5678:9abc:1c2d:3e4f:5a6b:7c8d/64 scope global dynamic mngtmpaddr \\       valid_lft 86000sec preferred_lft 14000sec'
+verdict_has() { printf '%s' "$1" | in_stg ipv6_preflight_verdict > "$TMP/out"; grep -qE -- "$2" "$TMP/out"; }
+verdict_lacks() { ! grep -qE -- "$1" "$TMP/out"; }
+check "verdict: the Jetson's unique-local addresses pass" verdict_has "$ULA" '^PASS only non-internet-routable IPv6 \(3'
+check "verdict: no IPv6 at all passes" verdict_has '' '^PASS no global IPv6'
+check "verdict: link-local and loopback only pass" verdict_has $'1: lo inet6 ::1/128 scope host\n2: eth0 inet6 fe80::1/64 scope link' '^PASS only'
+check "verdict: a public address still warns" verdict_has "$PUBLIC" '^WARN .*2a02:1234:5678:9abc:1c2d:3e4f:5a6b:7c8d/64 \(global\)'
+check "verdict: public mixed with unique-local warns" verdict_has "$ULA"$'\n'"$PUBLIC" '^WARN .*2a02:1234'
+check "  ...naming only the public address" verdict_lacks 'fd7c'
+check "verdict: an unparseable address warns (never assumed safe)" verdict_has '2: eth0 inet6 fd7c:73c9:de8d:acc1:27fe:3f10:e38/64 scope global' '^WARN .*\(invalid\)'
+check "verdict: an unclassified address warns" verdict_has '2: eth0 inet6 4000::1/64 scope global' '^WARN .*\(unclassified\)'
+check "verdict: one PUBLIC line without a trailing newline is read" verdict_has "$PUBLIC" '^WARN'
+
+# ---------------------------------------------------------------- preflight end to end
+# Host commands are stubbed (no real ip/ss/sudo/sysctl calls); Docker is the fake docker.
+STUBS=$TMP/stubs
+mkdir -p "$STUBS"
+cat > "$STUBS/ip" << 'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  "-6 -o addr show scope global") [[ -n ${FAKE_IP6_FILE:-} ]] && cat "$FAKE_IP6_FILE"; exit 0 ;;
+  "-4 -o addr show") echo "2: eth0    inet 192.168.68.65/22 brd 192.168.71.255 scope global eth0" ;;
+  "route"|"route show default") echo "default via 192.168.68.1 dev eth0 proto static" ;;
+esac
+EOF
+printf '#!/usr/bin/env bash\nprintf "              total        used        free      shared  buff/cache   available\\nMem:           7620        2800        1000         100        3800        4500\\nSwap:          3810           0        3810\\n"\n' > "$STUBS/free"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUBS/ss"
+printf '#!/usr/bin/env bash\nprintf "Filesystem 1048576-blocks Used Available Capacity Mounted on\\n/dev/nvme0n1p1 469000 120000 330000 27%%%% /\\n"\n' > "$STUBS/df"
+printf '#!/usr/bin/env bash\necho 212992\n' > "$STUBS/sysctl"
+printf '#!/usr/bin/env bash\n[[ $1 == iptables ]] && echo "-P INPUT ACCEPT"\nexit 0\n' > "$STUBS/sudo"
+chmod +x "$STUBS"/*
+printf '%s\n' "$ULA" > "$TMP/ip6-ula"
+printf '%s\n%s\n' "$ULA" "$PUBLIC" > "$TMP/ip6-mixed"
+preflight() { PATH="$STUBS:$PATH" run preflight 192.168.68.65; }
+read_only_docker() { ! grep -vE '^(info |compose version|ps |inspect |image inspect|volume inspect|network inspect|network ls)' "$FAKE_LOG"; }
+
+FAKE_COMPOSE_VERSION=5.1.4 FAKE_IP6_FILE=$TMP/ip6-ula preflight
+check "preflight: Compose 5.1.4 passes" out_has "PASS  Compose 5.1.4 (>= 2.20.0)"
+check "  ...no Compose failure" bash -c "! grep -q 'FAIL  Compose' '$TMP/out'"
+check "  ...the Jetson's unique-local IPv6 addresses pass" out_has "PASS  only non-internet-routable IPv6 (3"
+check "  ...no IPv6 warning" bash -c "! grep -qE 'WARN .*IPv6' '$TMP/out'"
+check "  ...Docker was only queried (read-only)" read_only_docker
+check "  ...nothing started or created" not_logged "up -d"
+FAKE_COMPOSE_VERSION=2.19.3 preflight
+check "preflight: Compose 2.19.3 still fails" out_has "FAIL  Compose 2.20.0 or newer needed (found '2.19.3')"
+check "  ...and preflight exits non-zero" failed_run
+FAKE_COMPOSE_VERSION= preflight
+check "preflight: no Compose output fails" out_has "FAIL  Compose 2.20.0 or newer needed (found 'none')"
+FAKE_IP6_FILE=$TMP/ip6-mixed preflight
+check "preflight: a public IPv6 address still warns" out_has "WARN  IPv6 address(es) not proven LAN-only: 2a02:1234:5678:9abc:1c2d:3e4f:5a6b:7c8d/64 (global)"
+
 echo
 echo "stg.sh guard tests: $passed passed, $failed failed"
 ((failed == 0))

@@ -194,6 +194,107 @@ run_tool() {
 
 valid_name() { [[ $1 =~ ^[a-z0-9][a-z0-9-]{0,40}$ ]] || die "use a short lowercase name (a-z, 0-9, -): '$1'"; }
 
+# ---------------------------------------------------------------- preflight parsers (pure; tested)
+
+COMPOSE_MIN=(2 20 0)
+
+# True when `docker compose version --short` output is a semantic version >= COMPOSE_MIN
+# (2.20.0, needed for the Compose features the staging file uses). Any newer major (v5.1.4) is fine;
+# a pre-release of exactly the minimum, empty or malformed output is not.
+compose_version_ok() {
+  local v=${1:-}
+  v=${v//$'\r'/}
+  v=${v#"${v%%[![:space:]]*}"}
+  v=${v%"${v##*[![:space:]]}"}
+  v=${v#v}
+  [[ $v =~ ^([0-9]{1,6})\.([0-9]{1,6})(\.([0-9]{1,6}))?(-([0-9A-Za-z.-]+))?(\+[0-9A-Za-z.-]+)?$ ]] || return 1
+  local -a got=($((10#${BASH_REMATCH[1]})) $((10#${BASH_REMATCH[2]})) $((10#${BASH_REMATCH[4]:-0})))
+  local pre=${BASH_REMATCH[6]} i
+  for i in 0 1 2; do
+    ((got[i] > COMPOSE_MIN[i])) && return 0
+    ((got[i] < COMPOSE_MIN[i])) && return 1
+  done
+  [[ -z $pre ]]
+}
+
+# Classifies one IPv6 address (optionally with /prefix or %zone): unspecified, loopback,
+# link-local (fe80::/10), unique-local (fc00::/7), site-local (fec0::/10, deprecated),
+# multicast (ff00::/8), global (2000::/3, routable on the internet), unclassified (any other
+# valid address) or invalid.
+ipv6_kind() {
+  local a=${1,,}
+  a=${a%%/*}
+  a=${a%%\%*}
+  [[ $a == *:* && $a =~ ^[0-9a-f:.]+$ && $a != *:::* ]] || { echo invalid; return; }
+  local marks=${a//::/#}
+  marks=${marks//[^#]/}
+  ((${#marks} <= 1)) || { echo invalid; return; }
+  [[ ($a != :* || $a == ::*) && ($a != *: || $a == *::) ]] || { echo invalid; return; }
+  local head=${a%%::*} tail='' compressed=0
+  [[ $a == *::* ]] && { compressed=1; tail=${a#*::}; }
+  local -a hg=() tg=() groups=()
+  [[ -n $head ]] && IFS=: read -r -a hg <<< "$head"
+  [[ -n $tail ]] && IFS=: read -r -a tg <<< "$tail"
+  local -a parts=("${hg[@]}" "${tg[@]}")
+  local n=${#parts[@]} last='' g
+  if ((n > 0)); then last=${parts[n - 1]}; fi
+  # An embedded IPv4 address may only be the last part (::ffff:192.0.2.1) and counts as two groups.
+  if [[ $last == *.* ]]; then
+    [[ $a != *: && $last =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || { echo invalid; return; }
+    local o
+    for o in "${BASH_REMATCH[@]:1}"; do ((10#$o <= 255)) || { echo invalid; return; }; done
+    local v4=$(( (10#${BASH_REMATCH[1]} << 24) | (10#${BASH_REMATCH[2]} << 16) | (10#${BASH_REMATCH[3]} << 8) | 10#${BASH_REMATCH[4]} ))
+    local hi lo
+    printf -v hi '%x' $((v4 >> 16))
+    printf -v lo '%x' $((v4 & 0xffff))
+    if ((${#tg[@]} > 0)); then tg=("${tg[@]:0:${#tg[@]}-1}" "$hi" "$lo"); else hg=("${hg[@]:0:${#hg[@]}-1}" "$hi" "$lo"); fi
+  fi
+  for g in "${hg[@]}" "${tg[@]}"; do [[ $g =~ ^[0-9a-f]{1,4}$ ]] || { echo invalid; return; }; done
+  n=$((${#hg[@]} + ${#tg[@]}))
+  if ((compressed)); then ((n <= 7)) || { echo invalid; return; }; else ((n == 8)) || { echo invalid; return; }; fi
+  groups=("${hg[@]}")
+  for ((g = n; g < 8; g++)); do groups+=(0); done
+  groups+=("${tg[@]}")
+  local -a w=()
+  for g in "${groups[@]}"; do w+=($((16#$g))); done
+  local zero7=$((w[0] | w[1] | w[2] | w[3] | w[4] | w[5] | w[6]))
+  if ((zero7 == 0 && w[7] == 0)); then echo unspecified
+  elif ((zero7 == 0 && w[7] == 1)); then echo loopback
+  elif (((w[0] & 0xffc0) == 0xfe80)); then echo link-local
+  elif (((w[0] & 0xffc0) == 0xfec0)); then echo site-local
+  elif (((w[0] & 0xfe00) == 0xfc00)); then echo unique-local
+  elif (((w[0] & 0xff00) == 0xff00)); then echo multicast
+  elif (((w[0] & 0xe000) == 0x2000)); then echo global
+  else echo unclassified
+  fi
+}
+
+# Reads `ip -6 -o addr show scope global` output on stdin and prints ONE verdict line:
+#   "WARN ..." when any address may be reachable from the internet (global unicast, an
+#              unclassified or an unparseable address: never assume those are safe);
+#   "PASS ..." when there are none, or only addresses the internet can't route to (unique-local
+#              fc00::/7, link-local, loopback...), which Linux still labels "scope global".
+ipv6_preflight_verdict() {
+  local line addr kind
+  local -a risky=() lan=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    addr=$(awk '{for (i = 1; i < NF; i++) if ($i == "inet6") { print $(i + 1); exit }}' <<< "$line")
+    [[ -z $addr ]] && continue
+    kind=$(ipv6_kind "$addr")
+    case $kind in
+      unique-local | link-local | loopback | site-local | multicast | unspecified) lan+=("$addr") ;;
+      *) risky+=("$addr ($kind)") ;;
+    esac
+  done
+  if ((${#risky[@]} > 0)); then
+    echo "WARN IPv6 address(es) not proven LAN-only: ${risky[*]} (global = routable on the internet; invalid/unclassified = not recognised, so not assumed safe). LiveKit listens on all interfaces; make sure the router does not allow inbound IPv6 to 3901/7980-7982 (staging must stay LAN-only)"
+  elif ((${#lan[@]} > 0)); then
+    echo "PASS only non-internet-routable IPv6 (${#lan[@]}: unique-local fc00::/7 or link-local; LAN-only like 192.168.x.x): ${lan[*]}"
+  else
+    echo "PASS no global IPv6 address (IPv4 LAN only; the router forwards none of 3901/7980-7982)"
+  fi
+}
+
 # ---------------------------------------------------------------- subcommands
 
 cmd_preflight() {
@@ -236,8 +337,12 @@ cmd_preflight() {
     fail "docker info failed"
   fi
   local cv
-  cv=$(dk compose version --short 2>/dev/null || true)
-  [[ $cv =~ ^v?2\.([0-9]+) ]] && ((BASH_REMATCH[1] >= 20)) && pass "Compose $cv" || fail "Compose v2.20+ needed (found '${cv:-none}')"
+  cv=$(dk compose version --short 2>/dev/null | head -n1 || true)
+  if compose_version_ok "$cv"; then
+    pass "Compose ${cv} (>= ${COMPOSE_MIN[0]}.${COMPOSE_MIN[1]}.${COMPOSE_MIN[2]})"
+  else
+    fail "Compose ${COMPOSE_MIN[0]}.${COMPOSE_MIN[1]}.${COMPOSE_MIN[2]} or newer needed (found '${cv:-none}')"
+  fi
 
   info "-- production (read-only)"
   local ids name health
@@ -296,11 +401,12 @@ cmd_preflight() {
     pass "no active ufw"
   fi
   info "  iptables INPUT policy: $(sudo iptables -S INPUT 2>/dev/null | head -n1 || echo unknown)"
-  if ip -6 -o addr show scope global 2>/dev/null | grep -q .; then
-    warn "global IPv6 address present: LiveKit listens on all interfaces; make sure the router does not allow inbound IPv6 to 7980-7982 (staging must stay LAN-only)"
-  else
-    pass "no global IPv6 address (IPv4 LAN only; the router forwards none of 3901/7980-7982)"
-  fi
+  local v6
+  v6=$(ip -6 -o addr show scope global 2>/dev/null | ipv6_preflight_verdict || true)
+  case $v6 in
+    PASS\ *) pass "${v6#PASS }" ;;
+    *) warn "${v6#WARN }" ;;
+  esac
   info "  UDP buffers: rmem_max $(sysctl -n net.core.rmem_max), wmem_max $(sysctl -n net.core.wmem_max) (LiveKit warns below 5 MB; production runs the same)"
   command -v tegrastats >/dev/null && pass "tegrastats available for CPU measurements" || warn "tegrastats not found"
 
