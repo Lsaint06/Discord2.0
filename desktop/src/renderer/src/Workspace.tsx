@@ -113,6 +113,7 @@ import CustomStatusModal from './components/profile/CustomStatusModal'
 import CreateServerModal from './components/CreateServerModal'
 import ServerSettingsModal from './components/manage/ServerSettingsModal'
 import { InviteModal } from './components/manage/InviteModal'
+import CreateChannelModal, { type NewChannelType } from './components/manage/CreateChannelModal'
 import ConnectionBanner from './components/ConnectionBanner'
 import ScreenSharePicker from './components/ScreenSharePicker'
 import StreamViewer, { type ViewerMode } from './components/StreamViewer'
@@ -259,6 +260,12 @@ function Workspace({
   )
   const [serverSettingsFor, setServerSettingsFor] = useState<string | null>(null)
   const [inviteFor, setInviteFor] = useState<string | null>(null)
+  // The + next to a category in the channel list.
+  const [createChannelIn, setCreateChannelIn] = useState<{
+    serverId: string
+    category: string
+    type: NewChannelType
+  } | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [viewerMode, setViewerMode] = useState<ViewerMode>('focus')
@@ -1681,6 +1688,21 @@ function Workspace({
                       }
                       onSelectChannel={selectChannel}
                       serverActions={serverActions(activeServer)}
+                      onCreateChannel={
+                        hasPermission(activeServer.permissions ?? 0, Permissions.manageChannels)
+                          ? (category) =>
+                              setCreateChannelIn({
+                                serverId: activeServer.id,
+                                category: category.name,
+                                // Voice-only categories suggest voice; anything else suggests text.
+                                type:
+                                  category.channels.length > 0 &&
+                                  category.channels.every((c) => c.type === 'voice')
+                                    ? 'voice'
+                                    : 'text'
+                              })
+                          : undefined
+                      }
                       footer={sidebarFooter}
                     />
                   ) : (
@@ -1932,6 +1954,36 @@ function Workspace({
                       resolveUser={resolveUser}
                       onInvite={() => setInviteFor(serverForSettings.id)}
                       onClose={closeServerSettings}
+                    />
+                  )}
+
+                  {createChannelIn && (
+                    <CreateChannelModal
+                      categoryName={createChannelIn.category}
+                      initialType={createChannelIn.type}
+                      onClose={() => setCreateChannelIn(null)}
+                      onCreate={async (name, type) => {
+                        const { serverId, category } = createChannelIn
+                        try {
+                          const channel = await backend.api.createChannel(serverId, {
+                            name,
+                            type,
+                            category
+                          })
+                          await backend.refreshServers()
+                          setCreateChannelIn(null)
+                          // Open a new text channel right away (voice channels wait for a click).
+                          if (type === 'text') {
+                            setActiveChannelByServer((prev) => ({
+                              ...prev,
+                              [serverId]: channel.id
+                            }))
+                          }
+                          return null
+                        } catch (err) {
+                          return describeError(err)
+                        }
+                      }}
                     />
                   )}
 

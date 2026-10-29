@@ -412,6 +412,81 @@ textarea {
 .category-toggle.collapsed svg {
   transform: rotate(-90deg);
 }
+.category-header {
+  display: flex;
+  align-items: flex-start;
+}
+.category-header .category-toggle {
+  flex: 1;
+  min-width: 0;
+}
+.category-add {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  border-radius: 4px;
+  color: var(--text-muted);
+}
+.category-add:hover,
+.category-add:focus-visible {
+  color: var(--text-strong);
+  background: var(--bg-hover);
+}
+
+/* Create Channel dialog */
+.modal.create-channel-modal {
+  text-align: left;
+}
+.channel-type-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0 4px;
+  padding: 0;
+  border: none;
+}
+.channel-type-options legend {
+  margin-bottom: 8px;
+}
+.channel-type-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.channel-type-option:hover {
+  background: var(--bg-hover);
+}
+.channel-type-option.selected {
+  background: var(--bg-active);
+  color: var(--text-normal);
+}
+.channel-type-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.channel-type-option:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+}
+.channel-type-option span {
+  display: flex;
+  flex-direction: column;
+}
+.channel-type-option strong {
+  color: var(--text-strong);
+  font-size: 15px;
+}
+.channel-type-option small {
+  font-size: 12px;
+}
 
 .channel-list {
   list-style: none;

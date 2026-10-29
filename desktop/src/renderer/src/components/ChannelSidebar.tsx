@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import type { Channel, Server, User } from '../types'
+import type { Channel, ChannelCategory, Server, User } from '../types'
 import Avatar from './Avatar'
-import { ChevronDownIcon, HashIcon, HeadphonesIcon, MicIcon, SpeakerIcon } from './Icons'
+import { ChevronDownIcon, HashIcon, HeadphonesIcon, MicIcon, PlusIcon, SpeakerIcon } from './Icons'
 
 export interface VoiceUserDetails {
   speaking: boolean
@@ -37,6 +37,8 @@ interface ChannelSidebarProps {
   onSelectChannel: (channel: Channel) => void
   /** Server menu (header): invite, settings, leave — only what the user may do. */
   serverActions: { label: string; onSelect: () => void; danger?: boolean }[]
+  /** Shows a + on each category to create a channel there (only with Manage Channels). */
+  onCreateChannel?: (category: ChannelCategory) => void
   footer: ReactNode
 }
 
@@ -60,6 +62,7 @@ function ChannelSidebar({
   onStreamVolumeChange,
   onSelectChannel,
   serverActions,
+  onCreateChannel,
   footer
 }: ChannelSidebarProps): React.JSX.Element {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -136,15 +139,28 @@ function ChannelSidebar({
           const isCollapsed = collapsed.has(category.id)
           return (
             <section key={category.id} className="channel-category">
-              <button
-                type="button"
-                className={`category-toggle${isCollapsed ? ' collapsed' : ''}`}
-                onClick={() => toggleCategory(category.id)}
-                aria-expanded={!isCollapsed}
-              >
-                <ChevronDownIcon size={12} />
-                <span>{category.name}</span>
-              </button>
+              <div className="category-header">
+                <button
+                  type="button"
+                  className={`category-toggle${isCollapsed ? ' collapsed' : ''}`}
+                  onClick={() => toggleCategory(category.id)}
+                  aria-expanded={!isCollapsed}
+                >
+                  <ChevronDownIcon size={12} />
+                  <span>{category.name}</span>
+                </button>
+                {onCreateChannel && (
+                  <button
+                    type="button"
+                    className="category-add"
+                    onClick={() => onCreateChannel(category)}
+                    aria-label={`Create channel in ${category.name}`}
+                    title="Create Channel"
+                  >
+                    <PlusIcon size={16} />
+                  </button>
+                )}
+              </div>
 
               <ul className="channel-list">
                 {category.channels.map((channel) => {
